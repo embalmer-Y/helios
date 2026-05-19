@@ -741,11 +741,30 @@ class UniversalAdapter:
 
 ### Phase 5 交付物
 
-- [ ] `helios/cli.py` — AgentCLI + Action + ToolRegistry + 适配器（~800行）
-- [ ] `helios/adapters/qwenpaw_adapter.py` — QwenPaw 适配器
-- [ ] `helios/adapters/base.py` — 通用适配器接口
-- [ ] `demo_v10_cli.py` — 演示：Helios 自己执行了一次完整行为
-- [ ] `demo_v10_full_soul.py` — 最终演示：驱动→思考→情感→决策→执行→感知→新情感
+- [x] `helios/cli_bridge.py` — CLIAdapter(ABC) + 5个适配器 + CLIBridge + HeliosHands（~748行）
+- [x] `helios/demo_v10.py` — 演示：8/8 动作成功，Helios 第一次伸手触碰世界（~212行）
+- [ ] `helios/adapters/` 目录 — 将适配器分拆独立文件（可选）
+- [x] 向后兼容验证：demo_v7/v8/v9 全部正常运行
+
+**架构核心**：
+```
+Helios ActionIntent ("搜索class HeliosCore")
+    → CLIBridge.route()
+    → 最佳适配器: ShellAdapter (code/gh/copilot/qwen 未安装→降级)
+    → translate: grep -rn "class HeliosCore" /path
+    → execute: subprocess.run()
+    → ActionResult(success=True, output="...", emotional_impact=+0.12)
+    → 反馈到 neurochem (DA+OP↑ 或 CORT↑)
+```
+
+**5大适配器**：
+| 适配器 | CLI | 角色 | 能力 |
+|--------|-----|------|------|
+| CodeCLIAdapter | `code` | 右手 | 打开/编辑/跳转/diff |
+| GitHubCLIAdapter | `gh` | 左手 | PR/issue/repo/clone |
+| CopilotCLIAdapter | `copilot` | 大脑外挂 | 解释/生成/建议 |
+| QwenCLIAdapter | `qwen` | 另一个外挂 | 推理/分析/问答 |
+| ShellAdapter | `sh` | 兜底身体 | 13种动词(list/search/read/write/git/count/sysinfo...) |
 
 ---
 
