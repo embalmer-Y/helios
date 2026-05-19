@@ -133,28 +133,42 @@ class UnifiedPhi:
         Panksepp → Φ: 情感共振
 
         共振 = 多系统同时激活时 > 单一系统主导时
+        只考虑激活度 > 0.1 的系统（忽略静默系统）
         """
         if not panksepp_activation:
             return
-        values = list(panksepp_activation.values())
+        # 只取活跃系统 (activation > 0.1)
+        active = {k: v for k, v in panksepp_activation.items() if v > 0.1}
+        if not active:
+            self.emotional_coherence = 0.0
+            return
+
+        values = list(active.values())
         avg = sum(values) / len(values)
 
-        # 变异系数 = 标准差/均值 (低=共振, 高=偏科)
-        if avg > 0.05:
+        # 变异系数：活跃系统间的变异
+        if len(values) <= 1:
+            coherence = avg  # 单系统：直接用均值
+        elif avg > 0.05:
             variance = sum((v - avg) ** 2 for v in values) / len(values)
             std = math.sqrt(variance)
             cv = std / avg if avg > 0 else 1.0
-            coherence = avg * (1.0 - min(cv, 0.8))  # 均值高 + 变异小 = 共振
+            # 系统数多 + 均值高 + 变异小 = 共振
+            count_bonus = min(len(values) / 5.0, 0.4)  # 5个以上系统 = 满分
+            coherence = avg * (1.0 - min(cv, 0.8)) + count_bonus
         else:
             coherence = 0.0
 
         # 加分：正向情感系统共振 (SEEKING+PLAY+CARE 同时高)
-        positive = panksepp_activation.get("SEEKING", 0) + \
-                   panksepp_activation.get("PLAY", 0) + \
-                   panksepp_activation.get("CARE", 0)
-        bonus = 0.15 if positive > 1.5 else 0.0
+        positive = active.get("SEEKING", 0) + \
+                   active.get("PLAY", 0) + \
+                   active.get("CARE", 0)
+        if positive > 1.5:
+            coherence += 0.10
+        if positive > 2.0:
+            coherence += 0.10
 
-        self.emotional_coherence = clamp(coherence + bonus)
+        self.emotional_coherence = clamp(coherence)
         self._sources_valid["emotional_coherence"] = self.source_ttl
 
     def feed_dmn(self, thought_count: int, avg_novelty: float,
@@ -165,13 +179,13 @@ class UnifiedPhi:
         深度 = 思维量 × 新颖度 × 模式多样性
         """
         depth = 0.0
-        depth += min(thought_count / 6.0, 1.0) * 0.4     # 思维量
-        depth += avg_novelty * 0.3                        # 新颖度
+        depth += min(thought_count / 5.0, 1.0) * 0.40       # 思维量
+        depth += avg_novelty * 0.35                          # 新颖度
         if thought_modes:
             unique_modes = len(set(thought_modes))
-            depth += (unique_modes / 4.0) * 0.3            # 模式多样性
+            depth += (unique_modes / 3.0) * 0.25             # 模式多样性
         else:
-            depth += 0.15  # 默认浅层
+            depth += 0.10  # 默认浅层
 
         self.temporal_depth = clamp(depth)
         self._sources_valid["temporal_depth"] = self.source_ttl
@@ -384,7 +398,7 @@ class ConsciousnessDetector:
 
         # Resonance: 多系统共激活
         if subsystems:
-            active_high = sum(1 for v in subsystems.values() if v > 0.65)
+            active_high = sum(1 for v in subsystems.values() if v > 0.55)
             if active_high >= 3 and ph > 0.50:
                 return ConsciousnessMoment(
                     type="resonance",
