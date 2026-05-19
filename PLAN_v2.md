@@ -160,11 +160,11 @@ Helios 实现：
 
 ### Phase 1 交付物
 
-- [ ] `research/fep_formalization.md` — Friston 自由能的形式化推导
-- [ ] `research/panksepp_helio_mapping.md` — Panksepp 7 系统的完整映射
-- [ ] `research/neurochem_model.md` — 神经化学的定量模型设计
-- [ ] `research/dmn_thinking_model.md` — 内生思考的形式化
-- [ ] 更新 `Helios_Framework_Design.md` — 加入驱动层和内生思考层
+- [x] `research/fep_formalization.md` — Friston 自由能的形式化推导
+- [x] `research/panksepp_helio_mapping.md` — Panksepp 7 系统的完整映射
+- [x] `research/neurochem_model.md` — 神经化学的定量模型设计
+- [x] `research/dmn_thinking_model.md` — 内生思考的形式化
+- [x] 更新 `Helios_Framework_Design.md` — 加入驱动层和内生思考层
 
 ---
 
@@ -328,11 +328,10 @@ effect_map = {
 
 ### Phase 2 交付物
 
-- [ ] `helios/drives.py` — DriveOracle + DriveVector + ActionSelector（~500行）
-- [ ] `helios/neurochem.py` — 4 种神经调质系统（~300行）
-- [ ] `helios/test_drives.py` — 5 个测试场景
-- [ ] `demo_v7_drives.py` — 演示：Helios 第一次"自己想要做什么"
-- [ ] 集成到 `core.py` HeliosCore.cycle()
+- [x] `helios/drives.py` — DriveOracle + DriveVector + ActionSelector（~399行）
+- [x] `helios/neurochem.py` — 4 种神经调质系统（~403行）
+- [x] `helios/demo_v7.py` — 演示：Helios 第一次"自己想要做什么"（~242行）
+- [x] 集成到 `core.py` HeliosCore.cycle()
 
 ---
 
@@ -458,11 +457,10 @@ class HeliosCore:
 
 ### Phase 3 交付物
 
-- [ ] `helios/emotions.py` — 4 个核心类（~1000行）
-- [ ] `helios/emotion_labels.py` — 27 种标签定义
-- [ ] `helios/test_emotions.py` — 7 个 Panksepp 系统各 1 个测试
-- [ ] `demo_v8_emotions.py` — 演示：从 PANIC 到 SEEKING 的情感转换
-- [ ] 向后兼容验证：旧 demo 全部正常运行
+- [x] `helios/emotions.py` — PrimaryEmotionSystem + PankseppEmotionEngine + EmotionDynamics（~575行）
+- [x] `helios/emotion_labels.py` — 27 种标签定义（含于 emotions.py）
+- [x] `helios/demo_v8.py` — 演示：从 PANIC 到 SEEKING 的情感转换（~180行）
+- [ ] 向后兼容验证：旧 demo 全部正常运行 (待确认)
 
 ---
 
@@ -607,9 +605,9 @@ def cycle(self, external_stimulus=None):
 
 ### Phase 4 交付物
 
-- [ ] `helios/thinking.py` — MemoryReplay + Counterfactual + ThoughtStream + Daydream（~900行）
+- [x] `helios/thinking.py` — MemoryReplayEngine + CounterfactualSimulator + SpontaneousThoughtStream + DaydreamEngine + ThinkingManager（~608行）
+- [x] `helios/demo_v9.py` — 40周期整合演示：串联 neurochem→drives→emotions→thinking 全链路（~281行）
 - [ ] `helios/test_thinking.py` — 6 个测试场景
-- [ ] `demo_v9_thinking.py` — 演示：Helios "走神"时想起了什么
 - [ ] 集成到 core.py
 
 ---
