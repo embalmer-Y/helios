@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Helios High-Level Architecture</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --ink: #1d2b2a;
+      --muted: #556765;
+      --line: #8a9a95;
+      --panel: rgba(255, 252, 246, 0.9);
+      --core: #d8ece6;
+      --memory: #f0dfc7;
+      --llm: #dfe9f7;
+      --io: #e7dbc9;
+      --aux: #ece8e1;
+      --accent: #295f58;
+      --shadow: 0 18px 40px rgba(46, 63, 57, 0.12);
+      --radius: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(221, 238, 231, 0.7), transparent 28%),
+        radial-gradient(circle at top right, rgba(242, 228, 207, 0.65), transparent 24%),
+        linear-gradient(180deg, #fbf8f2 0%, var(--bg) 100%);
+      min-height: 100vh;
+    }
+
+    .page {
+      width: min(1400px, calc(100vw - 40px));
+      margin: 28px auto 40px;
+    }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: flex-end;
+      margin-bottom: 24px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 54px);
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+      font-weight: 800;
+    }
+
+    .hero p {
+      margin: 10px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(41, 95, 88, 0.08);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .diagram-shell {
+      position: relative;
+      padding: 30px;
+      border-radius: 32px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 250, 244, 0.9));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .diagram-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(105, 124, 119, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(105, 124, 119, 0.07) 1px, transparent 1px);
+      background-size: 28px 28px;
+      pointer-events: none;
+      mask-image: linear-gradient(180deg, black 0%, rgba(0, 0, 0, 0.35) 100%);
+    }
+
+    .diagram {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 250px minmax(420px, 1fr) 250px;
+      grid-template-rows: auto auto auto auto;
+      gap: 22px 26px;
+      align-items: start;
+    }
+
+    .card {
+      position: relative;
+      border-radius: var(--radius);
+      padding: 20px 22px;
+      background: var(--panel);
+      border: 1px solid rgba(29, 43, 42, 0.08);
+      box-shadow: 0 10px 30px rgba(49, 67, 63, 0.08);
+    }
+
+    .card h2,
+    .card h3 {
+      margin: 0 0 10px;
+      letter-spacing: -0.03em;
+    }
+
+    .card h2 {
+      font-size: 24px;
+    }
+
+    .card h3 {
+      font-size: 18px;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .mini {
+      border-radius: 16px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(29, 43, 42, 0.07);
+    }
+
+    .mini strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    .mini span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .orchestrator {
+      grid-column: 2;
+      grid-row: 1;
+      background: linear-gradient(180deg, #fff8ef, #f6eada);
+      text-align: center;
+    }
+
+    .memory {
+      grid-column: 1;
+      grid-row: 2;
+      background: linear-gradient(180deg, #f6ead9, var(--memory));
+    }
+
+    .core {
+      grid-column: 2;
+      grid-row: 2;
+      background: linear-gradient(180deg, #eef9f5, var(--core));
+    }
+
+    .llm {
+      grid-column: 3;
+      grid-row: 2;
+      background: linear-gradient(180deg, #edf4ff, var(--llm));
+    }
+
+    .io {
+      grid-column: 2;
+      grid-row: 3;
+      background: linear-gradient(180deg, #f4ebe0, var(--io));
+      text-align: center;
+    }
+
+    .aux {
+      grid-column: 1 / 4;
+      grid-row: 4;
+      background: linear-gradient(180deg, #f5f3ef, var(--aux));
+    }
+
+    .aux-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .label {
+      display: inline-block;
+      margin-bottom: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(41, 95, 88, 0.08);
+      color: var(--accent);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+      justify-content: center;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .diagram-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .diagram-svg path {
+      fill: none;
+      stroke: var(--line);
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .diagram-svg path.soft {
+      stroke-dasharray: 7 8;
+      opacity: 0.75;
+    }
+
+    .caption {
+      margin-top: 14px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1180px) {
+      .diagram {
+        grid-template-columns: 1fr;
+        grid-template-rows: none;
+      }
+
+      .orchestrator,
+      .memory,
+      .core,
+      .llm,
+      .io,
+      .aux {
+        grid-column: auto;
+        grid-row: auto;
+      }
+
+      .aux-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .diagram-svg {
+        display: none;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100vw - 20px, 100%);
+        margin-top: 12px;
+      }
+
+      .diagram-shell {
+        padding: 16px;
+      }
+
+      .hero {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .aux-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div>
+        <h1>Helios High-Level Architecture</h1>
+        <p>这张图只保留真实运行主线的一级结构。它不试图展开每个类和函数，而是强调当前系统如何从事件进入认知核心，再流向语言、动作、记忆与外部输出，并最终形成反馈闭环。</p>
+      </div>
+      <div class="pill">Real Runtime View · demo_longrun.py / demo_v16.py</div>
+    </section>
+
+    <section class="diagram-shell">
+      <svg class="diagram-svg" viewBox="0 0 1400 980" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a9a95"></path>
+          </marker>
+        </defs>
+
+        <path marker-end="url(#arrow)" d="M 700 132 C 700 180, 700 205, 700 248"></path>
+        <path marker-end="url(#arrow)" d="M 620 318 C 470 318, 330 318, 250 318"></path>
+        <path marker-end="url(#arrow)" d="M 780 318 C 930 318, 1070 318, 1150 318"></path>
+        <path marker-end="url(#arrow)" d="M 700 454 C 700 535, 700 588, 700 660"></path>
+        <path marker-end="url(#arrow)" d="M 1115 454 C 1115 575, 880 575, 780 575"></path>
+        <path marker-end="url(#arrow)" d="M 250 454 C 250 575, 520 575, 620 575"></path>
+        <path marker-end="url(#arrow)" d="M 250 454 C 250 780, 620 780, 700 780"></path>
+        <path marker-end="url(#arrow)" d="M 1115 454 C 1115 780, 790 780, 700 780"></path>
+        <path class="soft" marker-end="url(#arrow)" d="M 700 760 C 700 830, 700 850, 700 890"></path>
+      </svg>
+
+      <div class="diagram">
+        <article class="card orchestrator">
+          <div class="label">Runtime Entry</div>
+          <h2>编排器与周期控制</h2>
+          <p>当前系统真正的运行入口是 demo 脚本，而不是统一 Core 类。它负责场景注入、节律切换、系统实例化、状态推进和 checkpoint。</p>
+          <div class="legend">
+            <span><i></i>demo_longrun.py</span>
+            <span><i></i>demo_v16.py</span>
+          </div>
+        </article>
+
+        <article class="card memory">
+          <div class="label">Memory</div>
+          <h3>记忆子系统</h3>
+          <p>负责工作记忆、情景记忆、语义记忆和自传时间线，并在低 Φ 或静息阶段执行巩固与抽象。</p>
+          <div class="stack">
+            <div class="mini">
+              <strong>Working / Episodic</strong>
+              <span>保留短期上下文与带情感标签的经历。</span>
+            </div>
+            <div class="mini">
+              <strong>Semantic / Autobiographical</strong>
+              <span>把片段经验抽象成事实、模式与自我叙事。</span>
+            </div>
+            <div class="mini">
+              <strong>Retriever / Consolidator</strong>
+              <span>为 LLM 提供回忆上下文，并在静息期做跨层迁移。</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="card core">
+          <div class="label">Cognitive Core</div>
+          <h2>认知主干</h2>
+          <p>系统从事件进入神经化学状态，再经过驱动、情感、DMN 思维和统一 Φ 聚合，最终形成“当前意识态”的高层表征。</p>
+          <div class="stack">
+            <div class="mini">
+              <strong>Neurochem + Drives</strong>
+              <span>四种神经调质构成底层动力场；当前主线 demo 直接从它们合成 DriveVector。</span>
+            </div>
+            <div class="mini">
+              <strong>Panksepp Emotions</strong>
+              <span>7 大原始情感系统输出 AffectState，成为后续思考、记忆和决策的共同输入。</span>
+            </div>
+            <div class="mini">
+              <strong>Thinking + UnifiedPhi</strong>
+              <span>DMN 产生思绪，UnifiedPhi 聚合感知、情感、思考、点火与自我模型，生成统一 Φ。</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="card llm">
+          <div class="label">Language + Action</div>
+          <h3>语言与执行</h3>
+          <p>当点火条件满足时，系统调用 LLM 生成理解、独白与 decision，再通过 limb_decision_bridge 映射为安全动作。</p>
+          <div class="stack">
+            <div class="mini">
+              <strong>LLM Layer</strong>
+              <span>当前主线主要直接调用 OpenAI client，而不是统一走 llm_bridge。</span>
+            </div>
+            <div class="mini">
+              <strong>Limb Layer</strong>
+              <span>所有动作统一经由 HeliosBody、LimbRouter 和 Safety Rules 执行。</span>
+            </div>
+            <div class="mini">
+              <strong>Feedback</strong>
+              <span>ActionResult 会回流到神经化学状态，形成 success / failure / blocked 的反馈闭环。</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="card io">
+          <div class="label">External Surface</div>
+          <h3>外部输出与持久化</h3>
+          <p>主线输出包括终端独白、journal 写入、checkpoint 存档、运行统计和自传叙事。这里是系统和外部观察者真正接触的界面层。</p>
+        </article>
+
+        <article class="card aux">
+          <div class="label">Not On The Hot Path</div>
+          <h3>存在但不在当前主线热路径</h3>
+          <p>这些模块对理解系统演化很重要，但它们不是当前 demo 里每个 cycle 的必经路径。</p>
+          <div class="aux-grid">
+            <div class="mini">
+              <strong>DriveOracle / HeliosSnapshot</strong>
+              <span>更完整的驱动建模方案，当前主线没有直接把它当运行核心。</span>
+            </div>
+            <div class="mini">
+              <strong>LLMBridge + llm_prompts</strong>
+              <span>框架化封装仍然存在，但主线 demo 更偏向直接调用 API。</span>
+            </div>
+            <div class="mini">
+              <strong>emotional_memory.py</strong>
+              <span>兼容残留层，功能上已由新的 MemorySystem 接管。</span>
+            </div>
+            <div class="mini">
+              <strong>archive / L0-L3</strong>
+              <span>旧意识分层架构与历史 demo，更多承担理论来源与演化记录角色。</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <p class="caption">主干阅读顺序：编排器 → 认知主干 → 点火判定 → 语言与执行 → 外部输出；左侧记忆和底部旁路模块提供上下文与演化背景。</p>
+  </div>
+</body>
+</html>

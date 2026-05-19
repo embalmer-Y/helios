@@ -1,0 +1,118 @@
+flowchart TB
+    Orchestrator["demo_longrun.py / demo_v16.py\n主循环编排器"] --> EventLoop["场景与随机事件注入\nactive/rest 节律控制"]
+    Orchestrator --> Bootstrap["系统实例化\nNeurochemState / EmotionEngine / ThinkingManager\nUnifiedPhi / MemorySystem / HeliosBody"]
+    EventLoop --> ApplyEvent["apply_event\nneurochem.py"]
+    ApplyEvent --> Neurochem["NeurochemState\ndopamine / opioids / oxytocin / cortisol"]
+    Neurochem --> DriveVector["DriveVector 合成\n当前 demo 内直接计算"]
+    DriveVector --> Triggers["情感触发强度 triggers"]
+    Neurochem --> Triggers
+    Triggers --> EmotionCycle["PankseppEmotionEngine.cycle\nemotions.py"]
+    EmotionCycle --> AffectState["AffectState\nvalence / arousal / dominant_system\npanksepp_activation"]
+    AffectState --> DetermineMode["ThinkingManager.determine_mode"]
+    DriveVector --> DetermineMode
+    Neurochem --> DetermineMode
+    DetermineMode --> GenerateThoughts["ThinkingManager.generate_thoughts\nDMN 思绪生成"]
+    DriveVector --> FeedSensory["UnifiedPhi.feed_sensory"]
+    AffectState --> FeedEmotional["UnifiedPhi.feed_emotional"]
+    GenerateThoughts --> FeedDMN["UnifiedPhi.feed_dmn"]
+    AffectState --> FeedIgnition["UnifiedPhi.feed_ignition"]
+    SelfModel["自我模型代理值\nself_conf / narrative_depth"] --> FeedSelf["UnifiedPhi.feed_self_model"]
+    FeedSensory --> AggregatePhi["UnifiedPhi.aggregate\nphi.py"]
+    FeedEmotional --> AggregatePhi
+    FeedDMN --> AggregatePhi
+    FeedIgnition --> AggregatePhi
+    FeedSelf --> AggregatePhi
+    AggregatePhi --> PhiValue["统一 Φ 值\nminimal / focused / reflective / flow / peak"]
+    PhiValue --> DetectMoment["ConsciousnessDetector.detect\naha / resonance / flow"]
+    PhiValue --> PhiModulator["PhiModulator"]
+    PhiValue --> IgniteGate{"达到点火条件?\nhas_event && phi_final > threshold"}
+
+    subgraph MEM [记忆子系统]
+        direction TB
+        MemorySystem["MemorySystem"] --> WorkingMemory["WorkingMemory\n短时缓存 / TTL"]
+        MemorySystem --> EpisodicMemory["EpisodicMemory\n情景记忆 / 情感检索"]
+        MemorySystem --> SemanticMemory["SemanticMemory\n事实 / 模式"]
+        MemorySystem --> AutobioMemory["AutobiographicalMemory\n自传时间线"]
+        MemorySystem --> Consolidator["MemoryConsolidator\n低 Φ 时巩固"]
+        MemorySystem --> Retriever["MemoryRetriever\nLLM 上下文召回"]
+        Retriever --> MemoryContext["记忆上下文字符串\nget_llm_context / get_recall_context"]
+    end
+
+    AffectState --> MemorySystem
+    GenerateThoughts --> MemorySystem
+    PhiValue --> MemorySystem
+    PhiValue --> Consolidator
+    IgniteGate -->|否| Consolidator
+    Consolidator --> SemanticMemory
+    Consolidator --> AutobioMemory
+
+    subgraph RIGHT [语言与执行]
+        direction TB
+        LLMCall["LLM 调用\n当前主线 demo 内直接 OpenAI client"] --> LLMOutput["结构化输出 JSON\nlanguage_output / semantic_understanding\nmetacognitive_reflection / decision"]
+        ExecuteDecision["execute_decision\nlimb_decision_bridge.py"] --> BuildIntent["build_intent\nDecision -> ActionIntent"]
+        BuildIntent --> HeliosBodyAct["HeliosBody.act"]
+        HeliosBodyAct --> LimbRouter["LimbRouter.find_limb / execute"]
+        LimbRouter --> LimbTypes["DigitalLimb / PhysicalLimb"]
+        LimbTypes --> SafetyRules["Safety Rules\nCommandAllowlist / PathAllowlist\nRateLimit / DryRun / Velocity / Force"]
+        SafetyRules --> LimbExecute["subprocess / actuator execute"]
+        LimbExecute --> ActionResult["ActionResult"]
+        ActionResult --> NeurochemFeedback["feed_result_to_neurochem\ntask_success / failure / blocked"]
+    end
+
+    IgniteGate -->|是| LLMCall
+    MemoryContext --> LLMCall
+    AffectState --> LLMCall
+    Neurochem --> LLMCall
+    DriveVector --> LLMCall
+    GenerateThoughts --> LLMCall
+    PhiValue --> LLMCall
+    LLMOutput --> ExecuteDecision
+    ActionResult --> Neurochem
+    NeurochemFeedback --> Neurochem
+
+    subgraph THINK [DMN 内部组件]
+        direction LR
+        MemoryReplay["MemoryReplayEngine"]
+        Counterfactual["CounterfactualSimulator"]
+        ThoughtStream["SpontaneousThoughtStream"]
+        Daydream["DaydreamEngine"]
+    end
+
+    GenerateThoughts --> MemoryReplay
+    GenerateThoughts --> Counterfactual
+    GenerateThoughts --> ThoughtStream
+    GenerateThoughts --> Daydream
+
+    subgraph IO [外部输出与持久化]
+        direction LR
+        ConsoleOutput["终端输出 / 内心独白显示"]
+        RememberEpisode["MemorySystem.remember\n写入情景记忆"]
+        JournalWrite["journal/ 写入\n当 decision 映射到 write"]
+        Checkpoint["longrun/checkpoint.json\n周期性统计存档"]
+        NarrativeOutput["自传叙事输出\nget_narrative()"]
+        RuntimeStats["heartbeat / stats / 最终总结"]
+    end
+
+    LLMOutput --> ConsoleOutput
+    LLMOutput --> RememberEpisode
+    RememberEpisode --> EpisodicMemory
+    ActionResult --> JournalWrite
+    Orchestrator --> Checkpoint
+    AutobioMemory --> NarrativeOutput
+    Orchestrator --> RuntimeStats
+
+    subgraph SIDE [旁路模块]
+        direction LR
+        DriveOracle["DriveOracle / HeliosSnapshot\ndrives.py 完整模型"]
+        LLMBridge["LLMBridge + llm_prompts\n框架化封装"]
+        DeprecatedMemory["emotional_memory.py\n已废弃兼容层"]
+        ArchivedLayers["archive/L0-L3 旧架构"]
+    end
+
+    DriveOracle -.-> DriveVector
+    LLMBridge -.-> LLMCall
+    DeprecatedMemory -.-> MemorySystem
+    ArchivedLayers -.-> AggregatePhi
+
+    classDef side fill:#f6f6f6,stroke:#888888,color:#444444
+    class DriveOracle,LLMBridge,DeprecatedMemory,ArchivedLayers side
