@@ -33,7 +33,7 @@ from limb_decision_bridge import (
 )
 from phi import UnifiedPhi, ConsciousnessMoment
 
-def clamp(x, lo=0, hi=1): return max(lo, min(hi, x))
+from helios_utils import clamp
 
 # ═══════════════════════════════
 # LLM

@@ -131,8 +131,7 @@ def build_intent(decision: Dict, valence: float, drive_name: str,
     )
 
 
-def clamp(x, lo, hi):
-    return max(lo, min(hi, x))
+from helios_utils import clamp
 
 
 # ═══════════════════════════════════════════════

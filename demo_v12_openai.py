@@ -30,7 +30,7 @@ from emotions import PankseppEmotionEngine
 from thinking import ThinkingManager
 from limb import ActionIntent, HeliosBody
 
-def clamp(x, lo, hi): return max(lo, min(hi, x))
+from helios_utils import clamp
 
 
 # ═══════════════════════════════

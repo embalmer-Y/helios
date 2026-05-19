@@ -33,7 +33,7 @@ from limb_decision_bridge import (
     DECISION_MAP,
 )
 
-def clamp(x, lo, hi): return max(lo, min(hi, x))
+from helios_utils import clamp
 
 # ═══════════════════════════════
 # LLM

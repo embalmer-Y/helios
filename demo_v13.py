@@ -36,7 +36,7 @@ from drives import DriveVector
 from emotions import PankseppEmotionEngine
 from thinking import ThinkingManager
 
-def clamp(x, lo, hi): return max(lo, min(hi, x))
+from helios_utils import clamp
 
 
 # ═══════════════════════════════

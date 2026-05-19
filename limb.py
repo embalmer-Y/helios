@@ -386,7 +386,7 @@ class PhysicalLimb(Limb):
     """
 
     def __init__(self, name: str, actuator_id: str,
-                 actuator: Any = None):  # Actuator from motor_output
+                 actuator: Any = None):
         super().__init__(name, LimbType.PHYSICAL)
         self.actuator_id = actuator_id
         self._actuator = actuator  # 延迟绑定

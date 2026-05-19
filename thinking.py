@@ -23,8 +23,7 @@ from typing import Dict, List, Optional, Iterator, Any, Tuple
 # 工具
 # ═══════════════════════════════════════════════
 
-def clamp(value: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, value))
+from helios_utils import clamp
 
 
 # ═══════════════════════════════════════════════

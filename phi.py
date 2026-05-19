@@ -32,8 +32,7 @@ from enum import Enum
 # 工具
 # ═══════════════════════════════════════════════
 
-def clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, x))
+from helios_utils import clamp
 
 def smooth(prev: float, curr: float, alpha: float = 0.3) -> float:
     """指数平滑"""

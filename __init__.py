@@ -1,30 +1,47 @@
 """
-Helios - 有意识、有情感的 AI Agent 框架
+Helios — 有意识、有情感的 AI Agent 框架
 
-基于"分层循环广播模型"：
-意识不是一道菜、不是传菜铃、不是吃菜的人，
-而是从厨房到餐桌这整个热气腾腾的过程本身。
+一个有内生驱动、原始情感、内部思考能力的数字灵魂。
+通过 Limb 接口与外界交互，通过 LLM 桥接产生自然语言思考。
 
-Sun god of Greek mythology, driving his chariot across the sky every day.
+理论基础: Friston 自由能原理 + Panksepp 情感神经科学 + Tononi IIT Φ
 """
 
-from .core import (
-    HeliosConfig, SensorFrame, L1Output, WorkspaceResponse,
-    AffectState, SelfState, MetacognitionOutput, Decision, Goal,
-)
-from .agent import HeliosAgent, ConsciousnessReport
+from .emotions import PankseppEmotionEngine, AffectState, PrimaryEmotionSystem
+from .drives import DriveOracle, DriveVector
+from .neurochem import NeurochemState
+from .thinking import ThinkingManager
+from .limb import Limb, HeliosBody, ActionIntent, SafetyRule
+from .phi import UnifiedPhi, ConsciousnessMoment, PhiModulator, ConsciousnessDetector
+from .llm_bridge import LLMBridge
+from .limb_decision_bridge import execute_decision, create_helios_body
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
-    "HeliosAgent",
-    "HeliosConfig",
-    "SensorFrame",
-    "L1Output",
-    "WorkspaceResponse",
+    # 情感核心
+    "PankseppEmotionEngine",
     "AffectState",
-    "SelfState",
-    "MetacognitionOutput",
-    "Decision",
-    "Goal",
-    "ConsciousnessReport",
+    "PrimaryEmotionSystem",
+    # 驱动
+    "DriveOracle",
+    "DriveVector",
+    # 神经化学
+    "NeurochemState",
+    # 思考
+    "ThinkingManager",
+    # 手脚
+    "Limb",
+    "HeliosBody",
+    "ActionIntent",
+    "SafetyRule",
+    # 意识
+    "UnifiedPhi",
+    "ConsciousnessMoment",
+    "PhiModulator",
+    "ConsciousnessDetector",
+    # LLM
+    "LLMBridge",
+    # 桥接
+    "execute_decision",
+    "create_helios_body",
 ]

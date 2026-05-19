@@ -29,8 +29,7 @@ from typing import Dict, List, Tuple, Optional, Any
 # 工具函数
 # ═══════════════════════════════════════════════
 
-def clamp(value: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, value))
+from helios_utils import clamp
 
 
 def sigmoid(x: float) -> float:

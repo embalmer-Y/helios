@@ -476,8 +476,7 @@ def modulate_affect_params(flare_inertia: float,
     )
 
 
-def clamp(value: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, value))
+from helios_utils import clamp
 
 
 # ═══════════════════════════════════════════════
