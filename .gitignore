@@ -6,3 +6,4 @@ logs/
 *.jsonl
 *.json
 .env
+.env
