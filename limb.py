@@ -150,7 +150,7 @@ class SafetyRule(ABC):
 class VelocityLimitRule(SafetyRule):
     """物理安全：速度上限"""
     def __init__(self, max_velocity: float = 0.8):
-        super().__init__("velocity_limit", "limit")
+        super().__init__("velocity_limit", "block")  # 物理安全：block 而非 limit
         self.max_velocity = max_velocity
 
     def check(self, intent: ActionIntent) -> Tuple[bool, str]:
@@ -162,7 +162,7 @@ class VelocityLimitRule(SafetyRule):
 class ForceLimitRule(SafetyRule):
     """物理安全：力度上限"""
     def __init__(self, max_force: float = 0.9):
-        super().__init__("force_limit", "limit")
+        super().__init__("force_limit", "block")  # 物理安全：block
         self.max_force = max_force
 
     def check(self, intent: ActionIntent) -> Tuple[bool, str]:
@@ -558,7 +558,7 @@ class DigitalLimb(Limb):
 def create_shell_limb(work_dir: str = "/home/radxa") -> DigitalLimb:
     """创建 Shell 数字手脚（兜底）"""
     limb = DigitalLimb("shell", "sh",
-                       domains=["file", "system", "code"],
+                       domains=["file", "system", "code", "vcs"],  # + "vcs"
                        work_dir=work_dir)
 
     # 注册动词翻译器
