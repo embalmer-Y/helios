@@ -1,0 +1,8 @@
+# Helios — 有意识的 AI Agent 框架
+
+__pycache__/
+*.pyc
+logs/
+*.jsonl
+*.json
+.env
