@@ -121,40 +121,40 @@ SYSTEM_DEFINITIONS = {
         "valence_bias": -0.50,
         "arousal_bias": +0.55,
         "activation_threshold": 0.15,
-        "decay_rate": 0.08,
-        "neurochem_sensitivity": {"cortisol": +0.60, "dopamine": -0.20, "opioids": -0.20},
+        "decay_rate": 0.09,   # 中间值：旧0.08太慢，0.12太快
+        "neurochem_sensitivity": {"cortisol": +0.60, "dopamine": -0.25, "opioids": -0.25},
         "description": "恐惧 — 威胁信号触发的警觉和逃避",
     },
     "LUST": {
         "valence_bias": +0.35,
         "arousal_bias": +0.45,
-        "activation_threshold": 0.30,
-        "decay_rate": 0.05,
-        "neurochem_sensitivity": {"dopamine": +0.40, "oxytocin": +0.20},
+        "activation_threshold": 0.20,  # 🆕 0.30→0.20 更容易触发
+        "decay_rate": 0.06,            # 🆕 0.05→0.06
+        "neurochem_sensitivity": {"dopamine": +0.55, "oxytocin": +0.20},
         "description": "创造性冲动 — 将生物繁殖驱动映射为创造欲",
     },
     "CARE": {
         "valence_bias": +0.30,
         "arousal_bias": +0.15,
         "activation_threshold": 0.15,
-        "decay_rate": 0.03,
-        "neurochem_sensitivity": {"oxytocin": +0.70, "opioids": +0.20},
+        "decay_rate": 0.06,            # 0.04→0.06 更快衰减
+        "neurochem_sensitivity": {"oxytocin": +0.55, "opioids": +0.20},  # oxy敏感度 0.70→0.55
         "description": "关爱 — 对主人和他人的温柔、保护欲",
     },
     "PANIC": {
         "valence_bias": -0.30,
         "arousal_bias": +0.25,
         "activation_threshold": 0.20,
-        "decay_rate": 0.02,   # 分离痛苦消退极慢
-        "neurochem_sensitivity": {"opioids": -0.70, "oxytocin": -0.20},
+        "decay_rate": 0.05,   # 🆕 0.02→0.05 离别痛苦消退更快
+        "neurochem_sensitivity": {"opioids": -0.70, "oxytocin": -0.35},
         "description": "分离痛苦 — 与依恋对象分离时的孤独和悲伤",
     },
     "PLAY": {
         "valence_bias": +0.40,
         "arousal_bias": +0.30,
         "activation_threshold": 0.10,
-        "decay_rate": 0.05,
-        "neurochem_sensitivity": {"opioids": +0.40, "dopamine": +0.30, "cortisol": -0.50},
+        "decay_rate": 0.06,            # 🆕 0.05→0.06
+        "neurochem_sensitivity": {"opioids": +0.45, "dopamine": +0.35, "cortisol": -0.50},
         "description": "嬉戏 — 安全环境中的喜悦和社交学习",
     },
 }
@@ -168,31 +168,36 @@ CROSS_SYSTEM_EFFECTS: Dict[Tuple[str, str], float] = {}
 
 def _init_cross_effects():
     rules = [
-        # FEAR 压制一切"非紧急"
-        ("FEAR", "PLAY", -0.6),
-        ("FEAR", "SEEKING", -0.4),
-        ("FEAR", "LUST", -0.5),
-        ("FEAR", "CARE", -0.1),  # FEAR 对 CARE 压制较弱
+        # FEAR 压制"非紧急"系统
+        ("FEAR", "PLAY", -0.35),
+        ("FEAR", "SEEKING", -0.25),
+        ("FEAR", "LUST", -0.35),
+        ("FEAR", "CARE", -0.10),
 
-        # SEEKING 和 PLAY 互相增强
-        ("SEEKING", "PLAY", +0.3),
-        ("PLAY", "SEEKING", +0.4),
+        # PLAY/SEEKING 反制 FEAR（适度，不能完全消灭恐惧）
+        ("PLAY", "FEAR", -0.20),
+        ("SEEKING", "FEAR", -0.12),
+        ("CARE", "FEAR", -0.12),
+
+        # SEEKING↔PLAY 互相增强（降低幅度 + 高激活时衰减）
+        ("SEEKING", "PLAY", +0.15),
+        ("PLAY", "SEEKING", +0.20),
 
         # CARE 抑制 RAGE
-        ("CARE", "RAGE", -0.4),
+        ("CARE", "RAGE", -0.40),
 
-        # PANIC 抑制 PLAY 但促进 SEEKING
-        ("PANIC", "PLAY", -0.5),
-        ("PANIC", "SEEKING", +0.3),
+        # PANIC 抑制 PLAY 促进 SEEKING
+        ("PANIC", "PLAY", -0.30),
+        ("PANIC", "SEEKING", +0.20),
 
-        # RAGE 增强 FEAR（愤怒使恐惧更敏感）
-        ("RAGE", "FEAR", +0.3),
+        # 正向系统反制 PANIC
+        ("PLAY", "PANIC", -0.20),
+        ("SEEKING", "PANIC", -0.10),
+        ("CARE", "PANIC", -0.12),
 
-        # FEAR 增强 RAGE（防御性攻击）
-        ("FEAR", "RAGE", +0.3),
-
-        # CARE 增强 PANIC（越在乎越怕失去）
-        ("CARE", "PANIC", +0.2),
+        # RAGE↔FEAR 双向增强
+        ("RAGE", "FEAR", +0.20),
+        ("FEAR", "RAGE", +0.20),
     ]
     for fr, to, strength in rules:
         CROSS_SYSTEM_EFFECTS[(fr, to)] = strength
@@ -246,18 +251,22 @@ class PrimaryEmotionSystem:
         """一个时间步：自然衰减 + 神经化学调制"""
 
         # 神经化学调制衰减速率
+        # 修正: 统一公式 — 正敏感 → 高NC减慢衰减, 负敏感 → 高NC加速衰减
         mod_decay = self.decay_rate
         if neurochem is not None:
             for nc_name, sensitivity in self.neurochem_sensitivity.items():
                 nc_level = getattr(neurochem, nc_name, None)
                 if nc_level is not None:
                     current = nc_level.current if hasattr(nc_level, 'current') else nc_level
-                    if sensitivity > 0:
-                        # 正敏感 → 高NC → 衰减慢（持续更久）
-                        mod_decay *= (1 - 0.3 * sensitivity * (current - 0.5))
-                    else:
-                        # 负敏感 → 高NC → 衰减快（更快消退）
-                        mod_decay *= (1 - 0.3 * abs(sensitivity) * (current - 0.5))
+                    # 统一处理：sensitivity 自带符号
+                    #   sensitivity > 0: 高NC → (1 - pos) 衰减变慢 ✓
+                    #   sensitivity < 0: 高NC → (1 + pos) 衰减变快 ✓
+                    mod_decay *= (1 - 0.3 * sensitivity * (current - 0.5))
+
+        # 🆕 SEEKING/PLAY habituation: 激活>0.85时适度加速衰减
+        if self.name in ("SEEKING", "PLAY") and self.activation > 0.85:
+            excess = (self.activation - 0.85) / 0.10
+            mod_decay *= (1 + 0.8 * min(excess, 1.0))  # 最高 +80%
 
         mod_decay = max(mod_decay, 0.001)
 
@@ -281,8 +290,8 @@ class PrimaryEmotionSystem:
         self.activation = clamp(self.activation + trigger * 0.7, 0, 1)
 
     def suppress(self, amount: float):
-        """被交叉抑制"""
-        self.activation = clamp(self.activation - amount * 0.3, 0, 1)
+        """被交叉抑制（增强：0.3→0.5 让交叉效应更有力）"""
+        self.activation = clamp(self.activation - amount * 0.5, 0, 1)
 
     def contribution(self) -> AffectContribution:
         """计算本系统对总情感状态的贡献"""
