@@ -454,7 +454,7 @@ class AutobiographicalMemory:
     def get_narrative(self, max_items: int = 10) -> str:
         """生成自传叙事文本"""
         if not self.timeline:
-            return "我还没有故事。"
+            return "故事正在展开中..."
 
         lines = ["我的故事："]
         recent = self.timeline[-max_items:]
@@ -556,9 +556,9 @@ class MemoryConsolidator:
                     pattern=pattern,
                 )
 
-        # 3. 为高 Φ 情景生成自传叙事
+        # 3. 为高 Φ 情景生成自传叙事 (降低阈值)
         for it in candidates:
-            if it.phi > 0.4 and it.importance > 0.5:
+            if it.phi > 0.25 and it.importance > 0.3:
                 self.autobiographical.record_moment(
                     summary=it.summary,
                     phi=it.phi,
