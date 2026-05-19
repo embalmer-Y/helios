@@ -1,8 +1,15 @@
 """
-Helios 情感情景记忆 — Emotional Episodic Memory
+[DEPRECATED] Helios 情感情景记忆
 
-让 Helios 不仅"感受"情感，还能"回忆"情感。
-这是从"反射性情感"到"反思性情感"的关键跃迁。
+⚠️ 此模块已被 memory_system.py 取代。
+保留此文件仅为向后兼容，所有新代码应使用：
+    from memory_system import MemorySystem
+
+旧接口 EmotionalEpisodicMemory 在新 memory_system.py 中保留为兼容适配器。
+"""
+# ═══════════════════════════════════════════════════
+# 以下为原始代码（不再维护）
+# ═══════════════════════════════════════════════════
 
 核心能力：
 1. 记录：每次 L2 点火 → 保存完整情感片段

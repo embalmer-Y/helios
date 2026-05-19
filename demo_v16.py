@@ -7,13 +7,9 @@ demo_v16.py — Phase B: Φ深度集成 意识光谱全测试
   ✅ PhiModulator — Φ调制 情感/思考/化学/LLM/Limb
   ✅ ConsciousnessDetector — aha/共振/流 时刻检测
   ✅ L0→L3 模拟链路 (感官→自我 完全贯通)
-  ✅ 24个 cycle 意识光谱: 低Φ(0-8)→中Φ(9-16)→高Φ(17-24)
-
-用法:
-  cd /home/radxa/project/helios
-  source .env
-  python demo_v16.py
-"""
+  ✅ MemorySystem — 记忆子系统 (Working/Episodic/Semantic/Autobio)
+  ✅ 记忆巩固 + 回忆上下文注入 LLM
+  ✅ 24个 cycle 意识光谱: 低Φ(0-8)→中Φ(9-16)→高Φ(17-24)"""
 
 import os, sys, time, random, math, json
 
@@ -32,6 +28,7 @@ from limb_decision_bridge import (
     execute_decision, create_helios_body, DECISION_MAP,
 )
 from phi import UnifiedPhi, ConsciousnessMoment
+from memory_system import MemorySystem  # 🆕 记忆子系统
 
 from helios_utils import clamp
 
@@ -77,7 +74,7 @@ GLOBAL_STATS = {"llm_calls": 0, "total_tokens": 0, "latencies": [],
 
 
 def helios_think(overall, pa, nc, dv, thoughts, event_text, persona_hint,
-                 arc_name, phi_val):
+                 arc_name, phi_val, memory_ctx=""):
     GLOBAL_STATS["llm_calls"] += 1
 
     dom = overall.dominant_system
@@ -123,6 +120,10 @@ def helios_think(overall, pa, nc, dv, thoughts, event_text, persona_hint,
 【Panksepp】{pa_str}
 【事件】{event_text}
 【思绪】{thought_str if thought_str else '漂流中'}"""
+    
+    # 🆕 注入记忆上下文
+    if memory_ctx:
+        user_prompt += f"\n{memory_ctx}"
 
     # 🆕 Φ 调制 LLM 参数
     max_tok = min(int(250 * (1.0 + 0.8 * phi_val)), 800)
@@ -243,6 +244,7 @@ emotion_engine = PankseppEmotionEngine()
 thinking_mgr = ThinkingManager()
 helios_body = create_helios_body()
 unified_phi = UnifiedPhi()
+ms = MemorySystem()  # 🆕 记忆子系统
 
 print("╔══════════════════════════════════════════════════════╗")
 print("║  🧠 Helios v16 — Phase B: Φ深度集成 意识光谱          ║")
@@ -358,8 +360,12 @@ for cycle in range(TOTAL_CYCLES):
     peaks = ','.join(f"{k[:3]}:{v:.2f}" for k, v in sorted_pa[:3])
 
     if should_ignite:
+        # 🆕 获取记忆上下文
+        memory_ctx = ms.get_llm_context(overall.valence, overall.arousal)
+        
         data, lat = helios_think(overall, pa_raw, nc, dv, thoughts,
-                                 event_text, persona_hint, arc_name, phi_final)
+                                 event_text, persona_hint, arc_name, phi_final,
+                                 memory_ctx)
         lo = data.get("language_output", "")
         su = data.get("semantic_understanding", "")
         mr = data.get("metacognitive_reflection", "")
@@ -396,7 +402,21 @@ for cycle in range(TOTAL_CYCLES):
             if result.success:
                 GLOBAL_STATS["limb_successes"] += 1
 
+        # 🆕 记录情景记忆
+        ms.remember(
+            summary=f"{arc_name}: {lo[:60]}",
+            scene=arc_name,
+            language=lo,
+            semantic_text=su,
+            decision=str(decision.get('type', '?')),
+            valence=overall.valence,
+            arousal=overall.arousal,
+            phi=phi_final,
+        )
+
     elif not should_ignite:
+        # 🆕 低Φ时运行记忆巩固
+        ms.consolidate(phi_final)
         # DMN 思绪展示
         for t in thoughts:
             vf = f"V={t.valence_bias:+.2f}" if abs(t.valence_bias) > 0.05 else "V=0.00"
@@ -421,6 +441,12 @@ if lats:
           f"min={min(lats):.0f}ms max={max(lats):.0f}ms")
 print(f"  🦾 手脚: {stats['limb_actions']} (✅{stats['limb_successes']})")
 print(f"  ⚡ 意识时刻: Aha×{stats['aha_count']} Resonance×{stats['resonance_count']} Flow×{stats['flow_count']}")
-print(f"  📝 日记: {os.listdir('/home/radxa/project/helios/journal/') if os.path.isdir('/home/radxa/project/helios/journal/') else '无'}")
 print(f"  🧠 最终 Φ: {unified_phi.phi:.2f} [{unified_phi.label.value}]")
 print(f"     {unified_phi.describe()}")
+
+# 🆕 记忆统计
+mem_stats = ms.get_stats()
+print(f"\n  💾 记忆系统:")
+print(f"     工作记忆: {mem_stats['working_items']} | 情景记忆: {mem_stats['episodic_items']} | 语义事实: {mem_stats['semantic_facts']}")
+print(f"     自传时刻: {mem_stats['autobio_moments']} | 巩固次数: {mem_stats['consolidations']}")
+print(f"     {ms.get_narrative()}")
