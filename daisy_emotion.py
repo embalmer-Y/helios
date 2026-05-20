@@ -281,7 +281,7 @@ class OpponentRegulator:
         if target_system == self.name:
             return -self.b_activation           # 抑制源
         elif target_system == self.opponent:
-            return +self.b_activation * 0.7    # 激活对手 (权重略低)
+            return +self.b_activation * 0.5    # 激活对手 (适度)
         return 0.0
 
 
@@ -362,7 +362,7 @@ class DaisySystemEngine:
             if net_b_effect != 0:
                 self.systems[sys_name].activation = max(
                     BASELINE[sys_name],
-                    min(1.0, self.systems[sys_name].activation + net_b_effect * 0.3)
+                    min(1.0, self.systems[sys_name].activation + net_b_effect * 0.15)
                 )
 
         # ── 第五步: 神经化学调制衰减 ──
