@@ -119,7 +119,7 @@ SYSTEM_DEFINITIONS = {
     "FEAR": {
         "valence_bias": -0.50,
         "arousal_bias": +0.55,
-        "activation_threshold": 0.15,
+        "activation_threshold": 0.20,  # v2.5: 统一阈值 0.20
         "decay_rate": 0.06,   # v2.4: 更慢衰减，恐惧残留更久
         "neurochem_sensitivity": {"cortisol": +0.60, "dopamine": -0.25, "opioids": -0.25},
         "description": "恐惧 — 威胁信号触发的警觉和逃避",
@@ -135,7 +135,7 @@ SYSTEM_DEFINITIONS = {
     "CARE": {
         "valence_bias": +0.30,
         "arousal_bias": +0.15,
-        "activation_threshold": 0.15,
+        "activation_threshold": 0.20,  # v2.5: 统一阈值 0.20
         "decay_rate": 0.06,            # 0.04→0.06 更快衰减
         "neurochem_sensitivity": {"oxytocin": +0.55, "opioids": +0.20},  # oxy敏感度 0.70→0.55
         "description": "关爱 — 对主人和他人的温柔、保护欲",
@@ -151,7 +151,7 @@ SYSTEM_DEFINITIONS = {
     "PLAY": {
         "valence_bias": +0.40,
         "arousal_bias": +0.30,
-        "activation_threshold": 0.10,
+        "activation_threshold": 0.20,  # v2.5: 与其他系统对齐
         "decay_rate": 0.06,            # 🆕 0.05→0.06
         "neurochem_sensitivity": {"opioids": +0.45, "dopamine": +0.35, "cortisol": -0.50},
         "description": "嬉戏 — 安全环境中的喜悦和社交学习",
@@ -179,9 +179,9 @@ def _init_cross_effects():
         ("SEEKING", "FEAR", -0.12),
         ("CARE", "FEAR", -0.12),
 
-        # v2.4: SEEKING↔PLAY 降低互增强（防正向锁死）
-        ("SEEKING", "PLAY", +0.10),
-        ("PLAY", "SEEKING", +0.08),
+        # v2.5: 相互正向效果彻底归零 — 让事件主导
+        # 原: SEEKING↔PLAY 互增强 → 摆锤效应 (一端独霸)
+        # 新: 只有单向轻微的 CARE→SEEKING, 其余靠事件本身
 
         # CARE 抑制 RAGE
         ("CARE", "RAGE", -0.40),
@@ -203,8 +203,7 @@ def _init_cross_effects():
         # v2.4: RAGE 抑制 SEEKING（愤怒堵塞好奇心）
         ("RAGE", "SEEKING", -0.15),
 
-        # v2.4: CARE→SEEKING 轻微增强（关爱激发探索）
-        ("CARE", "SEEKING", +0.06),
+        # v2.5: 移除 CARE→SEEKING，事件本身已有 CARE+SEEKING 共现
     ]
     for fr, to, strength in rules:
         CROSS_SYSTEM_EFFECTS[(fr, to)] = strength
@@ -245,6 +244,9 @@ class PrimaryEmotionSystem:
         self.previous_activation: float = 0.0
         self._is_active: bool = False  # 是否超过激活阈值
 
+        # v2.5: 稳态压力 — 主导久了衰减加速
+        self.dominance_streak: int = 0
+
         # 历史
         self.history: List[float] = []
         self.max_history = 50
@@ -279,6 +281,11 @@ class PrimaryEmotionSystem:
             excess = (self.activation - 0.85) / 0.10
             mod_decay *= (1 + 0.8 * min(excess, 1.0))
 
+        # v2.5: 稳态压力 — 主导越久衰减越快 (receptor downregulation)
+        if self.dominance_streak > 3:
+            fatigue_boost = min(1.0, (self.dominance_streak - 3) * 0.04)
+            mod_decay *= (1 + fatigue_boost)
+
         mod_decay = max(mod_decay, 0.001)
 
         # 指数衰减
@@ -297,8 +304,8 @@ class PrimaryEmotionSystem:
         Args:
             trigger: 触发强度 0~1
         """
-        # 累加激活 — 使用更强的乘数
-        self.activation = clamp(self.activation + trigger * 0.7, 0, 1)
+        # v2.5: 降低事件放大倍率 (0.7→0.55) 防止事件轻易覆盖稳态
+        self.activation = clamp(self.activation + trigger * 0.55, 0, 1)
 
     def suppress(self, amount: float):
         """被交叉抑制（增强：0.3→0.5 让交叉效应更有力）"""
@@ -389,7 +396,15 @@ class PankseppEmotionEngine:
         # 4. 汇总情感状态
         state = self._aggregate()
 
-        # 5. 记录历史
+        # 5. v2.5: 稳态压力追踪 — 主导系统连胜计数，其他系统重置
+        dom = state.dominant_system
+        for name, sys in self.systems.items():
+            if name == dom:
+                sys.dominance_streak += 1
+            else:
+                sys.dominance_streak = max(0, sys.dominance_streak - 2)
+
+        # 6. 记录历史
         self.state_history.append(state)
         if len(self.state_history) > self.max_history:
             self.state_history.pop(0)
