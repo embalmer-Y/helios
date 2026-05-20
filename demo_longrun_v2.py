@@ -29,6 +29,7 @@ sys.modules['helios'] = helios_pkg
 from neurochem import NeurochemState, apply_event
 from drives import DriveVector
 from emotions import PankseppEmotionEngine
+from daisy_emotion import DaisySystemEngine
 from thinking import ThinkingManager
 from limb_decision_bridge import execute_decision, create_helios_body
 from phi import UnifiedPhi
@@ -1039,13 +1040,13 @@ class PhiController:
 # 主循环 v2
 # ═══════════════════════════════════
 
-def run(hours: int = 24, resume: bool = False):
+def run(hours: int = 24, resume: bool = False, daisy_mode: bool = False):
     run_dir = setup_run(resume)
     deadline = time.time() + hours * 3600
 
     # 初始化核心系统
     nc = NeurochemState()
-    emotion_engine = PankseppEmotionEngine()
+    emotion_engine = DaisySystemEngine() if daisy_mode else PankseppEmotionEngine()
     thinking_mgr = ThinkingManager()
     helios_body = create_helios_body()
     unified_phi = UnifiedPhi()
@@ -1363,6 +1364,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Helios 长时运行 v2")
     parser.add_argument("--hours", type=float, default=1, help="运行时长")
     parser.add_argument("--resume", action="store_true", help="从存档恢复")
+    parser.add_argument("--daisy", action="store_true", help="使用 DAISY 情感引擎 (X1+X2+X3)")
     args = parser.parse_args()
 
-    run(hours=args.hours, resume=args.resume)
+    run(hours=args.hours, resume=args.resume, daisy_mode=args.daisy)
