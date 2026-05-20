@@ -36,6 +36,7 @@ from phi import UnifiedPhi
 from memory_system import MemorySystem
 from habituation import HabituationTracker
 from helios_utils import clamp
+from appraisal import appraise_event  # X4: SEC 评估链
 
 # ═══════════════════════════════════
 # LLM
@@ -1068,6 +1069,8 @@ def run(hours: int = 24, resume: bool = False, daisy_mode: bool = False):
 
     dv = DriveVector()
     last_checkpoint = time.time()
+    _prev_valence = 0.0   # X4: 上一周期的情感状态缓存
+    _prev_arousal = 0.3
 
     while time.time() < deadline and not state.should_stop:
         cycle = state.cycle
@@ -1086,15 +1089,12 @@ def run(hours: int = 24, resume: bool = False, daisy_mode: bool = False):
         if fire_llm:
             event_key, event_text, design = sample_event(cycle)
             event_tag = design["tags"][0] if design.get("tags") else "unknown"
-            v_bias = design["v_bias"]
-            a_bias = design["a_bias"]
             state.event_counter[event_key] += 1
         else:
             event_text = None
             event_tag = "rest"
             event_key = "rest"
             design = None
-            v_bias, a_bias = 0, 0
 
         # ── 化学注入 v2: 直接从 design 注入 ──
         if design and fire_llm:
@@ -1112,24 +1112,34 @@ def run(hours: int = 24, resume: bool = False, daisy_mode: bool = False):
         dv.achievement = clamp(0.2 + da * 0.3 + math.sin(t * 0.3) * 0.1)
         dv.aesthetic = clamp(0.2 + da * 0.3 + op * 0.3)
 
-        # ── Panksepp 触发器 v2.1: 事件注入 + 习惯化 ──
+        # ── Panksepp 触发器 — X4: SEC 评估链 ──
         if design and fire_llm:
-            # 习惯化: 记录暴露 + 获取新颖度因子
             hab_tracker.register_exposure(event_key, cycle)
-            # 用当前唤醒水平近似 (nc 中的 cort + drive 中的 social)
             current_arousal = clamp(cort * 0.4 + dv.social * 0.3 + 0.2, 0, 1)
             novelty = hab_tracker.get_novelty_factor(
                 event_key, cycle, current_arousal)
 
-            triggers = compute_panksepp_triggers(
-                design, dv, nc, unified_phi._phi, active, novelty)
+            # X4: SEC 评估 → Panksepp (替代硬编码 panksepp 矢量)
+            appraisal = appraise_event(event_key,
+                                       mood_valence=_prev_valence * 0.3,
+                                       mood_arousal=_prev_arousal * 0.2)
+            triggers = {}
+            for sys_name, val in appraisal["panksepp"].items():
+                triggers[sys_name] = val * novelty
+            # v_bias / a_bias 从 SEC 派生
+            v_bias = appraisal.get("v_bias", 0.0)
+            a_bias = appraisal.get("a_bias", 0.3)
         else:
             triggers = {}
             for sys_name in ["SEEKING", "PLAY", "CARE"]:
                 triggers[sys_name] = 0.03
             novelty = 1.0
+            v_bias = 0.0
+            a_bias = 0.1
 
         overall = emotion_engine.cycle(triggers=triggers, neurochem=nc, dt=1.0)
+        _prev_valence = overall.valence   # X4: 缓存供下一周期
+        _prev_arousal = overall.arousal
         pa_raw = overall.panksepp_activation
 
         state.emotion_counter[overall.dominant_system] += 1
