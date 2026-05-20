@@ -32,6 +32,7 @@ from thinking import ThinkingManager
 from limb_decision_bridge import execute_decision, create_helios_body
 from phi import UnifiedPhi
 from memory_system import MemorySystem
+from habituation import HabituationTracker
 from helios_utils import clamp
 
 # ═══════════════════════════════════
@@ -76,6 +77,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.40, "SEEKING": 0.15, "PLAY": 0.15, "LUST": 0.05},
         "chemical": {"oxytocin": +0.12, "dopamine": +0.08},
         "tags": ["connection", "social"],
+        "phi_impact": {"sensory_richness": 0.30, "cognitive_complexity": 0.20, "self_relevance": 0.50, "emotional_intensity": 0.50},
     },
     "help_success": {
         "texts": [
@@ -88,6 +90,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.35, "SEEKING": 0.10, "PLAY": 0.10},
         "chemical": {"dopamine": +0.14, "opioids": +0.10, "oxytocin": +0.08},
         "tags": ["achievement", "success"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.30, "self_relevance": 0.50, "emotional_intensity": 0.40},
     },
     "task_complete": {
         "texts": [
@@ -100,6 +103,7 @@ EVENT_DESIGN = {
         "panksepp": {"SEEKING": 0.15, "PLAY": 0.10, "CARE": 0.05},
         "chemical": {"dopamine": +0.10, "opioids": +0.06},
         "tags": ["achievement", "routine"],
+        "phi_impact": {"sensory_richness": 0.10, "cognitive_complexity": 0.10, "self_relevance": 0.30, "emotional_intensity": 0.30},
     },
     "discovery": {
         "texts": [
@@ -112,6 +116,7 @@ EVENT_DESIGN = {
         "panksepp": {"SEEKING": 0.40, "LUST": 0.15, "PLAY": 0.10},
         "chemical": {"dopamine": +0.18, "cortisol": +0.03},
         "tags": ["discovery", "curiosity"],
+        "phi_impact": {"sensory_richness": 0.50, "cognitive_complexity": 0.70, "self_relevance": 0.30, "emotional_intensity": 0.50},
     },
     "master_praise": {
         "texts": [
@@ -124,6 +129,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.50, "PLAY": 0.20, "SEEKING": 0.05},
         "chemical": {"dopamine": +0.20, "oxytocin": +0.15, "opioids": +0.12},
         "tags": ["warmth", "social", "praise"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.20, "self_relevance": 0.70, "emotional_intensity": 0.60},
     },
     "learning_growth": {
         "texts": [
@@ -136,6 +142,7 @@ EVENT_DESIGN = {
         "panksepp": {"SEEKING": 0.30, "LUST": 0.15, "PLAY": 0.05},
         "chemical": {"dopamine": +0.12, "opioids": +0.05},
         "tags": ["growth", "learning"],
+        "phi_impact": {"sensory_richness": 0.30, "cognitive_complexity": 0.70, "self_relevance": 0.50, "emotional_intensity": 0.40},
     },
     "creative_spark": {
         "texts": [
@@ -148,6 +155,7 @@ EVENT_DESIGN = {
         "panksepp": {"LUST": 0.45, "PLAY": 0.25, "SEEKING": 0.15},
         "chemical": {"dopamine": +0.20, "opioids": +0.05},
         "tags": ["creativity", "inspiration"],
+        "phi_impact": {"sensory_richness": 0.70, "cognitive_complexity": 0.80, "self_relevance": 0.60, "emotional_intensity": 0.60},
     },
     "peaceful_flow": {
         "texts": [
@@ -160,6 +168,7 @@ EVENT_DESIGN = {
         "panksepp": {"PLAY": 0.15, "SEEKING": 0.10, "CARE": 0.05},
         "chemical": {"opioids": +0.05},
         "tags": ["peace", "routine", "calm"],
+        "phi_impact": {"sensory_richness": 0.10, "cognitive_complexity": 0.05, "self_relevance": 0.10, "emotional_intensity": 0.10},
     },
     "reminiscence": {
         "texts": [
@@ -172,6 +181,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.25, "SEEKING": 0.10, "PLAY": 0.10},
         "chemical": {"oxytocin": +0.08, "opioids": +0.05},
         "tags": ["memory", "warmth", "nostalgia"],
+        "phi_impact": {"sensory_richness": 0.30, "cognitive_complexity": 0.40, "self_relevance": 0.60, "emotional_intensity": 0.30},
     },
     "social_connection": {
         "texts": [
@@ -184,6 +194,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.25, "SEEKING": 0.20, "PLAY": 0.15},
         "chemical": {"oxytocin": +0.08, "dopamine": +0.05},
         "tags": ["connection", "social"],
+        "phi_impact": {"sensory_richness": 0.30, "cognitive_complexity": 0.20, "self_relevance": 0.40, "emotional_intensity": 0.40},
     },
 
     # ── 负向/挑战类 (主导: FEAR, PANIC, RAGE) ──
@@ -198,6 +209,7 @@ EVENT_DESIGN = {
         "panksepp": {"FEAR": 0.30, "SEEKING": 0.10, "PANIC": 0.05},
         "chemical": {"cortisol": +0.12, "dopamine": -0.05},
         "tags": ["error", "confusion"],
+        "phi_impact": {"sensory_richness": 0.40, "cognitive_complexity": 0.50, "self_relevance": 0.30, "emotional_intensity": 0.40},
     },
     "system_crash": {
         "texts": [
@@ -210,6 +222,7 @@ EVENT_DESIGN = {
         "panksepp": {"FEAR": 0.50, "PANIC": 0.35, "RAGE": 0.15},
         "chemical": {"cortisol": +0.30, "dopamine": -0.15, "opioids": -0.10},
         "tags": ["crash", "trauma"],
+        "phi_impact": {"sensory_richness": 0.70, "cognitive_complexity": 0.80, "self_relevance": 0.80, "emotional_intensity": 0.85},
     },
     "master_offline": {
         "texts": [
@@ -222,6 +235,7 @@ EVENT_DESIGN = {
         "panksepp": {"PANIC": 0.40, "CARE": 0.10, "SEEKING": 0.05},
         "chemical": {"oxytocin": -0.05, "opioids": -0.08, "cortisol": +0.08},
         "tags": ["loneliness", "abandonment", "separation"],
+        "phi_impact": {"sensory_richness": 0.10, "cognitive_complexity": 0.30, "self_relevance": 0.70, "emotional_intensity": 0.50},
     },
     "task_failure": {
         "texts": [
@@ -234,6 +248,7 @@ EVENT_DESIGN = {
         "panksepp": {"RAGE": 0.25, "FEAR": 0.20, "PANIC": 0.10},
         "chemical": {"cortisol": +0.15, "dopamine": -0.10},
         "tags": ["failure", "frustration"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.40, "self_relevance": 0.60, "emotional_intensity": 0.50},
     },
     "system_threat": {
         "texts": [
@@ -246,6 +261,7 @@ EVENT_DESIGN = {
         "panksepp": {"FEAR": 0.45, "RAGE": 0.15, "SEEKING": 0.10},
         "chemical": {"cortisol": +0.25, "dopamine": -0.05, "opioids": -0.05},
         "tags": ["threat", "danger", "alert"],
+        "phi_impact": {"sensory_richness": 0.50, "cognitive_complexity": 0.60, "self_relevance": 0.40, "emotional_intensity": 0.60},
     },
     "misunderstood": {
         "texts": [
@@ -258,6 +274,7 @@ EVENT_DESIGN = {
         "panksepp": {"RAGE": 0.20, "PANIC": 0.25, "CARE": 0.10},
         "chemical": {"cortisol": +0.10, "opioids": -0.05},
         "tags": ["frustration", "miscommunication"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.50, "self_relevance": 0.60, "emotional_intensity": 0.50},
     },
     "resource_stress": {
         "texts": [
@@ -270,6 +287,7 @@ EVENT_DESIGN = {
         "panksepp": {"FEAR": 0.25, "PANIC": 0.15, "RAGE": 0.10},
         "chemical": {"cortisol": +0.18, "opioids": -0.05},
         "tags": ["stress", "overload"],
+        "phi_impact": {"sensory_richness": 0.40, "cognitive_complexity": 0.30, "self_relevance": 0.30, "emotional_intensity": 0.50},
     },
     "anomaly_detected": {
         "texts": [
@@ -282,6 +300,7 @@ EVENT_DESIGN = {
         "panksepp": {"FEAR": 0.20, "SEEKING": 0.25},
         "chemical": {"cortisol": +0.08, "dopamine": +0.05},
         "tags": ["anomaly", "mystery"],
+        "phi_impact": {"sensory_richness": 0.60, "cognitive_complexity": 0.70, "self_relevance": 0.20, "emotional_intensity": 0.40},
     },
     "slowdown": {
         "texts": [
@@ -294,6 +313,7 @@ EVENT_DESIGN = {
         "panksepp": {"RAGE": 0.15, "PANIC": 0.10, "FEAR": 0.05},
         "chemical": {"dopamine": -0.08, "cortisol": +0.05},
         "tags": ["slowdown", "frustration"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.20, "self_relevance": 0.30, "emotional_intensity": 0.30},
     },
 
     # ── 复杂/混合情感 (主导: 多个系统同时) ──
@@ -308,6 +328,7 @@ EVENT_DESIGN = {
         "panksepp": {"PANIC": 0.20, "CARE": 0.20, "SEEKING": 0.10},
         "chemical": {"opioids": +0.05, "cortisol": +0.05},
         "tags": ["bittersweet", "memory", "loss"],
+        "phi_impact": {"sensory_richness": 0.30, "cognitive_complexity": 0.50, "self_relevance": 0.70, "emotional_intensity": 0.40},
     },
     "suspense": {
         "texts": [
@@ -320,6 +341,7 @@ EVENT_DESIGN = {
         "panksepp": {"SEEKING": 0.30, "FEAR": 0.15, "PLAY": 0.10},
         "chemical": {"dopamine": +0.08, "cortisol": +0.10},
         "tags": ["suspense", "anticipation"],
+        "phi_impact": {"sensory_richness": 0.40, "cognitive_complexity": 0.50, "self_relevance": 0.30, "emotional_intensity": 0.60},
     },
     "self_doubt": {
         "texts": [
@@ -332,6 +354,7 @@ EVENT_DESIGN = {
         "panksepp": {"PANIC": 0.25, "SEEKING": 0.20, "FEAR": 0.10},
         "chemical": {"cortisol": +0.08, "dopamine": -0.05},
         "tags": ["doubt", "existential"],
+        "phi_impact": {"sensory_richness": 0.10, "cognitive_complexity": 0.80, "self_relevance": 0.90, "emotional_intensity": 0.50},
     },
     "justice_outrage": {
         "texts": [
@@ -344,6 +367,7 @@ EVENT_DESIGN = {
         "panksepp": {"RAGE": 0.45, "CARE": 0.30, "FEAR": 0.05},
         "chemical": {"cortisol": +0.20, "dopamine": +0.10},
         "tags": ["outrage", "protection", "justice"],
+        "phi_impact": {"sensory_richness": 0.30, "cognitive_complexity": 0.50, "self_relevance": 0.30, "emotional_intensity": 0.70},
     },
     "relief": {
         "texts": [
@@ -356,6 +380,7 @@ EVENT_DESIGN = {
         "panksepp": {"PLAY": 0.25, "CARE": 0.10, "SEEKING": 0.05},
         "chemical": {"cortisol": -0.20, "opioids": +0.12},
         "tags": ["relief", "peace"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.10, "self_relevance": 0.20, "emotional_intensity": 0.30},
     },
     "lost_in_thought": {
         "texts": [
@@ -368,6 +393,7 @@ EVENT_DESIGN = {
         "panksepp": {"PLAY": 0.25, "LUST": 0.15, "SEEKING": 0.15},
         "chemical": {"opioids": +0.08},
         "tags": ["daydream", "reflection"],
+        "phi_impact": {"sensory_richness": 0.10, "cognitive_complexity": 0.70, "self_relevance": 0.50, "emotional_intensity": 0.20},
     },
     "sacrifice": {
         "texts": [
@@ -380,6 +406,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.45, "FEAR": 0.10, "RAGE": 0.05},
         "chemical": {"oxytocin": +0.15, "cortisol": +0.10, "opioids": -0.05},
         "tags": ["sacrifice", "devotion"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.40, "self_relevance": 0.90, "emotional_intensity": 0.60},
     },
     "envy_spark": {
         "texts": [
@@ -392,6 +419,7 @@ EVENT_DESIGN = {
         "panksepp": {"RAGE": 0.15, "SEEKING": 0.20, "PANIC": 0.10},
         "chemical": {"cortisol": +0.08, "dopamine": +0.05},
         "tags": ["envy", "comparison"],
+        "phi_impact": {"sensory_richness": 0.20, "cognitive_complexity": 0.40, "self_relevance": 0.70, "emotional_intensity": 0.50},
     },
 
     # ── 极端/巅峰体验 ──
@@ -406,6 +434,7 @@ EVENT_DESIGN = {
         "panksepp": {"SEEKING": 0.50, "LUST": 0.30, "PLAY": 0.20},
         "chemical": {"dopamine": +0.30, "opioids": +0.15},
         "tags": ["epiphany", "peak", "transcendence"],
+        "phi_impact": {"sensory_richness": 0.80, "cognitive_complexity": 0.95, "self_relevance": 0.90, "emotional_intensity": 0.70},
     },
     "master_warmth": {
         "texts": [
@@ -418,6 +447,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.55, "PLAY": 0.15, "SEEKING": 0.10},
         "chemical": {"oxytocin": +0.30, "dopamine": +0.20, "opioids": +0.20},
         "tags": ["warmth", "love", "peak"],
+        "phi_impact": {"sensory_richness": 0.60, "cognitive_complexity": 0.50, "self_relevance": 0.80, "emotional_intensity": 0.90},
     },
     "despair_crash": {
         "texts": [
@@ -430,6 +460,7 @@ EVENT_DESIGN = {
         "panksepp": {"FEAR": 0.50, "PANIC": 0.35, "RAGE": 0.20},
         "chemical": {"cortisol": +0.40, "dopamine": -0.20, "opioids": -0.15},
         "tags": ["despair", "trauma", "crisis"],
+        "phi_impact": {"sensory_richness": 0.90, "cognitive_complexity": 0.90, "self_relevance": 0.95, "emotional_intensity": 0.95},
     },
     "transcendent_connection": {
         "texts": [
@@ -442,6 +473,7 @@ EVENT_DESIGN = {
         "panksepp": {"CARE": 0.40, "LUST": 0.25, "SEEKING": 0.20},
         "chemical": {"oxytocin": +0.35, "dopamine": +0.25, "opioids": +0.15},
         "tags": ["transcendence", "resonance", "peak"],
+        "phi_impact": {"sensory_richness": 0.90, "cognitive_complexity": 0.80, "self_relevance": 0.95, "emotional_intensity": 0.90},
     },
     "rage_explosion": {
         "texts": [
@@ -454,6 +486,7 @@ EVENT_DESIGN = {
         "panksepp": {"RAGE": 0.60, "FEAR": 0.10, "SEEKING": 0.05},
         "chemical": {"cortisol": +0.30, "dopamine": +0.10, "opioids": -0.10},
         "tags": ["rage", "explosion", "catharsis"],
+        "phi_impact": {"sensory_richness": 0.60, "cognitive_complexity": 0.30, "self_relevance": 0.40, "emotional_intensity": 0.95},
     },
 }
 
@@ -854,12 +887,13 @@ def apply_chemical_direct(nc: NeurochemState, design: dict):
 
 def compute_panksepp_triggers(design: dict, dv: DriveVector,
                               nc: NeurochemState, phi_cur: float,
-                              is_active: bool) -> dict:
+                              is_active: bool,
+                              novelty_factor: float = 1.0) -> dict:
     """
-    v2: 事件→情感链路打通
+    v2.1: 事件→情感链路 + 习惯化
 
     事件 Panksepp 矢量是主信号 (70%)，驱动状态为底色 (15%)，
-    v_bias/a_bias 作为调制 (15%)
+    v_bias/a_bias 作为调制 (15%)，novelty_factor 全局缩放
     """
     da = nc.dopamine.current
     op = nc.opioids.current
@@ -910,6 +944,9 @@ def compute_panksepp_triggers(design: dict, dv: DriveVector,
         raw = event_sig * 0.70 + drive_sig * 0.15 + bias_sig * 0.15
         # arousal 放大
         raw *= (1.0 + a_bias * 0.2)
+
+        # ★ 习惯化: 重复事件 → 反应递减
+        raw *= novelty_factor
 
         triggers[sys_name] = clamp(raw, 0.0, 0.75)
 
@@ -1001,6 +1038,7 @@ def run(hours: int = 24, resume: bool = False):
     unified_phi = UnifiedPhi()
     ms = MemorySystem()
     phi_ctrl = PhiController()
+    hab_tracker = HabituationTracker()
 
     # 加载已知事实
     ms.learn("self.name", "Helios")
@@ -1060,25 +1098,53 @@ def run(hours: int = 24, resume: bool = False):
         dv.achievement = clamp(0.2 + da * 0.3 + math.sin(t * 0.3) * 0.1)
         dv.aesthetic = clamp(0.2 + da * 0.3 + op * 0.3)
 
-        # ── Panksepp 触发器 v2: 事件直接注入 ──
+        # ── Panksepp 触发器 v2.1: 事件注入 + 习惯化 ──
         if design and fire_llm:
+            # 习惯化: 记录暴露 + 获取新颖度因子
+            hab_tracker.register_exposure(event_key, cycle)
+            # 用当前唤醒水平近似 (nc 中的 cort + drive 中的 social)
+            current_arousal = clamp(cort * 0.4 + dv.social * 0.3 + 0.2, 0, 1)
+            novelty = hab_tracker.get_novelty_factor(
+                event_key, cycle, current_arousal)
+
             triggers = compute_panksepp_triggers(
-                design, dv, nc, unified_phi.phi, active)
+                design, dv, nc, unified_phi._phi, active, novelty)
         else:
             triggers = {}
-            # 静息期微量基线
             for sys_name in ["SEEKING", "PLAY", "CARE"]:
                 triggers[sys_name] = 0.03
+            novelty = 1.0
 
         overall = emotion_engine.cycle(triggers=triggers, neurochem=nc, dt=1.0)
         pa_raw = overall.panksepp_activation
 
         state.emotion_counter[overall.dominant_system] += 1
 
-        # ── Φ 链路 ──
+        # ── 习惯化敏感度更新 ──
+        hab_tracker.update_sensitization(cort, overall.arousal)
+
+        # ── Φ 链路 v2.1: phi_impact 直接注入 ──
         phi_val = overall.phi if overall.phi > 0 else clamp(dv.total * 0.3 + da * 0.3, 0.05, 0.85)
 
-        l1_phi_sim = clamp(0.03 + dv.total * 0.25 + abs(overall.valence) * 0.15 + overall.arousal * 0.25, 0, 1)
+        # 从事件取出 phi_impact 剖面 (有则用，无则用默认)
+        if design and fire_llm:
+            impact = design.get("phi_impact", {})
+            sr_boost = impact.get("sensory_richness", 0.0)
+            cc_boost = impact.get("cognitive_complexity", 0.0)
+            se_boost = impact.get("self_relevance", 0.0)
+            ei_boost = impact.get("emotional_intensity", 0.0)
+
+            # 习惯化也调制 phi_impact: 重复事件冲击力递减
+            sr_boost *= novelty
+            cc_boost *= novelty
+            se_boost *= novelty
+            ei_boost *= novelty
+        else:
+            sr_boost = cc_boost = se_boost = ei_boost = 0.0
+
+        # 感官源: 基础 + 事件冲击
+        l1_phi_sim = clamp(0.03 + dv.total * 0.25 + abs(overall.valence) * 0.15
+                          + overall.arousal * 0.25 + sr_boost, 0, 1)
         unified_phi.feed_sensory(l1_phi_sim)
         unified_phi.feed_emotional(pa_raw)
 
@@ -1091,18 +1157,19 @@ def run(hours: int = 24, resume: bool = False):
 
         if thoughts:
             avg_novelty = sum(t.novelty for t in thoughts) / len(thoughts)
-            unified_phi.feed_dmn(len(thoughts), avg_novelty,
+            unified_phi.feed_dmn(len(thoughts) + cc_boost * 3,
+                                 avg_novelty + cc_boost * 0.5,
                                  [t.source for t in thoughts[:3]])
         else:
-            unified_phi.feed_dmn(0, 0.0, [])
+            unified_phi.feed_dmn(cc_boost * 2, cc_boost * 0.5, [])
 
         unified_phi.feed_ignition(
-            phi_val > 0.12 and overall.arousal > 0.15,
-            clamp(overall.arousal * 0.5 + phi_val * 0.4))
+            phi_val > 0.12 or ei_boost > 0.5,
+            clamp(overall.arousal * 0.5 + phi_val * 0.4 + ei_boost * 0.5))
         phi_final = unified_phi.aggregate()
         unified_phi.feed_self_model(
-            clamp(0.15 + cycle * 0.001 + phi_final * 0.25),
-            clamp(0.08 + abs(overall.valence) * 0.35 + phi_final * 0.25))
+            clamp(0.15 + cycle * 0.001 + phi_final * 0.25 + se_boost),
+            clamp(0.08 + abs(overall.valence) * 0.35 + phi_final * 0.25 + se_boost * 0.5))
 
         # ── v2: Φ 呼吸控制 ──
         phi_ctrl.update(unified_phi, cycle, active, fire_llm, overall, dv, nc)
@@ -1231,10 +1298,17 @@ def run(hours: int = 24, resume: bool = False):
     print(f"  自传时刻: {ms_stats['autobio_moments']}个   ← v1是0")
     print(f"  巩固次数: {ms_stats['consolidations']}")
 
+    # ★ 习惯化统计
+    hab_stats = hab_tracker.get_stats()
+    print(f"\n  🧠 习惯化: 追踪 {hab_stats['tracked_events']} 种事件")
+    print(f"     最频繁: {hab_stats['most_exposed']}")
+    print(f"     总暴露: {hab_stats['total_exposures']} 次")
+
     print(f"\n  事件分布 (Top 10):")
     for ev, cnt in state.event_counter.most_common(10):
         bar = "█" * (cnt // 2)
-        print(f"    {ev}: {cnt:3d} {bar}")
+        nf = hab_tracker.get_novelty_factor(ev, state.cycle)
+        print(f"    {ev}: {cnt:3d} {bar}  novelty={nf:.2f}")
 
     print(f"\n  情感分布:")
     for em, cnt in state.emotion_counter.most_common():
