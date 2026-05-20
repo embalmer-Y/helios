@@ -105,14 +105,14 @@ SYSTEM_DEFINITIONS = {
         "arousal_bias": +0.30,
         "activation_threshold": 0.20,
         "decay_rate": 0.08,   # 加快衰减，避免过度主导
-        "neurochem_sensitivity": {"dopamine": +0.60, "cortisol": -0.30},
+        "neurochem_sensitivity": {"dopamine": +0.35, "cortisol": -0.30},
         "description": "探索欲 — 对新奇事物的期待和好奇",
     },
     "RAGE": {
         "valence_bias": -0.35,
         "arousal_bias": +0.45,
         "activation_threshold": 0.20,
-        "decay_rate": 0.10,
+        "decay_rate": 0.06,   # v2.4: 更慢衰减，愤怒残留更久
         "neurochem_sensitivity": {"cortisol": +0.40, "opioids": -0.30},
         "description": "愤怒 — 目标受阻时的挫折和攻击冲动",
     },
@@ -120,7 +120,7 @@ SYSTEM_DEFINITIONS = {
         "valence_bias": -0.50,
         "arousal_bias": +0.55,
         "activation_threshold": 0.15,
-        "decay_rate": 0.09,   # 中间值：旧0.08太慢，0.12太快
+        "decay_rate": 0.06,   # v2.4: 更慢衰减，恐惧残留更久
         "neurochem_sensitivity": {"cortisol": +0.60, "dopamine": -0.25, "opioids": -0.25},
         "description": "恐惧 — 威胁信号触发的警觉和逃避",
     },
@@ -166,6 +166,7 @@ SYSTEM_DEFINITIONS = {
 CROSS_SYSTEM_EFFECTS: Dict[Tuple[str, str], float] = {}
 
 def _init_cross_effects():
+    """v2.4: 打破 SEEKING 正向反馈陷阱"""
     rules = [
         # FEAR 压制"非紧急"系统
         ("FEAR", "PLAY", -0.35),
@@ -178,16 +179,17 @@ def _init_cross_effects():
         ("SEEKING", "FEAR", -0.12),
         ("CARE", "FEAR", -0.12),
 
-        # SEEKING↔PLAY 互相增强（降低幅度 + 高激活时衰减）
-        ("SEEKING", "PLAY", +0.15),
-        ("PLAY", "SEEKING", +0.20),
+        # v2.4: SEEKING↔PLAY 降低互增强（防正向锁死）
+        ("SEEKING", "PLAY", +0.10),
+        ("PLAY", "SEEKING", +0.08),
 
         # CARE 抑制 RAGE
         ("CARE", "RAGE", -0.40),
 
-        # PANIC 抑制 PLAY 促进 SEEKING
+        # v2.4: PANIC 不再增强 SEEKING，改为轻微抑制
+        # 原: ("PANIC", "SEEKING", +0.20) → 越绝望越好奇的谬误
         ("PANIC", "PLAY", -0.30),
-        ("PANIC", "SEEKING", +0.20),
+        ("PANIC", "SEEKING", -0.08),
 
         # 正向系统反制 PANIC
         ("PLAY", "PANIC", -0.20),
@@ -197,6 +199,12 @@ def _init_cross_effects():
         # RAGE↔FEAR 双向增强
         ("RAGE", "FEAR", +0.20),
         ("FEAR", "RAGE", +0.20),
+
+        # v2.4: RAGE 抑制 SEEKING（愤怒堵塞好奇心）
+        ("RAGE", "SEEKING", -0.15),
+
+        # v2.4: CARE→SEEKING 轻微增强（关爱激发探索）
+        ("CARE", "SEEKING", +0.06),
     ]
     for fr, to, strength in rules:
         CROSS_SYSTEM_EFFECTS[(fr, to)] = strength
@@ -262,10 +270,14 @@ class PrimaryEmotionSystem:
                     #   sensitivity < 0: 高NC → (1 + pos) 衰减变快 ✓
                     mod_decay *= (1 - 0.3 * sensitivity * (current - 0.5))
 
-        # 🆕 SEEKING/PLAY habituation: 激活>0.85时适度加速衰减
-        if self.name in ("SEEKING", "PLAY") and self.activation > 0.85:
+        # v2.4: SEEKING 自我衰减 — 阈值从 0.85 降到 0.55
+        # 防止 SEEKING 长期锁定在中高位
+        if self.name in ("SEEKING",) and self.activation > 0.55:
+            excess = (self.activation - 0.55) / 0.10
+            mod_decay *= (1 + 0.6 * min(excess, 1.0))
+        elif self.name in ("PLAY",) and self.activation > 0.85:
             excess = (self.activation - 0.85) / 0.10
-            mod_decay *= (1 + 0.8 * min(excess, 1.0))  # 最高 +80%
+            mod_decay *= (1 + 0.8 * min(excess, 1.0))
 
         mod_decay = max(mod_decay, 0.001)
 

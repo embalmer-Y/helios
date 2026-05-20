@@ -609,7 +609,7 @@ def sample_event(cycle: int) -> tuple:
 # ═══════════════════════════════════
 
 def call_llm(overall, pa, nc, dv, thoughts, event, phi_val,
-             memory_ctx="") -> dict:
+             memory_ctx="", llm_temp=None) -> dict:
     dom = overall.dominant_system
     feel_map = {
         "SEEKING": "充满好奇和探索欲",
@@ -657,7 +657,7 @@ def call_llm(overall, pa, nc, dv, thoughts, event, phi_val,
                         {"role": "user", "content": prompt},
                     ],
                     max_tokens=max_tok,
-                    temperature=min(0.75 * (1 + 0.2 * phi_val), 1.1),
+                    temperature=llm_temp if llm_temp is not None else min(0.75 * (1 + 0.2 * phi_val), 1.1),
                 )
                 resp = future.result(timeout=45)
             text = resp.choices[0].message.content.strip()
@@ -973,28 +973,22 @@ def compute_panksepp_triggers(design: dict, dv: DriveVector,
 # ═══════════════════════════════════
 
 class PhiController:
-    """v2: Φ 控制器 — 防止锁死，引入呼吸感和疲劳"""
+    """v2.2: Φ 控制器 — 动态α冲击响应 + 呼吸 + 疲劳"""
 
     def __init__(self):
-        self.high_phi_count = 0   # 连续高Φ计数
-        self.fatigue_factor = 0.0  # 疲劳因子
+        self.high_phi_count = 0
+        self.fatigue_factor = 0.0
         self.last_phi = 0.05
 
     def update(self, unified_phi: UnifiedPhi, cycle: int,
-               is_active: bool, fire_llm: bool,
+               is_active: bool, fire_llm: bool, impact_intensity: float,
                overall, dv: DriveVector, nc: NeurochemState) -> float:
-        """
-        v2 增强:
-          · 静息期: 加速Φ回落
-          · 长时间高Φ: 累积疲劳 → 下行
-          · 长时间低Φ: 暗流 → 上行渴望
-        """
+
+        current_phi = unified_phi._phi
 
         # ── 疲劳管理 ──
-        current_phi = unified_phi._phi
         if current_phi > 0.48:
             self.high_phi_count += 1
-            # 每100个周期在高Φ状态 → 疲劳+0.01
             self.fatigue_factor = min(0.3, self.fatigue_factor + 0.001)
         else:
             self.high_phi_count = max(0, self.high_phi_count - 2)
@@ -1002,32 +996,36 @@ class PhiController:
 
         # ── 静息期快速回落 ──
         if not fire_llm and not is_active:
-            # 静息期：对Φ施加下行压力
-            unified_phi._phi *= 0.92  # 8% 每周期
-            unified_phi._phi = max(0.08, unified_phi._phi)
+            unified_phi._phi *= 0.90
+            unified_phi._phi = max(0.06, unified_phi._phi)
+
+        # ── ★ 动态平滑 α: 冲击大 → 响应快 ──
+        if impact_intensity > 0.6:
+            unified_phi.smoothing_alpha = 0.55
+        elif impact_intensity > 0.3:
+            unified_phi.smoothing_alpha = 0.30
+        elif impact_intensity > 0.1:
+            unified_phi.smoothing_alpha = 0.20
+        else:
+            unified_phi.smoothing_alpha = 0.10
 
         # ── 疲劳纠偏 ──
         if self.fatigue_factor > 0.1:
-            # 疲劳高时限制 Φ 上限
             cap = 0.65 - self.fatigue_factor * 0.5
             unified_phi._phi = min(unified_phi._phi, cap)
 
-        # ── 暗流 (长时间低Φ后的补偿) ──
+        # ── 暗流 ──
         if unified_phi._phi < 0.15 and cycle > 50:
-            # 轻微上浮
-            unified_phi._phi += 0.005
+            unified_phi._phi += 0.008
 
-        # ── 动态源权重 v2 ──
-        # 感官源弱时 → 其他源权重自动↑
+        # ── 动态源权重 ──
         sensory_str = unified_phi.sensory_integration
         if sensory_str < 0.2:
-            # 感官弱 → 情感/DMN/自我源接管
             unified_phi.weights["emotional_coherence"] = 0.40
             unified_phi.weights["temporal_depth"] = 0.30
             unified_phi.weights["self_reflection"] = 0.20
             unified_phi.weights["sensory_integration"] = 0.10
         elif sensory_str > 0.4:
-            # 感官强 → 正常分配
             unified_phi.weights["sensory_integration"] = 0.30
             unified_phi.weights["emotional_coherence"] = 0.30
             unified_phi.weights["temporal_depth"] = 0.20
@@ -1186,15 +1184,29 @@ def run(hours: int = 24, resume: bool = False):
             clamp(0.15 + cycle * 0.001 + phi_final * 0.25 + se_boost),
             clamp(0.08 + abs(overall.valence) * 0.35 + phi_final * 0.25 + se_boost * 0.5))
 
-        # ── v2: Φ 呼吸控制 ──
-        phi_ctrl.update(unified_phi, cycle, active, fire_llm, overall, dv, nc)
+        # ── v2.2: Φ 动态 + LLM温度调制 ──
+        # 计算 phi_impact 综合强度
+        impact_intensity = (sr_boost + cc_boost + se_boost + ei_boost) / 4.0
+        phi_ctrl.update(unified_phi, cycle, active, fire_llm, impact_intensity, overall, dv, nc)
         phi_final = unified_phi._phi
+
+        # ★ LLM 温度 = Φ 映射: 低Φ保守 高Φ狂野
+        if phi_final < 0.15:
+            llm_temp = 0.3  # 半梦半醒 → 机械回应
+        elif phi_final < 0.30:
+            llm_temp = 0.5  # 基本清醒 → 温和
+        elif phi_final < 0.50:
+            llm_temp = 0.75  # 专注 → 有创造力
+        elif phi_final < 0.70:
+            llm_temp = 1.0   # 反思/心流 → 高度创意
+        else:
+            llm_temp = 1.3   # 巅峰 → 狂野联想
 
         # ── LLM 事件处理 ──
         if fire_llm:
             memory_ctx = ms.get_llm_context(overall.valence, overall.arousal)
             data = call_llm(overall, pa_raw, nc, dv, thoughts,
-                           event_text, phi_final, memory_ctx)
+                           event_text, phi_final, memory_ctx, llm_temp)
 
             lo = data.get("language_output", "")
             su = data.get("semantic_understanding", "")
