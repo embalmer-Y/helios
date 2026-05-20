@@ -271,9 +271,17 @@ class OpponentRegulator:
             self.b_activation *= (1 - decay_rate)
 
     def net_effect_on(self, target_system: str) -> float:
-        """b-process 对目标系统的影响 (抑制)"""
-        if target_system == self.opponent:
-            return -self.b_activation
+        """
+        b-process 对目标系统的双重效应 (Solomon Opponent-Process):
+          1. 抑制源系统 (self.name) — 防止情绪失控
+          2. 激活对手系统 (self.opponent) — 反向回弹平衡
+          
+        Solomon 核心: Net = A(t) - B(t), b-process 抵消 a-process
+        """
+        if target_system == self.name:
+            return -self.b_activation           # 抑制源
+        elif target_system == self.opponent:
+            return +self.b_activation * 0.7    # 激活对手 (权重略低)
         return 0.0
 
 
@@ -350,11 +358,11 @@ class DaisySystemEngine:
             net_b_effect = 0.0
             for opp_name, opp in self.opponents.items():
                 net_b_effect += opp.net_effect_on(sys_name)
-            # b-process 抑制 (钳制过高激活)
-            if net_b_effect < 0:
+            # b-process 双重效应: 抑制源系统 + 激活对手
+            if net_b_effect != 0:
                 self.systems[sys_name].activation = max(
                     BASELINE[sys_name],
-                    self.systems[sys_name].activation + net_b_effect * 0.3
+                    min(1.0, self.systems[sys_name].activation + net_b_effect * 0.3)
                 )
 
         # ── 第五步: 神经化学调制衰减 ──

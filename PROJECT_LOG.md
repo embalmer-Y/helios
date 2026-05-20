@@ -194,4 +194,26 @@
 
 ---
 
+## Bug 记录
+
+### 2026-05-20: Opponent-Process 方向反转 🔴→✅ 已修复
+
+**表现**: X4 测试 RAGE=37% CARE=0% (6/7, CARE完全消失)
+
+**根因**: `OpponentRegulator.net_effect_on()` 对 opponent 系统返回 **-b_activation**，
+        导致 RAGE 强时 CARE 被反向抑制（激活得越强对手死得越惨）
+
+**Solomon 原意**: b-process COUNTER a-process
+- 源系统: -b_activation（抑制自身，防失控）
+- 对手系统: **+**b_activation（激活对手，自然回弹）
+
+**修复** (`daisy_emotion.py`):
+1. `net_effect_on()` → 双重效应: src 抑制 + opponent 激活
+2. 条件 `if net_b_effect < 0` → `if net_b_effect != 0`
+3. 添加上限 `min(1.0, ...)` 防 CARE 过冲
+
+**验证**: 25-cycle 脚本 — RAGE 0.53 → b-process → CARE 1.0 反弹 ✅
+
+---
+
 *最后更新: 2026-05-20 · 璃光 💕*
