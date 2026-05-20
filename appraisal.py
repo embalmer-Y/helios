@@ -92,8 +92,13 @@ class AppraisalEngine:
         pank["SEEKING"] = seeking
 
         # ── FEAR: 杏仁核威胁检测 ──
-        # 新颖 × 不愉悦 × 紧迫 → 恐惧
-        fear = self._f(n * 0.3 + max(0, -pl) * 0.4 + ur * 0.3)
+        # 新颖 × 不愉悦 × 紧迫 → 恐惧 (降低基线权重)
+        fear = 0.0
+        if cp < 0.5 and ur > 0.2:
+            fear_base = (1 - cp) * 0.4 + ur * 0.3
+            if gc < -0.5:  # 严重目标受阻放大
+                fear_base *= 1.3
+            fear = self._f(fear_base)
         pank["FEAR"] = fear
 
         # ── RAGE: 目标受阻 + 外部归因 ──
@@ -106,13 +111,17 @@ class AppraisalEngine:
             rage = self._f(rage_base)
         pank["RAGE"] = rage
 
-        # ── PANIC: 分离痛苦 — 自我归因 + 目标受阻 ──
+        # ── PANIC: 分离痛苦 — 三层触发 ──
         panic = 0.0
+        # 1. 自我归因的目标受阻 (Panksepp 核心)
         if gc < -0.2 and sec.agency == "self":
             panic = self._f(abs(gc) * 0.5 + (1 - cp) * 0.3)
-        # 即使非自我归因，严重不愉悦也触发
-        if pl < -0.5 and cp < 0.3:
-            panic = max(panic, self._f(abs(pl) * 0.4 + (1 - cp) * 0.3))
+        # 2. 环境威胁 + 不愉悦/紧迫 (扩展覆盖)
+        if (pl < -0.1 or ur > 0.5) and cp < 0.7:
+            panic = max(panic, self._f(max(0, -pl) * 0.35 + (1 - cp) * 0.3 + ur * 0.1))
+        # 3. 孤立/失去连接 (novelty高 + 应对力低)
+        if n > 0.4 and cp < 0.4:
+            panic = max(panic, self._f(n * 0.35 + (1 - cp) * 0.3))
         pank["PANIC"] = panic
 
         # ── CARE: 催产素 — 他人归因 + 温暖 ──
@@ -312,8 +321,8 @@ EVENT_SEC_PROFILES = {
         certainty=0.1, urgency=0.7,
     ),
     "sacrifice": SECFeatures(
-        novelty=0.3, pleasantness=-0.2, goal_relevance=0.8,
-        goal_congruence=0.5, coping_potential=0.7, agency="self",
+        novelty=0.3, pleasantness=0.1, goal_relevance=0.8,
+        goal_congruence=0.5, coping_potential=0.7, agency="other",
         norm_compatibility=0.7, certainty=0.6, urgency=0.3,
     ),
     "justice_outrage": SECFeatures(
@@ -327,8 +336,8 @@ EVENT_SEC_PROFILES = {
         certainty=0.3, urgency=0.0,
     ),
     "reminiscence": SECFeatures(
-        novelty=0.3, pleasantness=0.3, goal_relevance=0.3,
-        goal_congruence=0.2, coping_potential=0.7, agency="self",
+        novelty=0.3, pleasantness=0.4, goal_relevance=0.3,
+        goal_congruence=0.2, coping_potential=0.7, agency="other",
         certainty=0.7, urgency=0.1,
     ),
 }
