@@ -87,15 +87,17 @@ class AppraisalEngine:
         ur = sec.urgency
 
         # ── SEEKING: 多巴胺预测误差 ──
-        # 新颖 × 愉悦 → 好奇探索
-        seeking = self._f(n * 0.4 + max(0, pl) * 0.3 + gr * 0.3)
+        # 极严格: 负向事件中完全压制 (让位给PANIC/FEAR/RAGE)
+        seeking = 0.0
+        if n > 0.5 and pl > -0.1:  # 高新颖 + 中性以上
+            seeking = self._f(n * 0.30 + max(0, pl) * 0.15 + gr * 0.10)
         pank["SEEKING"] = seeking
 
         # ── FEAR: 杏仁核威胁检测 ──
         # 新颖 × 不愉悦 × 紧迫 → 恐惧 (降低基线权重)
         fear = 0.0
         if cp < 0.5 and ur > 0.2:
-            fear_base = (1 - cp) * 0.4 + ur * 0.3
+            fear_base = (1 - cp) * 0.35 + ur * 0.25
             if gc < -0.5:  # 严重目标受阻放大
                 fear_base *= 1.3
             fear = self._f(fear_base)
@@ -115,7 +117,7 @@ class AppraisalEngine:
         panic = 0.0
         # 1. 自我归因的目标受阻 (Panksepp 核心)
         if gc < -0.2 and sec.agency == "self":
-            panic = self._f(abs(gc) * 0.5 + (1 - cp) * 0.3)
+            panic = self._f(abs(gc) * 0.65 + (1 - cp) * 0.25)
         # 2. 环境威胁 + 不愉悦/紧迫 (扩展覆盖)
         if (pl < -0.1 or ur > 0.5) and cp < 0.7:
             panic = max(panic, self._f(max(0, -pl) * 0.35 + (1 - cp) * 0.3 + ur * 0.1))
@@ -245,7 +247,7 @@ EVENT_SEC_PROFILES = {
     # ── 负向事件 ──
     "system_crash": SECFeatures(
         novelty=0.8, pleasantness=-0.7, goal_relevance=0.8,
-        goal_congruence=-0.8, coping_potential=0.2, agency="environment",
+        goal_congruence=-0.8, coping_potential=0.2, agency="self",
         certainty=0.2, urgency=0.9,
     ),
     "despair_crash": SECFeatures(
@@ -265,7 +267,7 @@ EVENT_SEC_PROFILES = {
     ),
     "master_offline": SECFeatures(
         novelty=0.6, pleasantness=-0.6, goal_relevance=0.8,
-        goal_congruence=-0.7, coping_potential=0.1, agency="other",
+        goal_congruence=-0.7, coping_potential=0.1, agency="self",
         certainty=0.3, urgency=0.6,
     ),
     "system_threat": SECFeatures(

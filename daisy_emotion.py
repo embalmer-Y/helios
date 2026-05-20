@@ -33,13 +33,13 @@ PANKSEPP_SYSTEMS = ["SEEKING", "PLAY", "CARE", "PANIC", "FEAR", "RAGE", "LUST"]
 # 值经过尺度化 (1 cycle ≈ 1s)
 CHRONOMETRY = {
     #                 τ_rise  τ_peak  τ_decay  inertia(自回归)
-    "SEEKING":       (0.3,    3.0,    8.0,     0.65),
-    "PLAY":          (0.4,    5.0,    15.0,    0.70),
-    "CARE":          (0.8,    8.0,    20.0,    0.75),
-    "PANIC":         (0.5,    8.0,    50.0,    0.82),  # τ_rise加速 (原1.5→0.5)
-    "FEAR":          (0.4,    2.0,    4.0,     0.55),  # τ_rise放缓 (原0.2→0.4), τ_decay加速 (原6→4)
-    "RAGE":          (0.5,    4.0,    12.0,    0.65),
-    "LUST":          (0.6,    4.0,    10.0,    0.68),
+    "SEEKING":       (1.0,    4.0,    3.0,     0.35),  # 最慢升 + 最快降
+    "PLAY":          (0.4,    3.0,    4.0,     0.35),
+    "CARE":          (0.6,    5.0,    5.0,     0.35),
+    "PANIC":         (0.5,    6.0,    5.0,     0.35),
+    "FEAR":          (0.4,    2.0,    3.0,     0.35),
+    "RAGE":          (0.5,    3.0,    4.0,     0.35),
+    "LUST":          (0.5,    3.0,    4.0,     0.35),
 }
 
 # X3: 对向过程 — 每个系统的天然对手
@@ -167,13 +167,11 @@ class AffectiveChronometer:
         """
         self.time_since_event += 1
 
-        # 衰减速率
+        # 衰减速率: 直接使用 inertia (自回归系数)
         if self.time_since_event > self.τ_peak:
-            # 过了峰值期 → 加速衰减
-            decay_inertia = math.exp(-1.0 / max(self.τ_decay, 0.5))
+            decay_inertia = self.inertia  # 低inertia → 快衰减
         else:
-            # 峰值期内 → 缓慢衰减
-            decay_inertia = 0.95
+            decay_inertia = 0.90  # 峰值期内缓衰减
 
         # 上升/衰减
         if self.target > self.activation + 0.01:
@@ -279,9 +277,9 @@ class OpponentRegulator:
         Solomon 核心: Net = A(t) - B(t), b-process 抵消 a-process
         """
         if target_system == self.name:
-            return -self.b_activation           # 抑制源
+            return -self.b_activation * 0.7     # 抑制源 (轻量)
         elif target_system == self.opponent:
-            return +self.b_activation * 0.5    # 激活对手 (适度)
+            return +self.b_activation * 0.35   # 激活对手 (轻量)
         return 0.0
 
 
