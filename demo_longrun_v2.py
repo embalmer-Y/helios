@@ -18,6 +18,7 @@ import os, sys, time, random, math, json, signal, argparse, re
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 sys.path.insert(0, '/home/radxa/project/helios')
 import types
@@ -629,7 +630,6 @@ def call_llm(overall, pa, nc, dv, thoughts, event, phi_val,
     phi_label = "最低" if phi_val < 0.2 else "专注" if phi_val < 0.4 else \
                 "反思" if phi_val < 0.6 else "心流" if phi_val < 0.8 else "巅峰"
 
-    # v2: 更丰富的情感上下文
     pa_details = ", ".join(f"{k}={v:.2f}" for k, v in sorted(pa.items())
                            if v > 0.05)
 
@@ -647,21 +647,34 @@ def call_llm(overall, pa, nc, dv, thoughts, event, phi_val,
 
     for attempt in range(3):
         try:
-            resp = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=max_tok,
-                temperature=min(0.75 * (1 + 0.2 * phi_val), 1.1),
-                timeout=40,
-            )
+            # ★ 硬超时: ThreadPoolExecutor 保证 45s 后必然返回
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    client.chat.completions.create,
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=max_tok,
+                    temperature=min(0.75 * (1 + 0.2 * phi_val), 1.1),
+                )
+                resp = future.result(timeout=45)
             text = resp.choices[0].message.content.strip()
             tokens = resp.usage.total_tokens
             state.total_tokens += tokens
             state.llm_calls += 1
             return _parse_json(text)
+
+        except FutureTimeout:
+            if attempt < 2:
+                time.sleep(5)
+                continue
+            state.llm_fails += 1
+            return {"language_output": "……",
+                    "semantic_understanding": "API超时",
+                    "metacognitive_reflection": "",
+                    "decision": {"type": "observe", "reason": "timeout"}}
 
         except Exception as e:
             if attempt < 2:
@@ -669,7 +682,7 @@ def call_llm(overall, pa, nc, dv, thoughts, event, phi_val,
                 continue
             state.llm_fails += 1
             return {"language_output": "……",
-                    "semantic_understanding": "思考中断",
+                    "semantic_understanding": f"异常:{str(e)[:30]}",
                     "metacognitive_reflection": "",
                     "decision": {"type": "observe", "reason": "fallback"}}
 
@@ -832,10 +845,12 @@ def checkpoint(run_dir: Path, ms: MemorySystem, phi_final: float):
 # ═══════════════════════════════════
 
 _last_heartbeat = 0
+_last_output = 0  # ★ 看门狗: 最后一次产出的时间
 
 def heartbeat(phi_final: float):
-    global _last_heartbeat
+    global _last_heartbeat, _last_output
     now = time.time()
+    _last_output = now  # ★ 更新看门狗
     if now - _last_heartbeat < 60:
         return
     _last_heartbeat = now
@@ -1269,11 +1284,18 @@ def run(hours: int = 24, resume: bool = False):
         # ── 心跳 ──
         heartbeat(phi_final)
 
-        # ── 延迟 ──
-        if fire_llm:
-            time.sleep(2 + random.random() * 3)
-        else:
-            time.sleep(0.3 + random.random() * 1.0)
+        # ── 看门狗: 120s 无产出 → 强制跳出 ──
+        if time.time() - _last_output > 120:
+            print(f"\n  🐕 看门狗: 120s 无产出，强制退出循环")
+            break
+
+        # ── 延迟 (用短步长防止卡死) ──
+        delay = (2 + random.random() * 3) if fire_llm else (0.3 + random.random() * 1.0)
+        for _ in range(int(delay / 0.5) + 1):
+            time.sleep(min(0.5, delay))
+            delay -= 0.5
+            if time.time() - _last_output > 120:
+                break
 
     # ═══════════════════════════════
     # 结束
@@ -1327,7 +1349,7 @@ def run(hours: int = 24, resume: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Helios 长时运行 v2")
-    parser.add_argument("--hours", type=float, default=24, help="运行时长")
+    parser.add_argument("--hours", type=float, default=1, help="运行时长")
     parser.add_argument("--resume", action="store_true", help="从存档恢复")
     args = parser.parse_args()
 
