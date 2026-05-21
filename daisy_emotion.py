@@ -168,6 +168,11 @@ class AffectiveChronometer:
         """
         self.time_since_event += 1
 
+        # 事件过后，目标缓慢回退到基线
+        if self.time_since_event > self.τ_peak:
+            reversion_rate = 1.0 - math.exp(-1.0 / max(self.τ_decay, 0.5))
+            self.target += (self.baseline - self.target) * reversion_rate * 0.3
+
         # 衰减速率: 直接使用 inertia (自回归系数)
         if self.time_since_event > self.τ_peak:
             decay_inertia = self.inertia  # 低inertia → 快衰减
@@ -244,7 +249,9 @@ class OpponentRegulator:
         # b-process 强度 = 基础增益 × a强度 × 暴露增强
         # 重复暴露 → b 更强 (Solomon 核心发现)
         exposure_boost = min(1.5, 1.0 + self.exposure_count * 0.02)
-        self.b_pending += a_intensity * self.b_gain * exposure_boost
+        added = a_intensity * self.b_gain * exposure_boost
+        # 上限: 最多积累 2.0 b_pending
+        self.b_pending = min(2.0, self.b_pending + added)
         self.b_delay_timer = int(self.b_delay)
 
     def tick(self, dt: float = 1.0):
@@ -267,6 +274,8 @@ class OpponentRegulator:
             # b-process 衰减 (更慢)
             decay_rate = 1.0 - math.exp(-1.0 / max(self.b_decay_τ, 0.5))
             self.b_activation *= (1 - decay_rate)
+            # 上限: Solomon模型应有饱和
+            self.b_activation = min(1.5, self.b_activation)
 
     def net_effect_on(self, target_system: str) -> float:
         """
@@ -300,7 +309,7 @@ class DaisySystemEngine:
     接口: 与 emotions.py 的 PankseppEmotionEngine 完全兼容
     """
 
-    def __init__(self, personality=None, mood_tracker=None):
+    def __init__(self, personality=None, mood_tracker=None, allostasis=None):
         # 7 个时序控制器
         self.systems: Dict[str, AffectiveChronometer] = {}
         for name in PANKSEPP_SYSTEMS:
@@ -314,6 +323,9 @@ class DaisySystemEngine:
         # X5: 人格 + 心境
         self.personality = personality  # PersonalityProfile | None
         self.mood_tracker = mood_tracker  # MoodTracker | None
+        
+        # X6: 异稳态调节器
+        self.allostasis = allostasis  # AllostaticRegulator | None
 
         # 历史
         self.state_history: List[AffectState] = []
@@ -380,19 +392,28 @@ class DaisySystemEngine:
         if self.personality is not None:
             for sys_name in PANKSEPP_SYSTEMS:
                 gain = self.personality.neuro_gains.get(sys_name, 1.0)
-                # 调制当前激活 (gain ≠ 1.0 时偏离基线)
                 if abs(gain - 1.0) > 0.01:
                     sys = self.systems[sys_name]
                     sys.activation *= gain
                     sys.activation = clamp(sys.activation, 0.0, 1.0)
 
-        # ── 第六步: 稳态压力 (v2.5 兼容) ──
-        self._apply_homeostatic_pressure()
-
-        # ── 第七步: X1 汇总 → 7维矢量 ──
+        # ── 第六步: X1 汇总 → 7维矢量 ──
         activations = {n: s.activation for n, s in self.systems.items()}
 
-        # valence / arousal 加权平均
+        # ── 第六点五步: X6 异稳态调节 ──
+        if self.allostasis is not None:
+            # 先调节激活
+            regulated = self.allostasis.regulate(activations)
+            for sys_name in PANKSEPP_SYSTEMS:
+                self.systems[sys_name].activation = regulated.get(
+                    sys_name, self.systems[sys_name].activation
+                )
+            # 用调节后的激活更新状态
+            self.allostasis.update(regulated)
+            # 重新汇总
+            activations = {n: s.activation for n, s in self.systems.items()}
+
+        # ── 第七步: valence/arousal 加权 ──
         total_valence = 0.0
         total_arousal = 0.0
         total_weight = 0.0
