@@ -279,11 +279,16 @@ class QQBotClient:
 
     def is_connected(self) -> bool:
         """WebSocket 是否已连接"""
-        return (
-            self._ws is not None
-            and self._ws.sock is not None
-            and self._ws.sock.connected
-        )
+        if self._ws is None:
+            return False
+        try:
+            sock = self._ws.sock
+            if sock is None:
+                return False
+            # SSL 和普通 socket 兼容
+            return getattr(sock, 'connected', True)
+        except Exception:
+            return False
 
     # ── 内部: WebSocket 主循环 ───────────────────
 
@@ -389,7 +394,7 @@ class QQBotClient:
                 break
 
     def _send_heartbeat(self):
-        if self._ws and self._ws.sock and self._ws.sock.connected:
+        if self._ws and self._ws.sock:
             try:
                 self._ws.send(json.dumps({
                     "op": OP_HEARTBEAT,

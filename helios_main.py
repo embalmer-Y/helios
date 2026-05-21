@@ -31,6 +31,13 @@ from typing import Optional
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# ── 加载 .env ──
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass
+
 # ── 核心模块 ──
 from daisy_emotion import DaisySystemEngine, PANKSEPP_SYSTEMS
 from allostasis import AllostaticRegulator, AllostasisConfig
