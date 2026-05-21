@@ -44,10 +44,14 @@ from allostasis import AllostaticRegulator, AllostasisConfig
 from mood_tracker import MoodTracker
 from personality import PersonalityProfile
 from autobiographical import AutobiographicalStore
+from memory_system import MemorySystem
 from regulation import RegulationEngine
 from io_qq import QQBotClient, QQMessage
 from llm_speech import LLMSpeechGenerator, SpeechContext
 from helios_utils import clamp
+from utils.persistence import StatePersistence
+from drives import DriveOracle, HeliosSnapshot
+from habituation import HabituationTracker
 
 try:
     from phi import UnifiedPhi
@@ -60,6 +64,30 @@ try:
     HAS_NEUROCHEM = True
 except ImportError:
     HAS_NEUROCHEM = False
+
+# ── EventSource 插件抽象 ──
+from core.event_source import EventSource
+from core.separation_source import SeparationAnxietySource
+from core.qq_event_source import QQEventSource
+from core.drive_source import InternalDriveSource
+from core.helios_state import HeliosState
+
+# ── Passive Reply Pipeline ──
+import importlib.util as _ilu
+
+_sec_eval_path = str(PROJECT_ROOT / "io" / "llm_sec_evaluator.py")
+_sec_eval_spec = _ilu.spec_from_file_location("helios_io_llm_sec_evaluator", _sec_eval_path)
+_sec_eval_mod = _ilu.module_from_spec(_sec_eval_spec)
+sys.modules["helios_io_llm_sec_evaluator"] = _sec_eval_mod
+_sec_eval_spec.loader.exec_module(_sec_eval_mod)
+LLMSECEvaluator = _sec_eval_mod.LLMSECEvaluator
+
+_rp_path = str(PROJECT_ROOT / "io" / "response_pipeline.py")
+_rp_spec = _ilu.spec_from_file_location("helios_io_response_pipeline", _rp_path)
+_rp_mod = _ilu.module_from_spec(_rp_spec)
+sys.modules["helios_io_response_pipeline"] = _rp_mod
+_rp_spec.loader.exec_module(_rp_mod)
+ResponsePipeline = _rp_mod.ResponsePipeline
 
 
 # ═══════════════════════════════════════════════════
@@ -139,6 +167,10 @@ class Helios:
         self.mood = MoodTracker()
         self.personality = PersonalityProfile()
         
+        # ── 持久化 ──
+        self.persistence = StatePersistence(self.cfg.DATA_DIR)
+        self._load_persisted_state()
+        
         # 注入依赖
         self.daisy.allostasis = self.allostasis
         self.daisy.mood_tracker = self.mood
@@ -148,10 +180,17 @@ class Helios:
         self.neurochem = NeurochemState() if HAS_NEUROCHEM else None
         self.phi_engine = UnifiedPhi() if HAS_PHI else None
         
+        # ── 习惯化追踪器 ──
+        self.habituation = HabituationTracker()
+        
         # 记忆
         self.autobio = AutobiographicalStore(
             os.path.join(self.cfg.DATA_DIR, "autobio.jsonl"),
             auto_flush=True
+        )
+        self.memory_system = MemorySystem(
+            working_capacity=15,
+            episodic_capacity=500,
         )
         
         # ── 情感调节引擎 (G1+G2) ──
@@ -162,6 +201,9 @@ class Helios:
         )
         # 加载已有记忆
         self.regulation.load()
+        
+        # ── 驱动神谕 (Free Energy Drives) ──
+        self.drive_oracle = DriveOracle()
         
         # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
         self.qq: Optional[QQBotClient] = None
@@ -192,6 +234,25 @@ class Helios:
         self._last_master_contact = time.time()
         self._separation_anxiety = 0.0
         
+        # ── EventSource 注册表 ──
+        # Register all pluggable event sources. Each is polled once per tick.
+        self._event_sources: list[EventSource] = []
+        
+        # SeparationAnxietySource — computes PANIC from elapsed separation time
+        self._separation_source = SeparationAnxietySource()
+        self._event_sources.append(self._separation_source)
+        
+        # QQEventSource — drains QQ message queue and evaluates via SEC
+        self._qq_event_source = QQEventSource(
+            msg_queue=self._msg_queue,
+            sec_evaluator=_KeywordSECEvaluator(),
+        )
+        self._event_sources.append(self._qq_event_source)
+        
+        # InternalDriveSource — maps dominant drive urgency to Panksepp triggers
+        self._drive_source = InternalDriveSource()
+        self._event_sources.append(self._drive_source)
+        
         # ── LLM 语音生成 (G3) ──
         self.speech = None
         if self.cfg.LLM_SPEECH_ENABLED:
@@ -203,10 +264,29 @@ class Helios:
             except Exception as e:
                 self.log.warning(f"LLM 语音生成初始化失败: {e}")
         
+        # ── Passive Reply Pipeline (SEC + ResponsePipeline) ──
+        self.sec_evaluator = LLMSECEvaluator(
+            model=self.cfg.LLM_MODEL,
+            api_key=self.cfg.LLM_API_KEY,
+            base_url=self.cfg.LLM_BASE_URL,
+        )
+        self.response_pipeline = ResponsePipeline(
+            llm_speech=self.speech,
+            memory_system=self.memory_system,
+            autobio_store=self.autobio,
+            model=self.cfg.LLM_MODEL,
+            api_key=self.cfg.LLM_API_KEY,
+            base_url=self.cfg.LLM_BASE_URL,
+        )
+        
         # ── 运行时状态 ──
         self.last_dominant = None
         self.last_valence = 0.0
         self.last_phi = 0.0
+        
+        # ── 记忆巩固调度 (Requirement 20) ──
+        self._low_phi_counter: int = 0          # consecutive ticks with phi < 0.3
+        self._ticks_since_consolidation: int = 0  # ticks elapsed since last consolidation
         
         self.log.info("Helios 核心初始化完成")
     
@@ -232,48 +312,152 @@ class Helios:
         self.log.addHandler(ch)
     
     # ═══════════════════════════════════════════
-    # 事件采集（后续扩展）
+    # 持久化 (personality + allostasis)
     # ═══════════════════════════════════════════
     
-    def _collect_events(self) -> dict:
+    def _load_persisted_state(self):
         """
-        采集外部事件 → Panksepp 触发矢量
+        Load personality and allostasis from disk on startup.
         
-        G4: QQBotClient 回调 → 消息队列 → 情感分析
-        分离焦虑: 指数增长的自发 PANIC
+        If files are missing or corrupted, StatePersistence returns None
+        and we keep the freshly-initialized defaults.
         """
-        triggers: dict[str, float] = {}
+        # -- Personality --
+        personality_data = self.persistence.load_personality()
+        if personality_data is not None:
+            traits = personality_data.get("traits", {})
+            self.personality.openness = traits.get("openness", self.personality.openness)
+            self.personality.extraversion = traits.get("extraversion", self.personality.extraversion)
+            self.personality.agreeableness = traits.get("agreeableness", self.personality.agreeableness)
+            self.personality.neuroticism = traits.get("neuroticism", self.personality.neuroticism)
+            self.personality.conscientiousness = traits.get("conscientiousness", self.personality.conscientiousness)
+            self.personality.total_emotion_cycles = personality_data.get("total_emotion_cycles", 0)
+            self.personality._recompute()
+            self.log.info("Loaded personality state from disk")
+        else:
+            self.log.info("No personality state found; using defaults")
         
-        # 分离焦虑 (指数累积)
+        # -- Allostasis --
+        allostasis_data = self.persistence.load_allostasis()
+        if allostasis_data is not None:
+            # Restore setpoints
+            setpoints = allostasis_data.get("setpoints", {})
+            for sys_name, sp_val in setpoints.items():
+                if sys_name in self.allostasis.states:
+                    self.allostasis.states[sys_name].setpoint = sp_val
+            # Restore counters
+            self.allostasis.fatigue_cycles = allostasis_data.get("fatigue_cycles", 0)
+            self.allostasis.recovery_cycles = allostasis_data.get("recovery_cycles", 0)
+            self.allostasis.total_cycles = allostasis_data.get("total_cycles", 0)
+            self.log.info("Loaded allostasis state from disk")
+        else:
+            self.log.info("No allostasis state found; using defaults")
+    
+    def _persist_state(self):
+        """Save personality and allostasis state to disk."""
+        try:
+            self.persistence.save_personality(self.personality)
+        except Exception as e:
+            self.log.warning(f"Failed to save personality: {e}")
+        try:
+            self.persistence.save_allostasis(self.allostasis)
+        except Exception as e:
+            self.log.warning(f"Failed to save allostasis: {e}")
+        self.log.debug("Periodic state persistence complete (tick %d)", self.tick_count)
+    
+    # ═══════════════════════════════════════════
+    # 事件采集（EventSource 注册表模式）
+    # ═══════════════════════════════════════════
+    
+    def _collect_events(self) -> tuple[dict[str, float], list[dict]]:
+        """
+        采集外部事件 → Panksepp 触发矢量 + 待回复消息
+        
+        Iterates over all registered EventSources, collects trigger vectors
+        and messages, then merges triggers using max-value semantics for
+        overlapping Panksepp system keys.
+        
+        Returns:
+            Tuple of (merged_triggers, pending_messages).
+        """
+        # Build HeliosState snapshot for event sources to read
         sep_hours = (time.time() - self._last_master_contact) / 3600
-        self._separation_anxiety = min(1.0, 1 - 2.71828 ** (-0.4 * sep_hours))
-        if self._separation_anxiety > 0.2:
-            triggers["PANIC"] = self._separation_anxiety
+        state = HeliosState(
+            tick=self.tick_count,
+            timestamp=time.time(),
+            separation_hours=sep_hours,
+            drive_dominant=getattr(self, '_last_drive_dominant', ''),
+            drive_urgency=getattr(self, '_last_drive_urgency', 0.0),
+        )
         
-        # 消费消息队列 (线程安全)
-        while True:
+        # Poll all registered event sources
+        merged_triggers: dict[str, float] = {}
+        all_messages: list[dict] = []
+        
+        for source in self._event_sources:
             try:
-                msg: QQMessage = self._msg_queue.get_nowait()
-            except queue.Empty:
-                break
-            
-            self.log.info(f"📩 QQ [{msg.author_id[:10]}]: {msg.text[:60]}")
-            
-            # 自动捕获 target_id (第一条私聊消息的发送者)
-            if not self.cfg.QQ_TARGET_ID and not msg.is_group:
-                self.cfg.QQ_TARGET_ID = msg.author_id
-                self.log.info(f"🎯 自动捕获主人 openid: {msg.author_id}")
-            
-            # 任何消息 → 重置分离焦虑
+                src_triggers = source.poll(state)
+                # Merge using max-value semantics for overlapping keys
+                for system, intensity in src_triggers.items():
+                    merged_triggers[system] = max(
+                        merged_triggers.get(system, 0.0), intensity
+                    )
+                all_messages.extend(source.get_messages())
+            except Exception as e:
+                self.log.warning(
+                    "EventSource %s poll failed: %s",
+                    type(source).__name__, e,
+                )
+        
+        # Handle QQ-specific side effects: reset separation on message receipt
+        if all_messages:
             self._last_master_contact = time.time()
             self._separation_anxiety = 0.0
-            
-            # 轻量情感分析 → Panksepp
-            event = _qq_text_to_panksepp(msg.text)
-            for sys_name, intensity in event.items():
-                triggers[sys_name] = max(triggers.get(sys_name, 0), intensity)
+            for msg in all_messages:
+                text = msg.get("text", "")
+                user_id = msg.get("user_id", "")
+                self.log.info(f"📩 QQ [{user_id[:10]}]: {text[:60]}")
+                
+                # Auto-capture target_id from first private message
+                if not self.cfg.QQ_TARGET_ID and not msg.get("is_group", False):
+                    self.cfg.QQ_TARGET_ID = user_id
+                    self.log.info(f"🎯 自动捕获主人 openid: {user_id}")
         
-        return triggers
+        # Track separation anxiety for state queries
+        self._separation_anxiety = min(1.0, 1 - 2.71828 ** (-0.4 * sep_hours))
+        
+        return merged_triggers, all_messages
+    
+    # ═══════════════════════════════════════════
+    # Significant Event Recording (Requirement 13.2)
+    # ═══════════════════════════════════════════
+    
+    def _record_significant_event(self, phi: float, valence: float,
+                                  arousal: float, dominant: str,
+                                  events: dict) -> None:
+        """
+        Record a significant event to EpisodicMemory when threshold is met.
+        
+        Threshold: phi > 0.3 OR |valence| > 0.5
+        No recording when: phi <= 0.3 AND |valence| <= 0.5
+        
+        The MemoryItem stored includes emotional_tag, valence, arousal, phi,
+        and timestamp (set automatically by MemoryItem).
+        """
+        if phi > 0.3 or abs(valence) > 0.5:
+            trigger_desc = "+".join(events.keys()) if events else "spontaneous"
+            summary = (
+                f"[{dominant or 'neutral'}] {trigger_desc} "
+                f"(V={valence:+.2f} Φ={phi:.2f})"
+            )
+            self.memory_system.remember(
+                summary=summary,
+                valence=valence,
+                arousal=arousal,
+                phi=phi,
+                scene=trigger_desc,
+                decision=f"dominant={dominant}",
+            )
     
     # ═══════════════════════════════════════════
     # 主循环
@@ -315,11 +499,20 @@ class Helios:
         """单次心跳"""
         self.tick_count += 1
         
-        # 1. 采集事件
-        events = self._collect_events()
+        # 1. 采集事件 (EventSource registry with max-value merging)
+        events, messages = self._collect_events()
         
-        # 2. DAISY 情感引擎
-        state = self.daisy.cycle(events if events else {})
+        # 2. 习惯化 — 重复刺激 → 反应递减 (Requirement 14)
+        for key, intensity in list(events.items()):
+            novelty = self.habituation.get_novelty_factor(
+                key, self.tick_count, arousal=self.last_valence
+            )
+            events[key] = intensity * novelty
+            if intensity > 0.01:
+                self.habituation.register_exposure(key, self.tick_count)
+        
+        # 3. DAISY 情感引擎 (with neurochem modulation)
+        state = self.daisy.cycle(events if events else {}, neurochem=self.neurochem)
         
         # 3. Φ 意识测量
         phi = 0.0
@@ -336,7 +529,20 @@ class Helios:
         intensity = max(state.panksepp_activation.values()) if state.panksepp_activation else 0
         self.personality.adapt_from_snapshot(dominant, intensity)
         
-        # 6. 自传记忆 (有意义的时刻)
+        # 6. 驱动计算 (DriveOracle → HeliosState)
+        sep_secs = time.time() - self._last_master_contact
+        snapshot = HeliosSnapshot(
+            valence=state.valence,
+            arousal=state.arousal,
+            time_since_last_interaction=sep_secs,
+            phi_value=phi,
+            cognitive_load=state.arousal,  # approximate via arousal
+        )
+        drive_vector = self.drive_oracle.cycle(snapshot, neurochem=self.neurochem)
+        self._last_drive_dominant = drive_vector.dominant
+        self._last_drive_urgency = drive_vector.total
+        
+        # 7. 自传记忆 (有意义的时刻)
         if self.tick_count % 10 == 0 and (phi > 0.3 or abs(state.valence) > 0.5):
             self.autobio.record(
                 panksepp=dict(state.panksepp_activation),
@@ -353,21 +559,122 @@ class Helios:
                 cycle=self.tick_count,
             )
         
-        # 7. 运行时状态
+        # 7b. Significant event → Episodic Memory (Requirement 13.2)
+        #     Record when phi > 0.3 OR |valence| > 0.5
+        self._record_significant_event(
+            phi=phi,
+            valence=state.valence,
+            arousal=state.arousal,
+            dominant=dominant,
+            events=events,
+        )
+        
+        # 8. 运行时状态
         self.last_dominant = dominant
         self.last_valence = state.valence
         self.last_phi = phi
         
-        # 8. 情感调节引擎
+        # 9. 被动回复管道 (Passive Reply Pipeline)
+        #    Evaluate each incoming message via SEC, generate + send reply if warranted
+        if messages:
+            # Build a HeliosState for the response pipeline
+            reply_state = HeliosState(
+                tick=self.tick_count,
+                timestamp=time.time(),
+                valence=state.valence,
+                arousal=state.arousal,
+                dominant_system=dominant or "",
+                phi=phi,
+                mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                personality_traits=self.personality._trait_dict(),
+            )
+            for msg in messages:
+                text = msg.get("text", "")
+                user_id = msg.get("user_id", "unknown")
+                
+                # Get recent conversation context for SEC evaluation
+                context = self.response_pipeline.get_history(user_id)
+                context_texts = [ex.user_message for ex in context[-3:]]
+                
+                # Evaluate message via LLM SEC
+                sec_result = self.sec_evaluator.evaluate(text, context=context_texts)
+                
+                # Hold message + SEC result in Working Memory for immediate context
+                self.memory_system.hold(
+                    summary=f"QQ [{user_id[:8]}]: {text[:60]}",
+                    content={"text": text, "user_id": user_id, "sec_result": sec_result},
+                    valence=sec_result.get("pleasantness", 0),
+                    arousal=sec_result.get("novelty", 0),
+                    phi=phi,
+                )
+                
+                # Decide whether to reply and generate
+                reply = None
+                if self.response_pipeline.should_reply(msg, sec_result):
+                    reply = self.response_pipeline.generate_reply(
+                        msg, reply_state, sec_result
+                    )
+                    if reply and self.qq and self.qq.is_connected():
+                        ok = self.qq.send_c2c(user_id, reply)
+                        if ok:
+                            self.log.info(f"💬 回复 [{user_id[:10]}]: {reply[:60]}")
+                        else:
+                            self.log.warning(f"💬 回复发送失败 [{user_id[:10]}]")
+                    elif reply:
+                        self.log.info(f"💬 回复 (无QQ) [{user_id[:10]}]: {reply[:60]}")
+                
+                # Record exchange in conversation history (regardless of reply outcome)
+                emotional_context = {
+                    "dominant_system": dominant or "",
+                    "valence": state.valence,
+                    "arousal": state.arousal,
+                    "mood_label": self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                }
+                self.response_pipeline.record_exchange(
+                    user_id=user_id,
+                    message=text,
+                    reply=reply,
+                    emotional_context=emotional_context,
+                    sec_result=sec_result,
+                )
+        
+        # 10. 情感调节引擎 (with drive-regulation unification)
         from datetime import datetime
         hour = datetime.now().hour
         action = self.regulation.tick(
             panksepp=state.panksepp_activation or {},
             valence=state.valence,
             hour_of_day=hour,
+            drive_urgency=self._last_drive_urgency,
+            drive_dominant=self._last_drive_dominant,
         )
         if action:
             self._handle_action(action)
+        
+        # 10b. 记忆巩固调度 (Requirement 20: consolidation scheduling)
+        #      Trigger when phi < 0.3 for 300 consecutive ticks, rate limit 600 ticks
+        self._ticks_since_consolidation += 1
+        if phi < 0.3:
+            self._low_phi_counter += 1
+        else:
+            self._low_phi_counter = 0
+        
+        if (self._low_phi_counter > 300
+                and self._ticks_since_consolidation > 600):
+            stats = self.memory_system.consolidate(phi)
+            if stats:
+                self._ticks_since_consolidation = 0
+                self._low_phi_counter = 0
+                self.log.info(
+                    "🧠 记忆巩固完成 — patterns_extracted=%d, memories_promoted=%d, items_pruned=%d",
+                    stats.get("patterns_extracted", 0),
+                    stats.get("memories_promoted", 0),
+                    stats.get("items_pruned", 0),
+                )
+        
+        # 11. 定期持久化 (每600 ticks)
+        if self.tick_count % 600 == 0:
+            self._persist_state()
     
     def _handle_action(self, action: str):
         """
@@ -447,6 +754,17 @@ class Helios:
                 if narratives:
                     recent_memory = "；".join(narratives[:2])
 
+            # MemorySystem 记忆上下文 (情感相关记忆)
+            memory_context = ""
+            if self.memory_system:
+                try:
+                    memory_context = self.memory_system.get_llm_context(
+                        valence=self.last_valence,
+                        arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+                    )
+                except Exception as e:
+                    self.log.debug(f"获取记忆上下文失败: {e}")
+
             # 人格简述
             traits = self.personality._trait_dict()
             trait_parts = []
@@ -469,6 +787,7 @@ class Helios:
                 action_type=action,
                 time_since_contact=time_desc,
                 recent_memory=recent_memory,
+                memory_context=memory_context,
                 personality_summary=personality,
                 total_messages_sent=self.speech.total_generated,
             )
@@ -518,6 +837,9 @@ class Helios:
         """优雅退出"""
         elapsed = time.time() - self.start_time
         self.log.info(f"Helios 退出 · 运行 {elapsed/60:.1f}min · {self.tick_count} ticks")
+        
+        # 持久化 personality + allostasis
+        self._persist_state()
         
         # 停止 QQ Bot
         if self.qq:
@@ -593,6 +915,19 @@ def _qq_text_to_panksepp(text: str) -> dict[str, float]:
             triggers[system] = min(score, 0.9)
 
     return triggers
+
+
+class _KeywordSECEvaluator:
+    """Adapts the keyword-based _qq_text_to_panksepp function to the SECEvaluator protocol.
+    
+    This satisfies the QQEventSource's SECEvaluator dependency using the existing
+    lightweight keyword matching logic. Will be replaced by LLMSECEvaluator in a
+    future task.
+    """
+
+    def evaluate(self, text: str) -> dict[str, float]:
+        """Evaluate text using keyword matching, return Panksepp trigger dictionary."""
+        return _qq_text_to_panksepp(text)
 
 
 # ═══════════════════════════════════════════════════

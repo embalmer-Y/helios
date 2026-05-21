@@ -464,27 +464,58 @@ class DaisySystemEngine:
         return state
 
     def _apply_neurochem_modulation(self, neurochem):
-        """神经化学对衰减的调制"""
-        for name, sys in self.systems.items():
-            # 兼容 NeurochemState 接口
-            nc_map = {
-                "SEEKING": ("dopamine", +0.3),
-                "PLAY":    ("opioids", +0.2),
-                "CARE":    ("oxytocin", +0.3),
-                "PANIC":   ("opioids", -0.5),
-                "FEAR":    ("cortisol", +0.4),
-                "RAGE":    ("cortisol", +0.2),
-                "LUST":    ("dopamine", +0.3),
-            }
-            if name in nc_map:
-                nc_name, sensitivity = nc_map[name]
-                nc_level = getattr(neurochem, nc_name, None)
-                if nc_level is not None:
-                    current = nc_level.current if hasattr(nc_level, 'current') else nc_level
-                    # 正敏感 → 高NC时衰减变慢
-                    if sensitivity > 0:
-                        factor = 1.0 - 0.15 * sensitivity * (current - 0.5)
-                        sys.activation *= max(0.9, factor)
+        """
+        神经化学对情感动力学的调制
+
+        核心规则:
+          - Dopamine > 0.5 → 减缓 SEEKING 衰减速率，比例为 (dopamine - 0.5)
+          - Cortisol > 0.5 → 增加 FEAR 激活，比例为 (cortisol - 0.5)
+
+        同时保留通用调制逻辑 (其余系统)
+        """
+        # ── 专项调制: Dopamine → SEEKING 衰减减缓 ──
+        # 始终重置 SEEKING inertia 到基线, 再按 dopamine 调制
+        seeking_sys = self.systems["SEEKING"]
+        original_inertia = CHRONOMETRY["SEEKING"][3]  # 基础 inertia
+        seeking_sys.inertia = original_inertia  # reset each cycle
+
+        dopamine_level = getattr(neurochem, 'dopamine', None)
+        if dopamine_level is not None:
+            da_current = dopamine_level.current if hasattr(dopamine_level, 'current') else dopamine_level
+            if da_current > 0.5:
+                excess = da_current - 0.5  # 0.0 ~ 0.5
+                # 减缓 SEEKING 衰减: 提高 inertia → 激活衰减更慢
+                # excess=0.5 时 inertia 最多增加 0.5*(1-原始inertia), 即趋向 1.0 (不衰减)
+                boost = excess * (1.0 - original_inertia)
+                seeking_sys.inertia = original_inertia + boost
+
+        # ── 专项调制: Cortisol → FEAR 激活增加 ──
+        cortisol_level = getattr(neurochem, 'cortisol', None)
+        if cortisol_level is not None:
+            cort_current = cortisol_level.current if hasattr(cortisol_level, 'current') else cortisol_level
+            if cort_current > 0.5:
+                excess = cort_current - 0.5  # 0.0 ~ 0.5
+                # 增加 FEAR 激活: 比例添加, 上限不超过 1.0
+                fear_sys = self.systems["FEAR"]
+                fear_sys.activation = min(1.0, fear_sys.activation + excess * 0.5)
+
+        # ── 通用调制: 其余系统 (保留原有行为) ──
+        nc_map = {
+            "PLAY":    ("opioids", +0.2),
+            "CARE":    ("oxytocin", +0.3),
+            "PANIC":   ("opioids", -0.5),
+            "RAGE":    ("cortisol", +0.2),
+            "LUST":    ("dopamine", +0.3),
+        }
+        for name, (nc_name, sensitivity) in nc_map.items():
+            sys = self.systems[name]
+            nc_level = getattr(neurochem, nc_name, None)
+            if nc_level is not None:
+                current = nc_level.current if hasattr(nc_level, 'current') else nc_level
+                # 正敏感 → 高NC时衰减变慢
+                if sensitivity > 0:
+                    factor = 1.0 - 0.15 * sensitivity * (current - 0.5)
+                    sys.activation *= max(0.9, factor)
 
     def _apply_homeostatic_pressure(self):
         """v2.5: 连胜压力 — 主导久了衰减加速"""

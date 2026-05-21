@@ -24,10 +24,13 @@ import time
 import math
 import json
 import uuid
+import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Any, Set
 from collections import OrderedDict
 from helios_utils import clamp, safe_div
+
+logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════
@@ -74,7 +77,11 @@ class MemoryItem:
         return (time.time() - self.timestamp) > self.ttl
 
     def recalc_importance(self):
-        """重新计算重要性 = 情感强度 × Φ × 访问次数衰减"""
+        """重新计算重要性 = sqrt(V² + A²) × P × (1 + log(1 + C) × 0.1)
+
+        Formula: importance = sqrt(valence² + arousal²) × phi × (1 + log(1 + access_count) × 0.1)
+        Minimum importance is clamped to 0.05 to avoid zero-importance items.
+        """
         intensity = math.sqrt(self.valence ** 2 + self.arousal ** 2)
         access_bonus = math.log(1 + self.access_count) * 0.1
         self.importance = max(0.05, clamp(intensity * self.phi * (1.0 + access_bonus)))
@@ -104,15 +111,21 @@ class WorkingMemory:
     - 环形缓冲，容量上限 (默认 15)
     - TTL 自动过期 (默认 300s)
     - 最近访问优先保留
-    - 高重要性条目提升到情景记忆
+    - 高重要性条目提升到情景记忆 (importance > 0.5)
 
     理论：Baddeley 工作记忆模型 + Miller 7±2
     """
 
-    def __init__(self, capacity: int = 15, default_ttl: float = 300.0):
+    def __init__(self, capacity: int = 15, default_ttl: float = 300.0,
+                 episodic_memory: 'EpisodicMemory' = None):
         self.capacity = capacity
         self.default_ttl = default_ttl
         self.items: OrderedDict[str, MemoryItem] = OrderedDict()
+        self._episodic: Optional['EpisodicMemory'] = episodic_memory
+
+    def set_episodic_memory(self, episodic: 'EpisodicMemory'):
+        """Set the episodic memory reference for promotion."""
+        self._episodic = episodic
 
     def hold(self, summary: str, content: Dict = None,
              valence: float = 0, arousal: float = 0, phi: float = 0,
@@ -135,13 +148,33 @@ class WorkingMemory:
         return item
 
     def recall(self, limit: int = 5) -> List[MemoryItem]:
-        """回忆当前工作记忆中的内容 (最近 + 最重要的)"""
+        """回忆当前工作记忆中的内容 (最近 + 最重要的)
+
+        During recall:
+        - Items exceeding their TTL are expired
+        - Items with importance > 0.5 are promoted to EpisodicMemory before expiry
+        - Debug messages are logged for each promotion and expiration
+        """
         now = time.time()
         active = [it for it in self.items.values()
                   if not it.is_expired()]
-        # 清理过期的
-        expired = [k for k, v in self.items.items() if v.is_expired()]
-        for k in expired:
+        # 清理过期的 — promote important ones first
+        expired_keys = [k for k, v in self.items.items() if v.is_expired()]
+        for k in expired_keys:
+            item = self.items[k]
+            if item.importance > 0.5:
+                # Promote to episodic memory before expiry
+                promoted = self._promote_item(item)
+                if promoted:
+                    logger.debug(
+                        "WorkingMemory: promoted item '%s' (importance=%.3f) to EpisodicMemory before expiry",
+                        item.summary[:40], item.importance,
+                    )
+            else:
+                logger.debug(
+                    "WorkingMemory: expired item '%s' (age=%.1fs, ttl=%.1fs)",
+                    item.summary[:40], now - item.timestamp, item.ttl,
+                )
             del self.items[k]
         # 按最近访问 + 重要性排序
         active.sort(key=lambda it: it.importance * 0.6 + 
@@ -155,16 +188,50 @@ class WorkingMemory:
         """将工作记忆提升为情景记忆 (标记为 episodic 类型)"""
         item = self.items.get(item_id)
         if item:
-            item.memory_type = "episodic"
-            item.ttl = float("inf")
-            item.recalc_importance()
+            promoted = self._promote_item(item)
             del self.items[item_id]
-            return item
+            if promoted:
+                logger.debug(
+                    "WorkingMemory: manually promoted item '%s' to EpisodicMemory",
+                    item.summary[:40],
+                )
+            return promoted
         return None
 
+    def _promote_item(self, item: MemoryItem) -> Optional[MemoryItem]:
+        """Promote a working memory item to episodic memory.
+
+        If an EpisodicMemory reference is set, records the item there.
+        Otherwise, converts the item to episodic type and returns it.
+        """
+        item.memory_type = "episodic"
+        item.ttl = float("inf")
+        item.recalc_importance()
+        if self._episodic is not None:
+            self._episodic.record(
+                summary=item.summary,
+                content=item.content,
+                valence=item.valence,
+                arousal=item.arousal,
+                phi=item.phi,
+            )
+        return item
+
     def _evict_oldest(self):
-        """淘汰最旧的条目"""
+        """淘汰最旧的条目 — promote if important"""
         if self.items:
+            oldest_key, oldest_item = next(iter(self.items.items()))
+            if oldest_item.importance > 0.5:
+                self._promote_item(oldest_item)
+                logger.debug(
+                    "WorkingMemory: promoted item '%s' (importance=%.3f) to EpisodicMemory on capacity eviction",
+                    oldest_item.summary[:40], oldest_item.importance,
+                )
+            else:
+                logger.debug(
+                    "WorkingMemory: evicted oldest item '%s' (importance=%.3f) due to capacity limit",
+                    oldest_item.summary[:40], oldest_item.importance,
+                )
             self.items.popitem(last=False)
 
     def _classify(self, valence: float, arousal: float) -> str:
@@ -188,18 +255,26 @@ class EpisodicMemory:
     - 按情感相似度检索
     - 按标签/时间范围过滤
     - 支持模式识别 (情感循环)
+    - 高重要性项目在修剪时提升到 AutobiographicalStore
 
     理论：Tulving 情景记忆 + Damasio 躯体标记
     """
 
-    def __init__(self, capacity: int = 500):
+    PROMOTION_THRESHOLD = 0.4  # Items above this importance are promoted before pruning
+
+    def __init__(self, capacity: int = 500, autobiographical_store=None):
         self.capacity = capacity
         self.items: List[MemoryItem] = []
         self.total_recorded: int = 0
+        self._autobiographical_store = autobiographical_store
 
         # 情感模式统计
         self.emotion_transitions: Dict[str, int] = {}  # "fear→comfort": 3
         self._prev_tag: Optional[str] = None
+
+    def set_autobiographical_store(self, store):
+        """Set the AutobiographicalStore reference for promotion during pruning."""
+        self._autobiographical_store = store
 
     def record(self, summary: str, content: Dict = None,
                valence: float = 0, arousal: float = 0, phi: float = 0,
@@ -288,9 +363,51 @@ class EpisodicMemory:
                       key=lambda x: x[1], reverse=True)[:10]
 
     def _prune(self):
-        """按重要性修剪：保留最重要的"""
+        """按重要性修剪：保留最重要的，提升高重要性项目到 AutobiographicalStore。
+
+        Pruning strategy:
+        1. Sort items by importance (descending)
+        2. Items beyond capacity with importance > PROMOTION_THRESHOLD are promoted
+           to AutobiographicalStore before being discarded
+        3. Retain only the top `capacity` items
+        """
         self.items.sort(key=lambda it: it.importance, reverse=True)
+        if len(self.items) <= self.capacity:
+            return
+
+        # Items that will be discarded
+        discarded = self.items[self.capacity:]
+
+        # Promote high-importance discarded items to AutobiographicalStore
+        if self._autobiographical_store is not None:
+            for item in discarded:
+                if item.importance > self.PROMOTION_THRESHOLD:
+                    self._promote_to_autobiographical(item)
+                    logger.debug(
+                        "EpisodicMemory: promoted item '%s' (importance=%.3f) to AutobiographicalStore before prune",
+                        item.summary[:40], item.importance,
+                    )
+
         self.items = self.items[:self.capacity]
+
+    def _promote_to_autobiographical(self, item: MemoryItem):
+        """Promote an episodic memory item to the AutobiographicalStore."""
+        if self._autobiographical_store is None:
+            return
+        self._autobiographical_store.record(
+            panksepp={},
+            valence=item.valence,
+            arousal=item.arousal,
+            dominant=item.emotional_tag,
+            phi=item.phi,
+            narrative=item.summary,
+            event_trigger="episodic_prune_promotion",
+        )
+
+    def recalc_all_importance(self):
+        """Recalculate importance scores for all items (used during consolidation cycles)."""
+        for item in self.items:
+            item.recalc_importance()
 
     def _affect_similarity(self, item: MemoryItem, valence: float, arousal: float) -> float:
         """计算情感向量相似度"""
@@ -399,15 +516,35 @@ class SemanticMemory:
         )
 
     def decay(self, rate: float = 0.001):
-        """全局衰减：长期不访问的事实置信度下降"""
+        """
+        全局衰减：长期不访问的事实置信度下降。
+
+        规则:
+        - 7 天宽限期内不衰减
+        - 超过 7 天后，每多 idle 一天衰减 rate (默认 0.001)
+        - 置信度低于 0.15 时移除该事实
+        - 通过 know() 或 know_with_confidence() 访问会重置 idle 计时器
+        """
         now = time.time()
-        for key, item in list(self.facts.items()):
+        to_remove: List[str] = []
+        for key, item in self.facts.items():
             idle_days = (now - item.last_accessed) / 86400.0
-            if idle_days > 7:  # 一周不访问开始衰减
+            if idle_days > 7:  # 一周宽限期
+                excess_days = idle_days - 7
                 conf = item.content.get("confidence", 0.5)
-                item.content["confidence"] = max(0.1, conf - rate * idle_days)
-                if item.content["confidence"] < 0.15:
-                    del self.facts[key]
+                new_conf = conf - rate * excess_days
+                item.content["confidence"] = new_conf
+                if new_conf < 0.15:
+                    to_remove.append(key)
+        for key in to_remove:
+            # Clean up tag index
+            item = self.facts[key]
+            for tag, keys in list(self.concepts.items()):
+                if key in keys:
+                    keys.remove(key)
+                    if not keys:
+                        del self.concepts[tag]
+            del self.facts[key]
 
 
 # ═══════════════════════════════════════════════════
@@ -513,16 +650,26 @@ class MemoryConsolidator:
         self.autobiographical = autobiographical
         self.consolidation_count: int = 0
 
-    def consolidate(self, phi: float):
+    def consolidate(self, phi: float) -> Dict[str, int]:
         """
         执行一次巩固循环。
 
         低 Φ 时充分巩固，高 Φ 时跳过（清醒时不巩固）。
+
+        Returns:
+            Dict with counts: patterns_extracted, memories_promoted, items_pruned.
+            Empty dict if consolidation was skipped (phi too high or no candidates).
         """
         if phi > 0.3:
-            return  # 意识太活跃，不巩固
+            return {}  # 意识太活跃，不巩固
 
         self.consolidation_count += 1
+
+        # 0. 语义记忆衰减 — 巩固期间应用遗忘
+        self.semantic.decay()
+
+        # 0.5 重新计算所有情景记忆的重要性 (Requirement 17.4)
+        self.episodic.recalc_all_importance()
 
         # 1. 挑选值得巩固的情景记忆 (重要性 > 阈值)
         threshold = 0.25 if phi < 0.15 else 0.4
@@ -530,7 +677,11 @@ class MemoryConsolidator:
                       if it.importance > threshold and it.access_count >= 1]
 
         if not candidates:
-            return
+            return {"patterns_extracted": 0, "memories_promoted": 0, "items_pruned": 0}
+
+        # Track stats
+        patterns_extracted = 0
+        memories_promoted = 0
 
         # 2. 按情感标签聚类，抽象为语义模式
         clusters: Dict[str, List[MemoryItem]] = {}
@@ -555,6 +706,7 @@ class MemoryConsolidator:
                     name=f"emotion_pattern:{tag}",
                     pattern=pattern,
                 )
+                patterns_extracted += 1
 
         # 3. 为高 Φ 情景生成自传叙事 (降低阈值)
         for it in candidates:
@@ -565,10 +717,27 @@ class MemoryConsolidator:
                     valence=it.valence,
                     content={"source_id": it.id},
                 )
+                memories_promoted += 1
 
         # 4. 修剪低重要性情景记忆 (保留前 80%)
+        items_before = len(self.episodic.items)
         if len(self.episodic.items) > self.episodic.capacity * 0.8:
             self.episodic._prune()
+        items_pruned = items_before - len(self.episodic.items)
+
+        stats = {
+            "patterns_extracted": patterns_extracted,
+            "memories_promoted": memories_promoted,
+            "items_pruned": items_pruned,
+        }
+
+        logger.info(
+            "MemoryConsolidator: consolidation #%d complete — "
+            "patterns_extracted=%d, memories_promoted=%d, items_pruned=%d",
+            self.consolidation_count, patterns_extracted, memories_promoted, items_pruned,
+        )
+
+        return stats
 
 
 # ═══════════════════════════════════════════════════
@@ -685,12 +854,17 @@ class MemorySystem:
 
     def __init__(self,
                  working_capacity: int = 15,
-                 episodic_capacity: int = 500):
+                 episodic_capacity: int = 500,
+                 autobiographical_store=None):
         # 四个记忆存储
         self.working = WorkingMemory(capacity=working_capacity)
-        self.episodic = EpisodicMemory(capacity=episodic_capacity)
+        self.episodic = EpisodicMemory(capacity=episodic_capacity,
+                                       autobiographical_store=autobiographical_store)
         self.semantic = SemanticMemory()
         self.autobiographical = AutobiographicalMemory()
+
+        # Wire episodic reference into working memory for promotion
+        self.working.set_episodic_memory(self.episodic)
 
         # 巩固器 + 检索器
         self.consolidator = MemoryConsolidator(
@@ -707,6 +881,14 @@ class MemorySystem:
             "consolidations": 0,
             "autobio_moments": 0,
         }
+
+    def set_autobiographical_store(self, store):
+        """Set the AutobiographicalStore for episodic memory promotion during pruning.
+
+        This allows late-binding of the store (e.g. when MemorySystem is created
+        before the AutobiographicalStore is initialized).
+        """
+        self.episodic.set_autobiographical_store(store)
 
     # ── 记录 API ──
 
@@ -763,10 +945,17 @@ class MemorySystem:
 
     # ── 巩固 API ──
 
-    def consolidate(self, phi: float):
-        """执行记忆巩固 (低 Φ 时调用)"""
-        self.consolidator.consolidate(phi)
-        self.stats["consolidations"] += 1
+    def consolidate(self, phi: float) -> Dict[str, int]:
+        """执行记忆巩固 (低 Φ 时调用)
+
+        Returns:
+            Dict with consolidation stats (patterns_extracted, memories_promoted, items_pruned).
+            Empty dict if consolidation was skipped.
+        """
+        stats = self.consolidator.consolidate(phi)
+        if stats:
+            self.stats["consolidations"] += 1
+        return stats
 
     # ── LLM 集成 ──
 

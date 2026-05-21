@@ -44,6 +44,7 @@ class SpeechContext:
     time_since_contact: str = "最近"        # "5分钟前" / "2小时前" / "很久"
     recent_memory: str = ""                # 最近的自传记忆摘要
     personality_summary: str = ""          # Big Five 人格简述
+    memory_context: str = ""               # MemorySystem 检索的相关记忆上下文
 
     # 历史
     last_spoke_at: float = 0.0             # 上次说话时间戳
@@ -237,13 +238,18 @@ class LLMSpeechGenerator:
         if ctx.recent_memory:
             memory_hint = f"\n你想起了: {ctx.recent_memory}"
 
+        # MemorySystem 记忆上下文
+        memory_context_hint = ""
+        if ctx.memory_context:
+            memory_context_hint = f"\n{ctx.memory_context}"
+
         return f"""现在你想说话，因为: {ctx.action_type}
 
 情感: {emotion_desc}
 心情: 效价={ctx.valence:+.2f} 唤醒={ctx.arousal:.2f}
 心境: {ctx.mood_label}
 上次联系: {time_desc}
-你已经发了 {ctx.total_messages_sent} 条消息{memory_hint}
+你已经发了 {ctx.total_messages_sent} 条消息{memory_hint}{memory_context_hint}
 
 用 80 字以内，说一句发自内心的话："""
 

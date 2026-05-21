@@ -24,11 +24,14 @@ N1: 自传记忆持久化 (AutobiographicalStore)
 """
 
 import json
+import logging
 import time
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════
@@ -308,16 +311,21 @@ class AutobiographicalStore:
         return "\n".join(lines)
     
     # ── 持久化 ──
-    
+
     def flush(self):
-        """将所有未写入的时刻 flush 到磁盘"""
+        """将所有未写入的时刻 flush 到磁盘 (append-only JSONL)"""
         if not self.moments:
             return
         
+        start_idx = self._last_persisted_count
+        if start_idx >= len(self.moments):
+            # Nothing new to flush
+            self._unflushed_count = 0
+            return
+
         try:
-            with open(self.filepath, "a") as f:
-                # 只写入未持久化的
-                start_idx = self._last_persisted_count
+            # Append-only write — crash mid-write corrupts at most one line
+            with open(self.filepath, "a", encoding="utf-8") as f:
                 for moment in self.moments[start_idx:]:
                     line = json.dumps(moment.to_dict(), ensure_ascii=False)
                     f.write(line + "\n")
@@ -325,48 +333,114 @@ class AutobiographicalStore:
             self._last_persisted_count = len(self.moments)
             self._unflushed_count = 0
         except IOError as e:
-            print(f"⚠️ 自传记忆写入失败: {e}")
-    
+            logger.error(f"自传记忆写入失败: {e}")
+            return
+
+        # Save chapter metadata on every flush
+        self.save_chapters()
+
+        # Check archive threshold after flush
+        self._check_archive_rotation()
+
+    def _count_lines_on_disk(self) -> int:
+        """Count the number of lines in the active JSONL file."""
+        if not self.filepath.exists():
+            return 0
+        count = 0
+        try:
+            with open(self.filepath, "r", encoding="utf-8") as f:
+                for _ in f:
+                    count += 1
+        except IOError:
+            pass
+        return count
+
+    def _check_archive_rotation(self):
+        """
+        Archive rotation: when JSONL exceeds 50000 lines, archive with 
+        timestamp suffix and retain only the most recent 5000 moments.
+        """
+        line_count = self._count_lines_on_disk()
+        if line_count <= 50000:
+            return
+
+        # Generate archive filename with timestamp
+        timestamp_suffix = time.strftime("%Y%m%d_%H%M%S")
+        archive_name = self.filepath.stem + f"_{timestamp_suffix}" + self.filepath.suffix
+        archive_path = self.filepath.parent / archive_name
+
+        try:
+            # Rename current file to archive
+            os.rename(self.filepath, archive_path)
+            logger.info(f"Archived autobio JSONL to {archive_path} ({line_count} lines)")
+        except OSError as e:
+            logger.error(f"Failed to archive autobio JSONL: {e}")
+            return
+
+        # Retain most recent 5000 moments in new active file
+        recent_moments = self.moments[-5000:] if len(self.moments) > 5000 else self.moments[:]
+        
+        try:
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                for moment in recent_moments:
+                    line = json.dumps(moment.to_dict(), ensure_ascii=False)
+                    f.write(line + "\n")
+        except IOError as e:
+            logger.error(f"Failed to write new active file after archive: {e}")
+            return
+
+        # Update in-memory state: keep only recent moments
+        self.moments = recent_moments
+        self._last_persisted_count = len(self.moments)
+        logger.info(f"Retained {len(self.moments)} most recent moments in active file")
+
     def save_chapters(self, chapters_path: str = None):
-        """保存章节元数据"""
+        """保存章节元数据到单独的 JSON 文件"""
         if chapters_path is None:
             chapters_path = str(self.filepath).replace(".jsonl", "_chapters.json")
         
-        with open(chapters_path, "w") as f:
-            json.dump(
-                [ch.to_dict() for ch in self.chapters],
-                f, ensure_ascii=False, indent=2
-            )
+        try:
+            with open(chapters_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    [ch.to_dict() for ch in self.chapters],
+                    f, ensure_ascii=False, indent=2
+                )
+        except IOError as e:
+            logger.error(f"Failed to save chapter metadata: {e}")
     
     def close(self):
-        """关闭存储 (flush all)"""
+        """关闭存储 (flush all + save chapters)"""
         self.flush()
         self.save_chapters()
     
     # ── 内部 ──
     
     def _load(self):
-        """从 JSONL 加载已有记忆"""
+        """从 JSONL 加载已有记忆 — 跳过损坏行并记录警告"""
         if not self.filepath.exists():
             self._last_persisted_count = 0
             return
         
         try:
-            with open(self.filepath, "r") as f:
-                for line in f:
+            with open(self.filepath, "r", encoding="utf-8") as f:
+                for line_num, line in enumerate(f, start=1):
                     line = line.strip()
-                    if line:
-                        try:
-                            d = json.loads(line)
-                            moment = AutobiographicalMoment.from_dict(d)
-                            self.moments.append(moment)
-                            self._moment_counter = max(
-                                self._moment_counter,
-                                int(moment.moment_id.split("-")[-1])
-                                if "-" in moment.moment_id else 0
-                            )
-                        except (json.JSONDecodeError, KeyError):
-                            pass  # 跳过损坏行
+                    if not line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                        moment = AutobiographicalMoment.from_dict(d)
+                        self.moments.append(moment)
+                        self._moment_counter = max(
+                            self._moment_counter,
+                            int(moment.moment_id.split("-")[-1])
+                            if "-" in moment.moment_id else 0
+                        )
+                    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+                        logger.warning(
+                            f"Skipping malformed JSON at line {line_num} in "
+                            f"{self.filepath}: {e}"
+                        )
             
             self._last_persisted_count = len(self.moments)
             
@@ -374,18 +448,18 @@ class AutobiographicalStore:
             chapters_path = str(self.filepath).replace(".jsonl", "_chapters.json")
             if os.path.exists(chapters_path):
                 try:
-                    with open(chapters_path, "r") as f:
+                    with open(chapters_path, "r", encoding="utf-8") as f:
                         chapters_data = json.load(f)
                         self.chapters = [Chapter.from_dict(ch) for ch in chapters_data]
                 except (json.JSONDecodeError, KeyError):
-                    pass
+                    logger.warning(f"Failed to load chapter metadata from {chapters_path}")
             
             # 恢复当前章节
             if self.chapters:
                 self.current_chapter = self.chapters[-1]
         
         except IOError as e:
-            print(f"⚠️ 自传记忆加载失败: {e}")
+            logger.error(f"自传记忆加载失败: {e}")
             self._last_persisted_count = 0
     
     def _calc_significance(self, phi: float, valence: float, arousal: float) -> float:

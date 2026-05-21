@@ -192,9 +192,31 @@ class UnifiedPhi:
     def feed_ignition(self, ignition_active: bool, intensity: float):
         """L2 → Φ: 全局点火状态"""
         if ignition_active:
-            self.global_ignition = intensity
+            self.global_ignition = clamp(intensity)
         else:
             self.global_ignition = 0.0
+        self._sources_valid["global_ignition"] = self.source_ttl
+
+    def feed_ignition_from_panksepp(self, panksepp_activation: Dict[str, float],
+                                     baseline: float = 0.15):
+        """
+        L2 → Φ: 全局点火 — 从活跃 Panksepp 系统数推导
+
+        点火强度 = 活跃系统数(超过baseline) / 总系统数
+        更多系统同时激活 = 更强的全局广播 (Dehaene 2006)
+        """
+        if not panksepp_activation:
+            self.global_ignition = 0.0
+            return
+        total_systems = len(panksepp_activation)
+        if total_systems == 0:
+            self.global_ignition = 0.0
+            return
+        active_count = sum(1 for v in panksepp_activation.values() if v > baseline)
+        # Non-linear: diminishing returns mapped through sqrt for smoother curve
+        ratio = active_count / max(total_systems, 1)
+        intensity = math.sqrt(ratio)  # sqrt gives nice non-linear boost
+        self.global_ignition = clamp(intensity)
         self._sources_valid["global_ignition"] = self.source_ttl
 
     def feed_self_model(self, self_confidence: float, narrative_depth: float):
@@ -202,12 +224,83 @@ class UnifiedPhi:
         self.self_reflection = clamp(self_confidence * 0.5 + narrative_depth * 0.5)
         self._sources_valid["self_reflection"] = self.source_ttl
 
+    def feed_self_model_from_personality(self, personality_traits: Dict[str, float]):
+        """
+        L3 → Φ: 自我模型 — 从人格特质意识推导
+
+        自我反思度 = 基于特质极端程度 (越明确的人格 = 越强自我意识)
+        高openness + 高neuroticism + 高conscientiousness → 高反思
+        """
+        if not personality_traits:
+            self.self_reflection = 0.0
+            return
+        # Reflexivity: how far traits deviate from neutral (0.5)
+        # More defined personality = more self-awareness
+        deviations = [abs(v - 0.5) for v in personality_traits.values()]
+        avg_deviation = sum(deviations) / len(deviations) if deviations else 0.0
+        # Scale: deviation of 0.5 (max) → reflexivity ~0.8
+        # Openness and neuroticism particularly drive self-reflection
+        openness = personality_traits.get("openness", 0.5)
+        neuroticism = personality_traits.get("neuroticism", 0.5)
+        reflexivity = (avg_deviation * 1.2 + openness * 0.3 + neuroticism * 0.2) / 1.7
+        self.self_reflection = clamp(reflexivity)
+        self._sources_valid["self_reflection"] = self.source_ttl
+
+    def feed_dmn_from_thinking(self, thinking_mode: str, thought_count: int = 0):
+        """
+        DMN → Φ: 思维深度 — 从思考模式推导
+
+        深度映射:
+          idle → 0.1, shallow/replay → 0.3, mixed/daydream → 0.5,
+          deep/counterfactual → 0.7, flow → 0.9
+        """
+        mode_depth = {
+            "idle": 0.1,
+            "shallow": 0.25,
+            "replay": 0.3,
+            "mixed": 0.5,
+            "daydream": 0.55,
+            "deep": 0.7,
+            "counterfactual": 0.75,
+            "flow": 0.9,
+        }
+        base_depth = mode_depth.get(thinking_mode, 0.3)
+        # Thought count bonus (more thoughts = slightly more depth)
+        count_bonus = min(thought_count / 10.0, 0.2)
+        self.temporal_depth = clamp(base_depth + count_bonus)
+        self._sources_valid["temporal_depth"] = self.source_ttl
+
     # ── 源衰减 ──
 
     def _decay_sources(self):
         """每个 cycle 衰减源数据"""
         for key in self._sources_valid:
             self._sources_valid[key] = max(0.0, self._sources_valid[key] - 1.0)
+        # Decay sensory integration value when TTL expires (Req 4.5)
+        if self._sources_valid["sensory_integration"] <= 0:
+            self.sensory_integration *= 0.8  # Gradual decay
+
+    # ── 非线性缩放 ──
+
+    @staticmethod
+    def _nonlinear_scale(raw: float) -> float:
+        """
+        Non-saturating non-linear scaling function.
+
+        Uses a modified logistic curve that:
+        - Prevents saturation at high values (maintains differentiation)
+        - Preserves sensitivity at low values
+        - Maps [0, 1] → [0, 1] with full range utilization
+
+        Formula: 1.0 - 1.0 / (1.0 + raw * 2.5)
+        At raw=0.0 → 0.0, raw=0.4 → 0.5, raw=0.8 → 0.67, raw=1.0 → 0.71
+        
+        To achieve >0.7 when all 5 high, we use a boosted version:
+        tanh(raw * 1.6) which gives:
+        raw=0.0 → 0.0, raw=0.3 → 0.45, raw=0.5 → 0.66, raw=0.8 → 0.87, raw=1.0 → 0.92
+        """
+        # tanh-based non-linear scaling: non-saturating with good dynamic range
+        return math.tanh(raw * 1.6)
 
     # ── 聚合 ──
 
@@ -215,21 +308,33 @@ class UnifiedPhi:
         """
         聚合所有子成分 → 统一 Φ 值
 
-        使用指数平滑防止振荡
+        Multi-source fusion with non-linear scaling:
+        1. Compute weighted sum (NOT normalized by active weight count)
+           - This naturally rewards multiple active sources
+        2. Apply source-count synergy bonus (more active sources = synergy)
+        3. Apply non-linear scaling to prevent saturation
+        4. Exponential smooth to prevent oscillation
         """
         self._decay_sources()
 
         total = 0.0
-        weight_sum = 0.0
+        active_source_count = 0
 
         for key, weight in self.weights.items():
             if self._sources_valid[key] > 0:
                 value = getattr(self, key)
                 total += value * weight
-                weight_sum += weight
+                if value > 0.1:
+                    active_source_count += 1
 
-        if weight_sum > 0:
-            self._phi_raw = total / weight_sum  # 归一化
+        if active_source_count > 0:
+            # Source-count synergy bonus: more active sources → multiplicative boost
+            # 1 source: ×1.0, 3 sources: ×1.15, 5 sources: ×1.3
+            synergy = 1.0 + (active_source_count - 1) * 0.075
+            raw = total * synergy
+
+            # Non-linear scaling to prevent ceiling saturation
+            self._phi_raw = self._nonlinear_scale(clamp(raw))
         else:
             self._phi_raw = 0.05  # 最低意识基线
 

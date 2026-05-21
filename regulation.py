@@ -72,10 +72,11 @@ class ActionCandidate:
     cooldown_ok: bool
     night_safe: bool
     content_hint: str = ""
+    final_score: float = 0.0     # 综合评分 (含驱动权重)
     
     @property
     def score(self) -> float:
-        """综合评分"""
+        """情感偏离评分 (emotional deviation score)"""
         return self.expected_benefit * (0.5 + 0.5 * self.confidence)
 
 
@@ -127,6 +128,46 @@ BOOTSTRAP_REGULATION = [
     ("speak_complain",  "RAGE",     +0.1,  -0.1),   # 抱怨释放愤怒
     ("idle",            "ALL",      +0.05, -0.05),  # 什么都不做也有一点调节
 ]
+
+# ═══════════════════════════════════════════════
+# 驱动-行为关联 (drive → action relevance)
+# ═══════════════════════════════════════════════
+
+# Maps drive names to actions that satisfy that drive, with relevance [0, 1]
+DRIVE_ACTION_RELEVANCE: Dict[str, Dict[str, float]] = {
+    "curiosity": {
+        "browse": 1.0,
+        "search": 0.9,
+        "learn": 1.0,
+        "speak_share": 0.6,
+        "reflect": 0.4,
+    },
+    "social": {
+        "speak_care": 1.0,
+        "speak_missing": 0.9,
+        "speak_play": 0.8,
+        "speak_share": 0.7,
+        "speak_fear": 0.6,
+        "request": 0.5,
+    },
+    "homeostatic": {
+        "reflect": 0.8,
+        "check_system": 1.0,
+        "idle": 0.7,
+    },
+    "achievement": {
+        "learn": 0.7,
+        "search": 0.6,
+        "request": 0.5,
+        "check_system": 0.4,
+    },
+    "aesthetic": {
+        "speak_share": 0.8,
+        "speak_play": 0.7,
+        "browse": 0.5,
+        "reflect": 0.6,
+    },
+}
 
 
 # ═══════════════════════════════════════════════
@@ -198,9 +239,18 @@ class RegulationEngine:
     # ═══════════════════════════════════════════
     
     def tick(self, panksepp: Dict[str, float], valence: float,
-             hour_of_day: int) -> Optional[str]:
+             hour_of_day: int,
+             drive_urgency: float = 0.0,
+             drive_dominant: str = "") -> Optional[str]:
         """
         每 tick 调用。
+        
+        Args:
+            panksepp: 当前 Panksepp 系统激活值
+            valence: 当前效价
+            hour_of_day: 当前小时 (0-23)
+            drive_urgency: DriveOracle 总驱动紧迫度 (0-1)
+            drive_dominant: 当前最强驱动名 (curiosity/social/homeostatic/achievement/aesthetic)
         
         返回: 选中的 action_type (字符串) 或 None
         """
@@ -226,12 +276,15 @@ class RegulationEngine:
         if not candidates:
             return None
         
-        # 按 score 排序
-        candidates.sort(key=lambda c: -c.score)
+        # 计算综合评分: 0.7 × emotional_deviation_score + 0.3 × drive_urgency_score
+        self._score_candidates_with_drives(candidates, drive_urgency, drive_dominant)
+        
+        # 按 final_score 排序
+        candidates.sort(key=lambda c: -c.final_score)
         
         # 检查最佳候选是否值得执行
         best = candidates[0]
-        if best.score < 0.15:
+        if best.final_score < 0.15:
             return None  # 没有足够好的选项
         
         # 记录执行前状态
@@ -245,14 +298,17 @@ class RegulationEngine:
         self.log.info(
             f"调节: {best.action_type} "
             f"(显著偏离: {[d[0] for d in deviations[:3]]}, "
-            f"score={best.score:.3f} conf={best.confidence:.2f})"
+            f"final_score={best.final_score:.3f} conf={best.confidence:.2f} "
+            f"drive={drive_dominant}:{drive_urgency:.2f})"
         )
         
         self.action_history.append({
             "time": time.time(),
             "action": best.action_type,
-            "score": round(best.score, 3),
+            "score": round(best.final_score, 3),
             "deviations": [(d[0], round(d[1], 3)) for d in deviations[:3]],
+            "drive_dominant": drive_dominant,
+            "drive_urgency": round(drive_urgency, 3),
         })
         
         return best.action_type
@@ -345,6 +401,32 @@ class RegulationEngine:
             ))
         
         return candidates
+    
+    # ═══════════════════════════════════════════
+    # 驱动-情感综合评分
+    # ═══════════════════════════════════════════
+    
+    def _score_candidates_with_drives(self, candidates: List[ActionCandidate],
+                                       drive_urgency: float,
+                                       drive_dominant: str):
+        """
+        为每个候选行为计算综合评分:
+        final_score = 0.7 × emotional_deviation_score + 0.3 × drive_urgency_score
+        
+        drive_urgency_score = drive_urgency × relevance(action, drive_dominant)
+        其中 relevance 来自 DRIVE_ACTION_RELEVANCE 映射
+        """
+        for candidate in candidates:
+            emotional_score = candidate.score  # existing emotion-based score
+            
+            # Compute drive urgency score for this candidate
+            relevance = DRIVE_ACTION_RELEVANCE.get(
+                drive_dominant, {}
+            ).get(candidate.action_type, 0.0)
+            drive_score = drive_urgency * relevance
+            
+            # Weighted combination: 70% emotional + 30% drive
+            candidate.final_score = 0.7 * emotional_score + 0.3 * drive_score
     
     # ═══════════════════════════════════════════
     # 效果观察 & 学习
