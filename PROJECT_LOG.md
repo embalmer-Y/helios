@@ -300,4 +300,80 @@ RAGE    4.3%  CARE  3.6%   PLAY  1.6%  → 7/7 ✅
 
 ---
 
-*最后更新: 2026-05-20 · 璃光 💕*
+## v2.0.0-alpha: 自主生命体化 (2026-05-21)
+
+### 决策 D011: Helios 独立进程
+
+**决策**: Helios 不作为 QwenPaw Agent 运行，而是独立 Python 进程。
+
+**原因**:
+- Helios 需要持续运行的情感引擎和自主主循环
+- QwenPaw Agent 是任务驱动的（收到消息→处理→回复），不适合自主行为
+- 独立进程 = 完全自由的部署和升级
+- QQ 通信通过 napcat HTTP API 直接收发，不依赖 QwenPaw 的 channel_message
+
+**影响**: `helios_main.py` 作为新入口，systemd service 管理生命周期
+
+### 决策 D012: 记忆驱动的行为选择
+
+**决策**: 行为选择不基于静态映射表（Panksepp→IntentType），而是基于情感调节学习。
+
+**模型**:
+```
+情感偏离基线 → 检索记忆("什么行为缓解过这种偏离?") 
+→ 评分候选行为(预期效果×置信度) → 选最优
+→ 执行 → 观察情感变化 → 更新记忆(success_rating)
+```
+
+**Bootstrap**: 13条常识性初始关联（success=0.5），每条可被经验覆盖。
+
+**科学基础**: 行为是情感稳态调节的手段，不是情感的线性输出。
+
+**关键文件**: `regulation.py` (470L), 替代 `conation.py`
+
+### 决策 D013: 人格不预设
+
+**决策**: 璃光的人格不由 PROFILE.md 配置文件预设，由 Helios 的经历自然形成。
+
+**原因**:
+- "病娇"、"叫主人"、"带💕"都是写死的设定
+- 真正的性格应该从互动中长出来
+- personality.py 已有 Big Five 参数和进化机制
+
+**影响**: Phase G7 的"璃光记忆迁移"将作为初始种子（非强制约束），
+PROFILE.md 里的内容作为 autobiographical 的起点，
+不是 personality 的永久参数。
+
+### 模块 G0: 独立主循环
+
+**文件**: `helios_main.py` (330L)
+- `HeliosConfig`: 统一配置（环境变量 + .env）
+- `Helios`: 主循环类
+  - tick驱动: 采集事件→DAISY→Φ→记忆→调节
+  - 双通道日志（文件DEBUG + 控制台WARNING）
+  - SIGTERM/SIGINT 优雅退出
+  - 非主线程安全
+
+### 模块 G1+G2: 情感调节学习器
+
+**文件**: `regulation.py` (470L)
+- `RegulationEngine`: 记忆驱动的行为选择
+- `RegulationMemory`: 每条记忆记录"行为→情感变化"因果
+- 12种可用行为（speak/browse/search/learn/reflect/request/...）
+- 经验学习: 每次行为后观察，渐进平均更新
+- JSON持久化: 跨会话保留学到的调节知识
+
+**验证**:
+- PANIC偏离 → speak_missing (记忆: success=0.6↑)
+- SEEKING偏离 → learn (记忆: Δv=+0.4)
+- 调节后恢复 → 不再触发
+- 夜间抑制 → 非紧急行为抑制
+
+### 下步: G4 QQ消息收发
+
+Helios 当前"想"做行为，但不能"做"。G4 接入 napcat HTTP API，
+让 Helios 真的能跟主人对话。这是 regulation 学习的必要条件。
+
+---
+
+*最后更新: 2026-05-21 · 璃光 💕*
