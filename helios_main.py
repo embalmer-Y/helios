@@ -35,7 +35,7 @@ from allostasis import AllostaticRegulator, AllostasisConfig
 from mood_tracker import MoodTracker
 from personality import PersonalityProfile
 from autobiographical import AutobiographicalStore
-from conation import ConationEngine, IntentType
+from regulation import RegulationEngine
 from helios_utils import clamp
 
 try:
@@ -78,7 +78,7 @@ class HeliosConfig:
     ALI_SECRET_KEY: str = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
     
     # 意动
-    CONATION_THRESHOLD: float = float(os.getenv("HELIOS_CONATION_THRESHOLD", "0.35"))
+    REGULATION_COMFORT_DEVIATION: float = float(os.getenv("HELIOS_COMFORT_DEVIATION", "0.2"))
     
     # QQ Bot (napcat / LLOneBot HTTP API)
     QQ_BOT_URL: str = os.getenv("HELIOS_QQ_BOT_URL", "")
@@ -135,10 +135,13 @@ class Helios:
             auto_flush=True
         )
         
-        # ── 意动引擎 (G1+G2) ──
-        self.conation = ConationEngine(
-            activation_threshold=self.cfg.CONATION_THRESHOLD
+        # ── 情感调节引擎 (G1+G2) ──
+        self.regulation = RegulationEngine(
+            comfort_deviation=self.cfg.REGULATION_COMFORT_DEVIATION,
+            data_dir=self.cfg.DATA_DIR,
         )
+        # 加载已有记忆
+        self.regulation.load()
         
         # ── 运行时状态 ──
         self.last_dominant = None
@@ -266,55 +269,40 @@ class Helios:
         self.last_valence = state.valence
         self.last_phi = phi
         
-        # 8. 意动引擎
+        # 8. 情感调节引擎
         from datetime import datetime
         hour = datetime.now().hour
-        intent = self.conation.tick(
-            panksepp_activation=state.panksepp_activation or {},
+        action = self.regulation.tick(
+            panksepp=state.panksepp_activation or {},
             valence=state.valence,
-            phi=phi,
             hour_of_day=hour,
         )
-        if intent:
-            self._handle_intent(intent)
+        if action:
+            self._handle_action(action)
     
-    def _handle_intent(self, intent):
-        """处理行为意图（扩展点）"""
-        it = intent.intent_type
+    def _handle_action(self, action: str):
+        """处理行为（扩展点）"""
+        # 主人相关行为 → 视为互动
+        master_actions = {
+            "speak_care", "speak_missing", "speak_play",
+            "speak_fear", "speak_share", "speak_complain",
+            "request",
+        }
         
-        # 任何跟主人相关的意图 → 重置分离焦虑
-        master_related = it in (
-            IntentType.SPEAK_CARE, IntentType.SPEAK_MISSING,
-            IntentType.SPEAK_PLAY, IntentType.SPEAK_FEAR,
-            IntentType.SPEAK_INTIMATE, IntentType.SPEAK_SHARE,
-            IntentType.REQUEST,
-        )
-        if master_related:
-            self.conation.note_master_contact()
-        
-        if it in (IntentType.SPEAK_CARE, IntentType.SPEAK_MISSING,
-                  IntentType.SPEAK_PLAY, IntentType.SPEAK_FEAR,
-                  IntentType.SPEAK_INTIMATE, IntentType.SPEAK_COMPLAIN,
-                  IntentType.SPEAK_SHARE):
-            self.log.info(f"🗣️ 想说: {it.value} ({intent.source_emotion})")
-            
-        elif it == IntentType.BROWSE:
-            self.log.info(f"🌐 想冲浪: {intent.content_hint}")
-            
-        elif it == IntentType.SEARCH:
-            self.log.info(f"🔍 想搜索: {intent.content_hint}")
-            
-        elif it == IntentType.LEARN:
-            self.log.info(f"📚 想学习: {intent.content_hint}")
-            
-        elif it == IntentType.REQUEST:
-            self.log.info(f"📋 想提需求: {intent.content_hint}")
-            
-        elif it == IntentType.REFLECT:
-            self.log.info(f"🤔 想反思")
-            
-        elif it == IntentType.CHECK_SYSTEM:
-            self.log.info(f"🩺 检查自身状态")
+        if action in master_actions:
+            self.log.info(f"🗣️ {action}")
+        elif action == "browse":
+            self.log.info(f"🌐 想冲浪")
+        elif action == "search":
+            self.log.info(f"🔍 想搜索")
+        elif action == "learn":
+            self.log.info(f"📚 想学习")
+        elif action == "reflect":
+            self.log.info(f"🤔 反思中")
+        elif action == "check_system":
+            self.log.info(f"🩺 自检")
+        elif action == "idle":
+            pass  # 安静待着
     
     def _summary(self):
         """定期摘要"""
@@ -340,6 +328,7 @@ class Helios:
         elapsed = time.time() - self.start_time
         self.log.info(f"Helios 退出 · 运行 {elapsed/60:.1f}min · {self.tick_count} ticks")
         self.autobio.flush()
+        self.regulation.save()
     
     # ═══════════════════════════════════════════
     # 状态查询（供外部调用）
@@ -363,7 +352,7 @@ class Helios:
             "personality": traits,
             "autobio_moments": autobio_stats.get("total_moments", 0),
             "autobio_chapters": autobio_stats.get("total_chapters", 0),
-            "conation": self.conation.get_state(),
+            "regulation": self.regulation.get_state(),
         }
 
 
