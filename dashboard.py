@@ -97,6 +97,10 @@ class DashboardState:
         self.autobio_stats: dict = {}
         self.autobio_narrative: str = ""
         
+        # N4: 人格进化
+        self.personality_evolution: list = []
+        self.personality_total_cycles: int = 0
+        
         # 历史 (最近200条)
         self.history: List[dict] = []
         self.max_history = 200
@@ -180,6 +184,7 @@ class DashboardState:
                     "traits": dict(self.personality_traits),
                 },
                 "autobio": dict(self.autobio_stats),
+                "personality_evolution": list(self.personality_evolution),
                 "history": self.history[-50:],  # 最近50条
             }
 
@@ -290,6 +295,13 @@ class HeliosRunner:
                 update_kwargs["autobio_stats"] = stats
                 update_kwargs["autobio_narrative"] = self.autobio.get_narrative(10)
             
+            # N4: 人格进化统计 (每50周期)
+            if cycle % 50 == 0 and self.personality:
+                evo = self.personality.get_evolution()
+                if evo:
+                    update_kwargs["personality_evolution"] = list(evo)
+                update_kwargs["personality_total_cycles"] = self.personality.total_emotion_cycles
+            
             self.state.update(**update_kwargs)
             
             # N1: 记录自传时刻 (高Φ或重要事件)
@@ -326,6 +338,12 @@ class HeliosRunner:
                         event_trigger=event_desc,
                         cycle=cycle,
                     )
+            
+            # N4: 人格进化 (每周期累积)
+            if self.personality:
+                dominant = state.dominant_system
+                intensity = max(state.panksepp_activation.values()) if state.panksepp_activation else 0.0
+                self.personality.adapt_from_snapshot(dominant, intensity)
             
             cycle += 1
             time.sleep(self.cycle_interval)
@@ -464,6 +482,7 @@ body{background:#0a0a1a;color:#d0e0ff;font-family:'Segoe UI',system-ui,sans-seri
   </div>
   <div class="card"><h3>🧪 神经化学</h3><canvas id="neurochem"></canvas></div>
   <div class="card"><h3>⚖️ 异稳态负荷</h3><canvas id="allostasis"></canvas></div>
+  <div class="card"><h3>🧬 人格进化</h3><canvas id="personality-evo"></canvas></div>
   <div class="card">
     <h3>📋 7系统激活柱状图</h3>
     <div class="panksepp-grid" id="panksepp-grid"></div>
@@ -536,6 +555,19 @@ function createCharts() {
       scales:{x:{display:false},y:{min:0,max:1,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
       plugins:{legend:{display:false}}}
   });
+  
+  charts.personalityEvo = new Chart(document.getElementById('personality-evo'), {
+    type:'line',data:{labels:[],datasets:[
+      {label:'开放性',data:[],borderColor:'#60c0ff',borderWidth:1.5,pointRadius:0},
+      {label:'外向性',data:[],borderColor:'#ffe060',borderWidth:1.5,pointRadius:0},
+      {label:'宜人性',data:[],borderColor:'#ff80c0',borderWidth:1.5,pointRadius:0},
+      {label:'神经质',data:[],borderColor:'#ff4040',borderWidth:1.5,pointRadius:0},
+      {label:'尽责性',data:[],borderColor:'#80ff80',borderWidth:1.5,pointRadius:0}
+    ]},
+    options:{responsive:true,animation:false,
+      scales:{x:{display:false},y:{min:0.2,max:2.6,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
+      plugins:{legend:{position:'bottom',labels:{color:'#6080a0',font:{size:9},boxWidth:10}}}}
+  });
 }
 
 let timelineSystems = ['SEEKING','PLAY','CARE','PANIC','FEAR','RAGE','LUST'];
@@ -603,6 +635,17 @@ function updateDashboard(data) {
   }
   charts.allostasis.data.datasets[0].data.push(load);
   charts.allostasis.update('none');
+  
+  // 人格进化
+  if (data.personality_evolution && data.personality_evolution.length > 0) {
+    let evo = data.personality_evolution;
+    charts.personalityEvo.data.labels = evo.map(e => '#' + e.step);
+    for (let i = 0; i < 5; i++) {
+      let trait = ['openness','extraversion','agreeableness','neuroticism','conscientiousness'][i];
+      charts.personalityEvo.data.datasets[i].data = evo.map(e => e.traits[trait] || 1.0);
+    }
+    charts.personalityEvo.update('none');
+  }
   
   // 效价点
   let v = data.valence || 0;

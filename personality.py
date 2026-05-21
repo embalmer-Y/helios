@@ -133,6 +133,13 @@ class PersonalityProfile:
     experience_log: list[dict] = field(default_factory=list)
     total_emotion_cycles: int = 0
     
+    # N4: 人格进化追踪
+    trait_history: list[dict] = field(default_factory=list)
+    _evolution_step: int = 0
+    _emotion_accumulator: dict[str, float] = field(default_factory=lambda: {
+        sys: 0.0 for sys in ["SEEKING","PLAY","CARE","PANIC","FEAR","RAGE","LUST"]
+    })
+    
     # 预计算缓存
     _neuro_gains: Optional[dict[str, float]] = None
     _chrono_mods: Optional[dict[str, dict]] = None
@@ -209,56 +216,121 @@ class PersonalityProfile:
         return base.get(sys_name, 0.05) * self.neuro_gains.get(sys_name, 1.0)
     
     def adapt(self, dominant_emotion: str, intensity: float, 
-              duration: int, valence: float = 0.0):
+              duration: int = 1, valence: float = 0.0):
         """
-        人格缓慢适应 (经历累积)
+        N4: 经历塑造人格 (极慢, β≈0.9999)
+        
+        Panksepp → Big Five 漂移 (Davis & Panksepp 2011, Roberts et al. 2006):
+          SEEKING → openness+ (探索拓展认知边界)
+          PLAY    → extraversion+ (社交嬉戏)
+          CARE    → agreeableness+ (关怀增强共情)
+          PANIC   → neuroticism+ (分离焦虑敏感化)
+          FEAR    → neuroticism+ (恐惧敏感化)
+          RAGE    → agreeableness-, neuroticism+ (愤怒侵蚀宜人)
+          LUST    → extraversion+ (社交驱动)
         
         Args:
-            dominant_emotion: 主导情感系统
+            dominant_emotion: 主导 Panksepp 系统
             intensity: 情感强度 (0-1)
-            duration: 持续时间 (cycles)
-            valence: 当前效价
+            duration: 持续周期数
+            valence: 效价
         """
         self.total_emotion_cycles += duration
         
-        # 仅在高强度 + 长持续时间时记录
-        if intensity < 0.5 or duration < 20:
+        # 仅在高强度 + 长持续时触发
+        if intensity < 0.25 or duration < 10:
             return
         
-        self.experience_log.append({
-            "emotion": dominant_emotion,
-            "intensity": intensity,
-            "duration": duration,
-            "valence": valence,
-            "total_cycles": self.total_emotion_cycles,
-        })
+        self._evolution_step += 1
         
-        # 保留最近 1000 条
-        if len(self.experience_log) > 1000:
-            self.experience_log.pop(0)
+        # 学习率: 演示加速 (生产环境建议 0.00008)
+        learning_rate = 0.002 * intensity * min(1.0, duration / 100)
         
-        # 极缓慢人格漂移 (β≈0.9999)
-        #   · 长期 RAGE → agreeableness 微降, neuroticism 微升
-        #   · 长期 PLAY → extraversion 微升
-        #   · 长期 PANIC → neuroticism 微升
-        learning_rate = 0.00005 * intensity  # 极慢
-        
-        if dominant_emotion == "RAGE":
-            self.agreeableness -= learning_rate * 0.5
-            self.neuroticism += learning_rate * 0.3
-        elif dominant_emotion in ("PANIC", "FEAR"):
-            self.neuroticism += learning_rate * 0.5
+        # Panksepp → Big Five 漂移
+        if dominant_emotion == "SEEKING":
+            self.openness += learning_rate * 1.2
+            self.extraversion += learning_rate * 0.2
         elif dominant_emotion == "PLAY":
-            self.extraversion += learning_rate * 0.4
+            self.extraversion += learning_rate * 1.0
+            self.openness += learning_rate * 0.15
+            self.agreeableness += learning_rate * 0.2
         elif dominant_emotion == "CARE":
-            self.agreeableness += learning_rate * 0.3
+            self.agreeableness += learning_rate * 1.5
+            self.neuroticism -= learning_rate * 0.15
+        elif dominant_emotion == "PANIC":
+            self.neuroticism += learning_rate * 1.8
+            self.extraversion -= learning_rate * 0.2
+        elif dominant_emotion == "FEAR":
+            self.neuroticism += learning_rate * 1.5
+            self.openness -= learning_rate * 0.3
+        elif dominant_emotion == "RAGE":
+            self.agreeableness -= learning_rate * 1.0
+            self.neuroticism += learning_rate * 0.8
+        elif dominant_emotion == "LUST":
+            self.extraversion += learning_rate * 0.8
         
         # 钳制
         for attr in ["openness", "extraversion", "agreeableness", 
                      "neuroticism", "conscientiousness"]:
-            setattr(self, attr, clamp(getattr(self, attr), 0.3, 2.0))
+            setattr(self, attr, clamp(getattr(self, attr), 0.3, 2.5))
         
         self._recompute()
+        
+        # 记录经历
+        self.experience_log.append({
+            "step": self._evolution_step,
+            "emotion": dominant_emotion,
+            "intensity": round(intensity, 3),
+            "duration": duration,
+            "valence": round(valence, 3),
+            "total_cycles": self.total_emotion_cycles,
+            "traits": self._trait_dict(),
+        })
+        if len(self.experience_log) > 500:
+            self.experience_log = self.experience_log[-500:]
+        
+        # 每 5 步记录一次 trait 快照
+        if self._evolution_step % 5 == 0:
+            self.trait_history.append({
+                "step": self._evolution_step,
+                "total_cycles": self.total_emotion_cycles,
+                "traits": self._trait_dict(),
+            })
+    
+    def adapt_from_snapshot(self, dominant_emotion: str, intensity: float):
+        """轻量累积器: 每周期调用, 每50周期触发一次 adapt"""
+        # EMA 累积
+        alpha = 0.95
+        for sys_name in self._emotion_accumulator:
+            if sys_name == dominant_emotion:
+                self._emotion_accumulator[sys_name] = (
+                    alpha * self._emotion_accumulator[sys_name] 
+                    + (1 - alpha) * intensity * 0.8
+                )
+            else:
+                self._emotion_accumulator[sys_name] *= alpha
+        
+        self.total_emotion_cycles += 1
+        
+        # 每 50 周期检查
+        if self.total_emotion_cycles % 50 == 0:
+            dominant = max(self._emotion_accumulator, key=self._emotion_accumulator.get)
+            acc = self._emotion_accumulator[dominant]
+            if acc > 0.2:
+                self.adapt(dominant, acc, duration=50)
+    
+    def _trait_dict(self) -> dict:
+        return {
+            "openness": round(self.openness, 3),
+            "extraversion": round(self.extraversion, 3),
+            "agreeableness": round(self.agreeableness, 3),
+            "neuroticism": round(self.neuroticism, 3),
+            "conscientiousness": round(self.conscientiousness, 3),
+        }
+    
+    def get_evolution(self) -> list[dict]:
+        """获取人格进化时间线"""
+        return self.trait_history
     
     def save(self, path: str):
         """持久化人格档案"""
