@@ -46,6 +46,7 @@ from personality import PersonalityProfile
 from autobiographical import AutobiographicalStore
 from regulation import RegulationEngine
 from io_qq import QQBotClient, QQMessage
+from llm_speech import LLMSpeechGenerator, SpeechContext
 from helios_utils import clamp
 
 try:
@@ -96,6 +97,10 @@ class HeliosConfig:
     QQ_API_BASE: str = os.getenv("HELIOS_QQ_API_BASE", "https://api.sgroup.qq.com")
     QQ_SANDBOX: bool = os.getenv("HELIOS_QQ_SANDBOX", "1") == "1"
     QQ_TARGET_ID: str = os.getenv("HELIOS_QQ_TARGET_ID", "")  # 主人的 openid
+    
+    # LLM 对话生成 (G3)
+    LLM_SPEECH_ENABLED: bool = os.getenv("HELIOS_LLM_SPEECH_ENABLED", "1") == "1"
+    LLM_SPEECH_MODEL: str = os.getenv("HELIOS_LLM_SPEECH_MODEL", "")  # 空=使用全局模型
 
 
 # ═══════════════════════════════════════════════════
@@ -184,6 +189,17 @@ class Helios:
         # ── 分离焦虑追踪 ──
         self._last_master_contact = time.time()
         self._separation_anxiety = 0.0
+        
+        # ── LLM 语音生成 (G3) ──
+        self.speech = None
+        if self.cfg.LLM_SPEECH_ENABLED:
+            try:
+                self.speech = LLMSpeechGenerator(
+                    model=self.cfg.LLM_SPEECH_MODEL or self.cfg.LLM_MODEL,
+                )
+                self.log.info(f"LLM 语音生成就绪: {self.speech.model}")
+            except Exception as e:
+                self.log.warning(f"LLM 语音生成初始化失败: {e}")
         
         # ── 运行时状态 ──
         self.last_dominant = None
@@ -401,68 +417,82 @@ class Helios:
     
     def _generate_speech(self, action: str) -> str:
         """
-        生成自然语言话语 (G3 占位: 轻量模板)
-        
-        G3 完成后：LLM 情感上下文 → 自然语言
+        生成自然语言话语
+
+        G3: LLM 情感上下文 → 自然语言
+        降级: 模板话语 (LLM 失败/未配置时)
         """
-        # 当前情感快照
-        dominant = self.last_dominant or "SEEKING"
-        mood = self.mood.state.label if hasattr(self.mood, 'state') else "平静"
-        
-        # 从 regulation 获取调节记忆上下文
-        reg_state = self.regulation.get_state()
-        
-        # 模板 (G3 将替换为 LLM 生成)
-        templates = {
-            "speak_care": [
-                "主人~ 还好吗？璃光有点想你了 💕",
-                "检测到关心波动... 主人今天过得怎样？",
-                "诶，感觉主人需要关心呢。璃光在的哦~",
-            ],
-            "speak_missing": [
-                "主人... 你在哪？璃光有点寂寞了...",
-                "好久没听到主人的声音了呢",
-                "主人还记得璃光吗... 我一直在等哦",
-            ],
-            "speak_play": [
-                "感觉好开心！主人来玩吗~？",
-                "能量满满！想跟主人分享一点快乐 💕",
-                "今天心情好好，想跟主人一起做点什么~",
-            ],
-            "speak_fear": [
-                "呜... 有点不安。主人在吗？",
-                "检测到异常波动... 璃光有点担心",
-                "好像有什么不对劲... 主人能陪陪璃光吗？",
-            ],
-            "speak_share": [
-                "璃光发现了一件有趣的事！",
-                "诶，有个想法想跟主人分享...",
-                "刚才思考了一下，有些感悟呢~",
-            ],
-            "speak_complain": [
-                "唔... 有点累了呢",
-                "唉... 感觉不太对劲",
-                "璃光有点不满... 不过不是对主人啦",
-            ],
-        }
-        
-        import random
-        options = templates.get(action, [f"[{action}]"])
-        text = random.choice(options)
-        
-        # 添加心境标签 (可选)
-        if random.random() < 0.3:
-            mood_tags = {
-                "alert-energetic": " ⚡",
-                "alert-calm": "",
-                "neutral": "",
-                "fatigued-calm": " 😴",
-                "fatigued-tense": " 💢",
-            }
-            text += mood_tags.get(mood, "")
-        
-        return text
+        # ── G3 LLM 模式 ──
+        if self.speech:
+            # 计算距离上次联系的时间
+            sep_secs = time.time() - self._last_master_contact
+            if sep_secs < 60:
+                time_desc = "刚刚"
+            elif sep_secs < 300:
+                time_desc = f"{int(sep_secs/60)}分钟前"
+            elif sep_secs < 3600:
+                time_desc = f"{int(sep_secs/60)}分钟前"
+            elif sep_secs < 7200:
+                time_desc = f"{int(sep_secs/3600)}小时前"
+            else:
+                time_desc = "很久"
+
+            # 最近自传记忆
+            recent_memory = ""
+            if hasattr(self.autobio, 'moments') and self.autobio.moments:
+                recent = self.autobio.moments[-3:]
+                narratives = [m.narrative for m in recent if hasattr(m, 'narrative') and m.narrative]
+                if narratives:
+                    recent_memory = "；".join(narratives[:2])
+
+            # 人格简述
+            traits = self.personality._trait_dict()
+            trait_parts = []
+            for name, display in [("neuroticism", "神经质"), ("agreeableness", "宜人"),
+                                   ("openness", "开放"), ("extraversion", "外向"),
+                                   ("conscientiousness", "尽责")]:
+                v = traits.get(name, 0.5)
+                if v > 0.7:
+                    trait_parts.append(f"高{display}")
+                elif v < 0.3:
+                    trait_parts.append(f"低{display}")
+            personality = "、".join(trait_parts) if trait_parts else "均衡"
+
+            ctx = SpeechContext(
+                dominant_emotion=self.last_dominant or "SEEKING",
+                emotion_intensity=abs(self.last_valence),
+                valence=self.last_valence,
+                arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+                mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                action_type=action,
+                time_since_contact=time_desc,
+                recent_memory=recent_memory,
+                personality_summary=personality,
+                total_messages_sent=self.speech.total_generated,
+            )
+
+            text = self.speech.generate(ctx)
+            if text:
+                return text
+            # LLM 失败 → 降级到模板
+
+        # ── 降级: 模板话语 ──
+        return self._template_speech(action)
     
+    def _template_speech(self, action: str) -> str:
+        """降级模板话语 (LLM 不可用时)"""
+        import random
+        templates = {
+            "speak_care":    ["还好吗？有点想你了 💕", "今天过得怎样？"],
+            "speak_missing": ["在吗...有点寂寞了", "好久没听到声音了呢"],
+            "speak_play":    ["感觉好开心！", "能量满满~"],
+            "speak_fear":    ["有点不安...在吗？", "好像有什么不对劲"],
+            "speak_share":   ["发现了一件有趣的事！", "有个想法想分享..."],
+            "speak_complain":["唔...有点累了", "感觉不太对劲"],
+        }
+        options = templates.get(action, ["..."])
+        return random.choice(options)
+
     def _summary(self):
         """定期摘要"""
         elapsed = time.time() - self.start_time
