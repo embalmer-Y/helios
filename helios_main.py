@@ -241,6 +241,11 @@ class Helios:
             
             self.log.info(f"📩 QQ [{msg.author_id[:10]}]: {msg.text[:60]}")
             
+            # 自动捕获 target_id (第一条私聊消息的发送者)
+            if not self.cfg.QQ_TARGET_ID and not msg.is_group:
+                self.cfg.QQ_TARGET_ID = msg.author_id
+                self.log.info(f"🎯 自动捕获主人 openid: {msg.author_id}")
+            
             # 任何消息 → 重置分离焦虑
             self._last_master_contact = time.time()
             self._separation_anxiety = 0.0

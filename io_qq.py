@@ -38,7 +38,7 @@ log = logging.getLogger("helios.io_qq")
 # 常量
 # ═══════════════════════════════════════════════════
 
-DEFAULT_API_BASE = "https://api.sgroup.qq.com"
+DEFAULT_API_BASE = "https://sandbox.api.sgroup.qq.com"
 TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
 
 # WebSocket op codes
