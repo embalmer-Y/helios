@@ -27,6 +27,8 @@
 2026-05-20  DAISY    情感系统重设计框架提出
 2026-05-20  X1-X3    DAISY v1.0 实现 (共激活+时序+对向)
 2026-05-20  X4       SEC评估链 → 8轮迭代, 7/7全频谱达成 🎉
+2026-05-21  X5       ALMA 三层模型 (心境+人格) → mood_tracker+personality
+2026-05-21  X6       异稳态调节器 (Sterling Allostasis) → allostasis.py
 ```
 
 ---
@@ -48,12 +50,26 @@
 | 习惯化 | `habituation.py` | ✅ 稳定 | Groves & Thompson |
 | 决策桥接 | `limb_decision_bridge.py` | ✅ 稳定 | LLM→ActionIntent |
 | 公共工具 | `helios_utils.py` | ✅ 稳定 | clamp + 辅助函数 |
+| 心境追踪 | `mood_tracker.py` | ✅ 新 | X5, ALMA 慢漂移 |
+| 人格档案 | `personality.py` | ✅ 新 | X5, Big Five→Panksepp |
+| 异稳态 | `allostasis.py` | ✅ 新 | X6, 双向setpoint |
+| 审计日志 | `audit_log.py` | ✅ 稳定 | limb JSONL审计 |
+| Agent感知 | `agent_awareness.py` | ✅ 新 | qwenpaw其他agent |
 
 **废弃/归档**: `affect.py`, `cli_bridge.py`, `core.py`, `agent.py`, `decision.py`, `memory.py`, 旧 L0-L3 模块 → `archive/`
 
 ---
 
 ## 关键决策记录
+
+### D008: X5/X6 长跑测试暂停
+**日期**: 2026-05-21
+**决策**: X4-X6 体系暂不进行 >1h 长跑测试，仅做函数级验证
+**原因**:
+  1. 无真实事件数据 — 仿真事件无法体现数月级情感/性格漂移
+  2. API 开销巨大 — 持续 LLM 调用成本高
+  3. 时程验证需数月 — 心境(mood)/人格(personality)需要长时间尺度才有意义
+**下一步**: 直接推进远期任务 (N2 可视化 → N1 自传记忆 → N4 人格进化)
 
 ### D001: LLM 后端选择
 **日期**: 2026-05-18
@@ -189,15 +205,17 @@
 ## 下一步
 
 ```
-✅ 已完成:  F(文档) + N5(安全审计) + D(Agent感知) + X4(SEC评估链)
-✅ DAISY v1.0: 7/7 全频谱, 共激活+时序+对向+SEC
+✅  已完成: F(文档) + N5(安全审计) + D(Agent感知)
+✅  DAISY 完整体系: X1(共激活)+X2(时序)+X3(对向)+X4(SEC)
+✅  DAISY 进阶: X5(多层时间尺)+X6(异稳态)
+⚠ 1h+ 长跑暂停: 无真实数据 + API开销大，X5/X6 仅函数验证
 
-待定:
-  □ X5: 多层时间尺度 (ALMA — 情感/心境/人格)
-  □ X6: 异稳态调节 (Sterling Allostasis)
-  □ N1: 自传记忆
-  □ N2: 可视化面板
-  □ N4: 人格进化
+远期:
+  □ N2: 可视化情感仪表盘       (优先, ⭐⭐)
+  □ N1: 自传记忆持久化         (优先, ⭐⭐)
+  □ N4: 人格长期进化           (中等, ⭐)
+  □ N3: 多模态感知集成         (低优先, ⭐)
+  □ N6: LLM 响应缓存           (低优先, ⭐)
 ```
 
 ---
