@@ -1,15 +1,16 @@
 """
-io_qq.py — Helios QQ 消息 I/O
+io_qq.py — Helios QQ Bot I/O (独立实现 v2)
 
-当前后端: QwenPaw CLI 转发 (Phase 1)
-  发送: qwenpaw channels send (HTTP → QQ Bot API)
-  接收: JSONL 文件轮询 (后续升级为 WebSocket)
+直接连接 QQ Bot API (官方 WebSocket + HTTP)：
+  · Token:  POST bots.qq.com/app/getAppAccessToken
+  · 接收:   WebSocket (OP_DISPATCH → C2C_MESSAGE_CREATE)
+  · 发送:   POST api.sgroup.qq.com/v2/users/{openid}/messages
 
-未来后端: napcat/LLOneBot OneBot v11 HTTP API (Phase 2)
-  POST /send_private_msg  /send_group_msg
-  WebSocket / 反向 HTTP 事件推送
+完全不依赖 QwenPaw，符合 [D011] 独立进程决策。
 
-作者: 璃光 · Helios v2.0.0-alpha
+要求: pip install websocket-client requests
+
+作者: 璃光 · Helios v2.0.0-alpha · G4
 """
 
 from __future__ import annotations
@@ -17,216 +18,484 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
+
+import requests
+
+try:
+    import websocket
+    HAS_WEBSOCKET = True
+except ImportError:
+    HAS_WEBSOCKET = False
 
 log = logging.getLogger("helios.io_qq")
 
 
-# ── 消息结构 ──────────────────────────────────────
+# ═══════════════════════════════════════════════════
+# 常量
+# ═══════════════════════════════════════════════════
+
+DEFAULT_API_BASE = "https://api.sgroup.qq.com"
+TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
+
+# WebSocket op codes
+OP_DISPATCH = 0
+OP_HEARTBEAT = 1
+OP_IDENTIFY = 2
+OP_RESUME = 6
+OP_RECONNECT = 7
+OP_INVALID_SESSION = 9
+OP_HELLO = 10
+OP_HEARTBEAT_ACK = 11
+
+# Intents
+INTENT_PUBLIC_GUILD_MESSAGES = 1 << 30
+INTENT_DIRECT_MESSAGE = 1 << 12
+INTENT_GROUP_AND_C2C = 1 << 25
+INTENT_GUILD_MEMBERS = 1 << 1
+
+# 重连
+RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
+
+
+# ═══════════════════════════════════════════════════
+# 消息结构
+# ═══════════════════════════════════════════════════
 
 @dataclass
 class QQMessage:
-    """QQ 消息"""
+    """接收到的 QQ 消息"""
     message_id: str = ""
-    user_id: str = ""           # QQ 号
-    text: str = ""              # 纯文本
-    group_id: str = ""          # 群聊时非空
+    user_id: str = ""           # 发送者 QQ 号 (或 openid)
+    author_id: str = ""         # QQ Bot API 的 author.id
+    text: str = ""
+    group_id: str = ""
+    guild_id: str = ""
     is_group: bool = False
+    is_guild: bool = False
     timestamp: float = 0.0
+    raw: dict = field(default_factory=dict)
 
 
-# ── 配置 ──────────────────────────────────────────
+# ═══════════════════════════════════════════════════
+# QQ Bot 客户端
+# ═══════════════════════════════════════════════════
 
-class QQIOConfig:
-    """QQ I/O 配置 (环境变量优先)"""
+class QQBotClient:
+    """
+    Helios 独立 QQ Bot 客户端。
 
-    def __init__(self):
-        # QwenPaw CLI 模式
-        self.agent_id: str = os.getenv("HELIOS_QQ_AGENT_ID", "default")
-        self.channel: str = os.getenv("HELIOS_QQ_CHANNEL", "qq")
-        self.user_id: str = os.getenv("HELIOS_QQ_USER_ID", "")
-        self.session_id: str = os.getenv("HELIOS_QQ_SESSION_ID", "")
+    WebSocket 接收消息 → 回调 → Helios 事件系统。
+    HTTP API 发送消息。
 
-        # 文件接收模式
-        self.incoming_path: str = os.getenv(
-            "HELIOS_QQ_INCOMING_FILE",
-            "/tmp/helios_incoming.jsonl",
+    Usage:
+        def on_msg(msg: QQMessage):
+            print(f"收到: {msg.text}")
+
+        bot = QQBotClient(
+            app_id="123456",
+            client_secret="your_secret",
+            on_message=on_msg,
+        )
+        bot.start()   # 启动 WebSocket 线程
+        bot.send_c2c("USER_OPENID", "你好！")
+        bot.stop()
+    """
+
+    def __init__(
+        self,
+        app_id: str = "",
+        client_secret: str = "",
+        api_base: str = "",
+        on_message: Optional[Callable[[QQMessage], None]] = None,
+        sandbox: bool = True,
+    ):
+        self.app_id = app_id or os.getenv("HELIOS_QQ_APP_ID", "")
+        self.client_secret = client_secret or os.getenv("HELIOS_QQ_CLIENT_SECRET", "")
+        self.api_base = (api_base or os.getenv("HELIOS_QQ_API_BASE", DEFAULT_API_BASE)).rstrip("/")
+        self.sandbox = sandbox
+        self.on_message = on_message
+
+        # 运行时
+        self._ws: Optional[websocket.WebSocket] = None
+        self._ws_thread: Optional[threading.Thread] = None
+        self._http_session: Optional[requests.Session] = None
+        self._stop_event = threading.Event()
+        self._heartbeat_interval = 45000  # ms
+        self._last_seq: Optional[int] = None
+        self._session_id: Optional[str] = None
+        self._reconnect_attempts = 0
+
+        # Token 缓存
+        self._token: str = ""
+        self._token_expires_at: float = 0.0
+        self._token_lock = threading.Lock()
+
+    # ── Token ───────────────────────────────────
+
+    def _get_token(self) -> str:
+        """获取/刷新 access_token (线程安全)"""
+        with self._token_lock:
+            now = time.time()
+            if self._token and now < self._token_expires_at - 300:
+                return self._token
+
+        resp = requests.post(
+            TOKEN_URL,
+            json={"appId": self.app_id, "clientSecret": self.client_secret},
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data.get("access_token")
+        if not token:
+            raise RuntimeError(f"Token 获取失败: {data}")
+
+        expires_in = int(data.get("expires_in", 7200))
+        with self._token_lock:
+            self._token = token
+            self._token_expires_at = time.time() + expires_in
+
+        log.info("access_token 已刷新 (过期=%ds)", expires_in)
+        return token
+
+    # ── 网关 ────────────────────────────────────
+
+    def _get_gateway_url(self) -> str:
+        """获取 WebSocket 网关地址"""
+        token = self._get_token()
+        resp = requests.get(
+            f"{self.api_base}/gateway",
+            headers={"Authorization": f"QQBot {token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        url = data.get("url")
+        if not url:
+            raise RuntimeError(f"网关地址获取失败: {data}")
+        return url
+
+    # ── 发送消息 ─────────────────────────────────
+
+    def send_c2c(self, openid: str, text: str, msg_id: str = "") -> bool:
+        """
+        发送 C2C (私聊) 文本消息。
+
+        返回: True 成功 / False 失败
+        """
+        token = self._get_token()
+        body: dict = {
+            "content": text,
+            "msg_type": 0,
+            "msg_seq": int(time.time() * 1000) % (1 << 31),
+        }
+        if msg_id:
+            body["msg_id"] = msg_id
+
+        try:
+            resp = requests.post(
+                f"{self.api_base}/v2/users/{openid}/messages",
+                json=body,
+                headers={
+                    "Authorization": f"QQBot {token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                log.debug("C2C 发送成功: id=%s", result.get("id", ""))
+                return True
+            else:
+                log.warning("C2C 发送失败 HTTP %d: %s", resp.status_code, resp.text[:200])
+                return False
+        except Exception as e:
+            log.error("C2C 发送异常: %s", e)
+            return False
+
+    def send_group(self, group_openid: str, text: str, msg_id: str = "") -> bool:
+        """
+        发送群聊文本消息。
+        """
+        token = self._get_token()
+        body: dict = {
+            "content": text,
+            "msg_type": 0,
+            "msg_seq": int(time.time() * 1000) % (1 << 31),
+        }
+        if msg_id:
+            body["msg_id"] = msg_id
+
+        try:
+            resp = requests.post(
+                f"{self.api_base}/v2/groups/{group_openid}/messages",
+                json=body,
+                headers={
+                    "Authorization": f"QQBot {token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=15,
+            )
+            return resp.status_code == 200
+        except Exception as e:
+            log.error("群聊发送异常: %s", e)
+            return False
+
+    # ── WebSocket 循环 ──────────────────────────
+
+    def start(self):
+        """启动 WebSocket 接收线程"""
+        if not HAS_WEBSOCKET:
+            raise ImportError("需要安装 websocket-client: pip install websocket-client")
+
+        if not self.app_id or not self.client_secret:
+            raise ValueError("HELIOS_QQ_APP_ID 和 HELIOS_QQ_CLIENT_SECRET 未配置")
+
+        self._stop_event.clear()
+        self._ws_thread = threading.Thread(
+            target=self._run_forever,
+            daemon=True,
+            name="helios-qq-ws",
+        )
+        self._ws_thread.start()
+        log.info("QQ Bot WebSocket 线程已启动")
+
+    def stop(self):
+        """停止 WebSocket"""
+        self._stop_event.set()
+        if self._ws:
+            try:
+                self._ws.close()
+            except Exception:
+                pass
+        if self._ws_thread:
+            self._ws_thread.join(timeout=3)
+        log.info("QQ Bot 已停止")
+
+    def is_connected(self) -> bool:
+        """WebSocket 是否已连接"""
+        return (
+            self._ws is not None
+            and self._ws.sock is not None
+            and self._ws.sock.connected
         )
 
-        # 超时
-        self.send_timeout: float = float(os.getenv("HELIOS_QQ_SEND_TIMEOUT", "15"))
+    # ── 内部: WebSocket 主循环 ───────────────────
 
+    def _run_forever(self):
+        """WebSocket 线程主循环 (带重连)"""
+        while not self._stop_event.is_set():
+            try:
+                self._connect_loop()
+            except Exception:
+                log.exception("QQ WebSocket 异常，准备重连...")
 
-# ── QQ I/O 主类 ────────────────────────────────────
+            if self._stop_event.is_set():
+                break
 
-class QQIO:
-    """
-    统一 QQ 消息 I/O 接口
+            # 重连延迟
+            delay = RECONNECT_DELAYS[min(
+                self._reconnect_attempts,
+                len(RECONNECT_DELAYS) - 1,
+            )]
+            log.info("QQ WebSocket %d 秒后重连...", delay)
+            self._stop_event.wait(delay)
 
-    send 和 receive 不耦合 — Helios 可以随时发消息，
-    也可以随时检查是否有新消息。
-    """
+    def _connect_loop(self):
+        gateway_url = self._get_gateway_url()
+        log.info("连接 QQ 网关: %s", gateway_url[:40])
 
-    def __init__(self, config: Optional[QQIOConfig] = None):
-        self.cfg = config or QQIOConfig()
-        self._incoming_offset = 0       # 已读行数
-        self._lock = threading.Lock()
-        self._auto_discovered = False
-
-    # ── 发现配置 ─────────────────────────────────
-
-    def discover(self) -> bool:
-        """自动发现 QQ 会话参数 (通过 qwenpaw chats list)"""
-        if self.cfg.user_id and self.cfg.session_id:
-            return True
+        self._ws = websocket.create_connection(
+            gateway_url,
+            timeout=30,
+        )
 
         try:
-            result = subprocess.run(
-                [
-                    "qwenpaw", "chats", "list",
-                    "--agent-id", self.cfg.agent_id,
-                    "--channel", self.cfg.channel,
-                ],
-                capture_output=True, text=True,
-                timeout=8,
-            )
-            if result.returncode != 0:
-                log.warning("qwenpaw chats list 失败: %s", result.stderr.strip())
-                return False
+            self._event_loop()
+        finally:
+            if self._ws:
+                try:
+                    self._ws.close()
+                except Exception:
+                    pass
+                self._ws = None
 
-            sessions = json.loads(result.stdout)
-            for s in sessions:
-                if s.get("channel") == self.cfg.channel:
-                    self.cfg.user_id = s["user_id"]
-                    self.cfg.session_id = s["session_id"]
-                    log.info(
-                        "自动发现 QQ 会话: user=%s session=%s",
-                        self.cfg.user_id, self.cfg.session_id,
-                    )
-                    return True
+    def _event_loop(self):
+        """WebSocket 事件循环 (单次连接)"""
+        heartbeat_timer = 0.0
 
-            log.warning("未找到 QQ 频道会话")
-            return False
+        while not self._stop_event.is_set():
+            # 设置 recv 超时 (用于检查 stop_event)
+            self._ws.settimeout(1.0)
 
-        except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-            log.warning("自动发现失败: %s", e)
-            return False
-
-    # ── 发送 ─────────────────────────────────────
-
-    def send_message(self, text: str, user_id: str = "") -> bool:
-        """发送私聊消息"""
-        uid = user_id or self.cfg.user_id
-        sid = self.cfg.session_id
-
-        if not uid or not sid:
-            log.error("send_message: 缺少 user_id/session_id，请先调用 discover()")
-            return False
-
-        try:
-            result = subprocess.run(
-                [
-                    "qwenpaw", "channels", "send",
-                    "--agent-id", self.cfg.agent_id,
-                    "--channel", self.cfg.channel,
-                    "--target-user", uid,
-                    "--target-session", sid,
-                    "--text", text,
-                ],
-                capture_output=True, text=True,
-                timeout=self.cfg.send_timeout,
-            )
-
-            if result.returncode != 0:
-                log.warning("发送失败 (exit=%d): %s", result.returncode, result.stderr.strip())
-                return False
-
-            response = json.loads(result.stdout)
-            ok = response.get("success", False)
-            if ok:
-                log.debug("QQ 发送成功: %s", text[:60])
-            else:
-                log.warning("QQ 发送失败: %s", response.get("message", ""))
-            return ok
-
-        except subprocess.TimeoutExpired:
-            log.error("QQ 发送超时")
-            return False
-        except json.JSONDecodeError as e:
-            log.error("QQ 响应解析失败: %s", e)
-            return False
-
-    # ── 接收 ─────────────────────────────────────
-
-    def receive_messages(self) -> list[QQMessage]:
-        """
-        读取新消息 (JSONL 文件轮询)
-
-        格式: {"user_id": "...", "text": "...", "message_id": "...", "timestamp": ...}
-
-        未来: WebSocket / napcat 事件推送
-        """
-        path = Path(self.cfg.incoming_path)
-        if not path.exists():
-            return []
-
-        messages: list[QQMessage] = []
-        with self._lock:
             try:
-                with open(path, "r") as f:
-                    lines = f.readlines()
-                new_lines = lines[self._incoming_offset:]
-                self._incoming_offset = len(lines)
+                op_code, data = self._ws.recv_data()
+            except websocket.WebSocketTimeoutException:
+                # 超时 → 检查心跳
+                now = time.time()
+                if self._heartbeat_interval > 0 and now - heartbeat_timer > self._heartbeat_interval / 1000:
+                    self._send_heartbeat()
+                    heartbeat_timer = now
+                continue
+            except (websocket.WebSocketConnectionClosedException, ConnectionError, OSError):
+                log.info("QQ WebSocket 断开")
+                break
 
-                for line in new_lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                        msg = QQMessage(
-                            message_id=data.get("message_id", ""),
-                            user_id=data.get("user_id", ""),
-                            text=data.get("text", ""),
-                            group_id=data.get("group_id", ""),
-                            is_group=bool(data.get("group_id", "")),
-                            timestamp=data.get("timestamp", time.time()),
-                        )
-                        messages.append(msg)
-                    except json.JSONDecodeError:
-                        log.debug("跳过非法 JSON: %s", line[:80])
-            except Exception as e:
-                log.warning("读取 incoming 失败: %s", e)
+            if op_code == OP_CLOSE:
+                log.info("QQ WebSocket 收到 CLOSE")
+                break
 
-        return messages
+            if not data:
+                continue
 
-    def write_incoming(self, msg: QQMessage):
-        """写入接收队列 (供外部中继使用)"""
-        path = Path(self.cfg.incoming_path)
-        with self._lock:
             try:
-                with open(path, "a") as f:
-                    f.write(json.dumps({
-                        "user_id": msg.user_id,
-                        "text": msg.text,
-                        "message_id": msg.message_id,
-                        "group_id": msg.group_id,
-                        "timestamp": msg.timestamp or time.time(),
-                    }, ensure_ascii=False) + "\n")
-            except Exception as e:
-                log.warning("写入 incoming 失败: %s", e)
+                payload = json.loads(data.decode("utf-8"))
+            except json.JSONDecodeError:
+                continue
+
+            op = payload.get("op")
+            d = payload.get("d")
+            s = payload.get("s")
+            t = payload.get("t")
+
+            if s is not None:
+                self._last_seq = s
+
+            if op == OP_HELLO:
+                hi = d or {}
+                self._heartbeat_interval = hi.get("heartbeat_interval", 45000)
+                self._do_identify()
+                heartbeat_timer = time.time()
+
+            elif op == OP_DISPATCH:
+                self._handle_dispatch(t, d or {})
+
+            elif op == OP_HEARTBEAT_ACK:
+                pass  # 正常
+
+            elif op == OP_RECONNECT:
+                log.info("QQ 服务器要求重连")
+                break
+
+            elif op == OP_INVALID_SESSION:
+                log.warning("QQ session 无效，重新鉴权")
+                self._session_id = None
+                self._last_seq = None
+                break
+
+    def _send_heartbeat(self):
+        if self._ws and self._ws.sock and self._ws.sock.connected:
+            try:
+                self._ws.send(json.dumps({
+                    "op": OP_HEARTBEAT,
+                    "d": self._last_seq,
+                }))
+            except Exception:
+                pass
+
+    def _do_identify(self):
+        """发送鉴权"""
+        token = self._get_token()
+        intents = (
+            INTENT_PUBLIC_GUILD_MESSAGES
+            | INTENT_GUILD_MEMBERS
+            | INTENT_DIRECT_MESSAGE
+            | INTENT_GROUP_AND_C2C
+        )
+        payload = {
+            "op": OP_IDENTIFY,
+            "d": {
+                "token": f"QQBot {token}",
+                "intents": intents,
+                "shard": [0, 1],
+            },
+        }
+        self._ws.send(json.dumps(payload))
+        log.debug("OP_IDENTIFY 已发送")
+
+    def _handle_dispatch(self, event_type: str, data: dict):
+        """处理 OP_DISPATCH 事件"""
+        if event_type == "READY":
+            self._session_id = data.get("session_id")
+            self._reconnect_attempts = 0
+            log.info("QQ Bot 就绪! session=%s", self._session_id)
+
+        elif event_type == "RESUMED":
+            self._reconnect_attempts = 0
+            log.info("QQ session 恢复")
+
+        elif event_type == "C2C_MESSAGE_CREATE":
+            self._on_c2c_message(data)
+
+        elif event_type == "GROUP_AT_MESSAGE_CREATE":
+            self._on_group_message(data)
+
+        elif event_type == "GUILD_MESSAGE_CREATE":
+            # 频道消息 (暂不处理)
+            pass
+
+    # ── 消息解析 ─────────────────────────────────
+
+    def _on_c2c_message(self, data: dict):
+        author = data.get("author", {})
+        msg = QQMessage(
+            message_id=data.get("id", ""),
+            user_id=author.get("id", ""),
+            author_id=author.get("id", ""),
+            text=data.get("content", ""),
+            is_group=False,
+            timestamp=time.time(),
+            raw=data,
+        )
+        log.info("📩 QQ私聊 [%s]: %s", msg.author_id[:10], msg.text[:60])
+        if self.on_message:
+            try:
+                self.on_message(msg)
+            except Exception:
+                log.exception("on_message 回调异常")
+
+    def _on_group_message(self, data: dict):
+        author = data.get("author", {})
+        group_id = data.get("group_id", "")
+        msg = QQMessage(
+            message_id=data.get("id", ""),
+            user_id=author.get("id", ""),
+            author_id=author.get("id", ""),
+            text=data.get("content", ""),
+            group_id=group_id,
+            is_group=True,
+            timestamp=time.time(),
+            raw=data,
+        )
+        log.info("📩 QQ群聊 [%s/%s]: %s", group_id, msg.author_id[:10], msg.text[:60])
+        if self.on_message:
+            try:
+                self.on_message(msg)
+            except Exception:
+                log.exception("on_message 回调异常")
 
     # ── 状态 ─────────────────────────────────────
 
     def get_state(self) -> dict:
         return {
-            "backend": "qwenpaw_cli",
-            "user_id": self.cfg.user_id,
-            "channel": self.cfg.channel,
-            "incoming_offset": self._incoming_offset,
+            "backend": "qq_official_ws",
+            "app_id": self.app_id,
+            "connected": self.is_connected(),
+            "session_id": self._session_id,
         }
+
+
+# ═══════════════════════════════════════════════════
+# OP_CLOSE (websocket-client 常量兼容)
+# ═══════════════════════════════════════════════════
+
+try:
+    from websocket import ABNF
+    OP_CLOSE = ABNF.OPCODE_CLOSE
+except ImportError:
+    OP_CLOSE = 8

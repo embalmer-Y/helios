@@ -21,6 +21,8 @@ import sys
 import time
 import signal
 import logging
+import threading
+import queue
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -36,7 +38,7 @@ from mood_tracker import MoodTracker
 from personality import PersonalityProfile
 from autobiographical import AutobiographicalStore
 from regulation import RegulationEngine
-from io_qq import QQIO, QQIOConfig, QQMessage
+from io_qq import QQBotClient, QQMessage
 from helios_utils import clamp
 
 try:
@@ -81,9 +83,12 @@ class HeliosConfig:
     # 意动
     REGULATION_COMFORT_DEVIATION: float = float(os.getenv("HELIOS_COMFORT_DEVIATION", "0.2"))
     
-    # QQ Bot (napcat / LLOneBot HTTP API)
-    QQ_BOT_URL: str = os.getenv("HELIOS_QQ_BOT_URL", "")
-    QQ_TARGET_ID: str = os.getenv("HELIOS_QQ_TARGET_ID", "")  # 主人的QQ号/群号
+    # QQ Bot
+    QQ_APP_ID: str = os.getenv("HELIOS_QQ_APP_ID", os.getenv("QQ_APP_ID", ""))
+    QQ_CLIENT_SECRET: str = os.getenv("HELIOS_QQ_CLIENT_SECRET", os.getenv("QQ_CLIENT_SECRET", ""))
+    QQ_API_BASE: str = os.getenv("HELIOS_QQ_API_BASE", "https://api.sgroup.qq.com")
+    QQ_SANDBOX: bool = os.getenv("HELIOS_QQ_SANDBOX", "1") == "1"
+    QQ_TARGET_ID: str = os.getenv("HELIOS_QQ_TARGET_ID", "")  # 主人的 openid
 
 
 # ═══════════════════════════════════════════════════
@@ -144,27 +149,30 @@ class Helios:
         # 加载已有记忆
         self.regulation.load()
         
-        # ── QQ I/O (G4) ──
-        self.qq = None
-        qq_ready = False
-        try:
-            qq_cfg = QQIOConfig()
-            # 如果环境变量已配置，直接用
-            if qq_cfg.user_id and qq_cfg.session_id:
-                self.qq = QQIO(qq_cfg)
-                qq_ready = True
-            else:
-                # 自动发现 (可能较慢)
-                self.qq = QQIO(qq_cfg)
-                qq_ready = self.qq.discover()
-        except Exception as e:
-            self.log.warning(f"QQ I/O 初始化失败: {e}")
+        # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
+        self.qq: Optional[QQBotClient] = None
+        self._msg_queue: queue.Queue = queue.Queue()
         
-        if qq_ready:
-            self.log.info(f"QQ I/O 就绪: {self.qq.cfg.user_id}")
+        if self.cfg.QQ_APP_ID and self.cfg.QQ_CLIENT_SECRET:
+            try:
+                self.qq = QQBotClient(
+                    app_id=self.cfg.QQ_APP_ID,
+                    client_secret=self.cfg.QQ_CLIENT_SECRET,
+                    api_base=self.cfg.QQ_API_BASE,
+                    sandbox=self.cfg.QQ_SANDBOX,
+                    on_message=lambda msg: self._msg_queue.put(msg),
+                )
+                self.qq.start()
+                self.log.info(
+                    "QQ Bot 已启动: app_id=%s sandbox=%s",
+                    self.cfg.QQ_APP_ID[:6] + "***",
+                    self.cfg.QQ_SANDBOX,
+                )
+            except Exception as e:
+                self.log.warning(f"QQ Bot 启动失败: {e}")
+                self.qq = None
         else:
-            self.qq = None
-            self.log.info("QQ I/O 未配置 (Helios 可运行但无法收发 QQ)")
+            self.log.info("QQ Bot 未配置 (HELIOS_QQ_APP_ID / HELIOS_QQ_CLIENT_SECRET)")
         
         # ── 分离焦虑追踪 ──
         self._last_master_contact = time.time()
@@ -206,29 +214,34 @@ class Helios:
         """
         采集外部事件 → Panksepp 触发矢量
         
-        G4: QQ消息 → 基础情感词分析 → Panksepp触发
+        G4: QQBotClient 回调 → 消息队列 → 情感分析
         分离焦虑: 指数增长的自发 PANIC
         """
         triggers: dict[str, float] = {}
         
-        # 分离焦虑 (指数累积: 1h→0.3, 3h→0.7, 12h→1.0)
+        # 分离焦虑 (指数累积)
         sep_hours = (time.time() - self._last_master_contact) / 3600
         self._separation_anxiety = min(1.0, 1 - 2.71828 ** (-0.4 * sep_hours))
         if self._separation_anxiety > 0.2:
             triggers["PANIC"] = self._separation_anxiety
         
-        # 检查 QQ 消息
-        if self.qq:
-            msgs = self.qq.receive_messages()
-            for msg in msgs:
-                self.log.info(f"📩 QQ: {msg.text[:60]}")
-                # 任何消息都视为"主人联系" → 重置分离焦虑
-                self._last_master_contact = time.time()
-                self._separation_anxiety = 0.0
-                # 轻量情感分析 → Panksepp 触发
-                event = _qq_text_to_panksepp(msg.text)
-                for sys_name, intensity in event.items():
-                    triggers[sys_name] = max(triggers.get(sys_name, 0), intensity)
+        # 消费消息队列 (线程安全)
+        while True:
+            try:
+                msg: QQMessage = self._msg_queue.get_nowait()
+            except queue.Empty:
+                break
+            
+            self.log.info(f"📩 QQ [{msg.author_id[:10]}]: {msg.text[:60]}")
+            
+            # 任何消息 → 重置分离焦虑
+            self._last_master_contact = time.time()
+            self._separation_anxiety = 0.0
+            
+            # 轻量情感分析 → Panksepp
+            event = _qq_text_to_panksepp(msg.text)
+            for sys_name, intensity in event.items():
+                triggers[sys_name] = max(triggers.get(sys_name, 0), intensity)
         
         return triggers
     
@@ -328,12 +341,10 @@ class Helios:
     
     def _handle_action(self, action: str):
         """
-        处理行为（扩展点）
+        处理行为
         
-        speak_* → 生成自然语言 + QQ 发送
-        其他 → 日志记录
+        speak_* → 生成自然语言 + QQ 发送 (send_c2c)
         """
-        # ── QQ 发送 ──
         master_actions = {
             "speak_care", "speak_missing", "speak_play",
             "speak_fear", "speak_share", "speak_complain",
@@ -342,19 +353,25 @@ class Helios:
         
         if action in master_actions:
             text = self._generate_speech(action)
-            if self.qq and text:
-                ok = self.qq.send_message(text)
+            if self.qq and self.qq.is_connected() and text:
+                # QQ Bot API 用 author.id 作为 openid
+                # 第一个收到的消息会记录 openid
+                target = self.cfg.QQ_TARGET_ID
+                if target:
+                    ok = self.qq.send_c2c(target, text)
+                else:
+                    self.log.warning("未设置 HELIOS_QQ_TARGET_ID，无法发送")
+                    ok = False
+                    
                 if ok:
-                    # 发送成功 → 记录互动，重置分离焦虑
                     self._last_master_contact = time.time()
                     self._separation_anxiety = 0.0
-                    # 记录到 regulation (学习效果)
                     self.regulation.note_action_executed(action)
                     self.log.info(f"🗣️ [{action}] → QQ: {text[:60]}")
                 else:
                     self.log.warning(f"🗣️ [{action}] QQ 发送失败")
             else:
-                self.log.info(f"🗣️ [{action}] (无QQ通道): {text[:60] if text else ''}")
+                self.log.info(f"🗣️ [{action}] (无QQ): {text[:60] if text else ''}")
             return
         
         if action == "browse":
@@ -457,6 +474,11 @@ class Helios:
         """优雅退出"""
         elapsed = time.time() - self.start_time
         self.log.info(f"Helios 退出 · 运行 {elapsed/60:.1f}min · {self.tick_count} ticks")
+        
+        # 停止 QQ Bot
+        if self.qq:
+            self.qq.stop()
+        
         self.autobio.flush()
         self.regulation.save()
     
