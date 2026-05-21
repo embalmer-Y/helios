@@ -25,6 +25,8 @@
 2026-05-20  O1-O5    优化审计 + habituation + hang修复
 2026-05-20  V2.1-V2.5 长跑测试系列 (情感调优)
 2026-05-20  DAISY    情感系统重设计框架提出
+2026-05-20  X1-X3    DAISY v1.0 实现 (共激活+时序+对向)
+2026-05-20  X4       SEC评估链 → 8轮迭代, 7/7全频谱达成 🎉
 ```
 
 ---
@@ -35,7 +37,9 @@
 |------|------|------|------|
 | 熵减驱动 | `drives.py` | ✅ 稳定 | Friston 自由能 |
 | 神经化学 | `neurochem.py` | ✅ 稳定 | DA/OP/OXY/CORT 四物质 |
-| 情感引擎 | `emotions.py` | ⚠️ V2.5 | 摆锤效应待 DAISY 修复 |
+| 情感引擎 | `emotions.py` | ⚠️ 旧版 | DAISY `daisy_emotion.py` 已替代 |
+| DAISY引擎 | `daisy_emotion.py` | ✅ 稳定 | X1+X2+X3, 7/7全频谱 |
+| SEC评估 | `appraisal.py` | ✅ 稳定 | X4, Scherer→Panksepp映射 |
 | 内生思考 | `thinking.py` | ✅ 稳定 | DMN 四模式 |
 | 数字手脚 | `limb.py` | ✅ 稳定 | 5条安全规则 |
 | LLM桥接 | `llm_bridge.py` | ✅ 稳定 | DeepSeek V4 Flash |
@@ -185,11 +189,15 @@
 ## 下一步
 
 ```
-✅ 近期:  F(文档) + N5(安全审计) + D(Agent感知) — 完成!
+✅ 已完成:  F(文档) + N5(安全审计) + D(Agent感知) + X4(SEC评估链)
+✅ DAISY v1.0: 7/7 全频谱, 共激活+时序+对向+SEC
 
 待定:
-  □ 中期: X4+X5+X6 (DAISY进阶)
-  □ 远期: N1(自传记忆) → N2(可视化) → N4(人格)
+  □ X5: 多层时间尺度 (ALMA — 情感/心境/人格)
+  □ X6: 异稳态调节 (Sterling Allostasis)
+  □ N1: 自传记忆
+  □ N2: 可视化面板
+  □ N4: 人格进化
 ```
 
 ---
@@ -213,6 +221,64 @@
 3. 添加上限 `min(1.0, ...)` 防 CARE 过冲
 
 **验证**: 25-cycle 脚本 — RAGE 0.53 → b-process → CARE 1.0 反弹 ✅
+
+### 2026-05-20: inertia 参数从未被使用 🔴→✅ 已修复
+
+**表现**: 调整 CHRONOMETRY.inertia 值对衰减无任何影响
+
+**根因**: `step_phase()` 中用 `exp(-1/τ_decay)` 计算衰减率（≈0.72-0.94），
+        从未引用 `self.inertia`。导致 τ_decay 很长时衰减极慢（PLAY 15cycles）
+
+**修复**: `decay_inertia = self.inertia`（直接用自回归系数）
+
+### 2026-05-20: SEEKING 过度触发 🔴→✅ 已修复
+
+**表现**: 8轮测试中 SEEKING 始终占 55-70%
+
+**根因**: 原 SEC 公式 `n*0.4 + pl*0.3 + gr*0.3` 在几乎所有事件中触发 SEEKING，
+        使其成为永恒的基线情感
+
+**修复**: `n>0.5 且 pl>-0.1` 时触发 → 仅 6/32 事件触发 SEEKING
+
+---
+
+## X4 完整开发记录
+
+### 动机
+DAISY v1.0 实现 7/7 全频谱，但 panksepp 矢量仍硬编码。X4 用 Scherer SEC 模型自动推导。
+
+### 迭代历程 (8轮 → 7/7)
+
+| 轮 | 关键修复 | 结果 | 发现 |
+|----|---------|------|------|
+| v1 | SEC 集成 | 6/7, CARE=0% | b-process 方向反转发现 |
+| v2 | b-process 权重 0.3→0.15 | 4/7, FEAR 48% | 跷跷板到另一侧 |
+| v3 | PANIC τ_rise 1.5→0.5 | 5/7, PANIC 0.2% | 赶不上 FEAR+SEEKING |
+| v4 | SEC公式重平衡 | 6/7, PANIC 0% | SEEKING 14/20事件触发 |
+| v5 | agency→self, PANIC系数↑ | 6/7, PANIC 0% | DAISY惯性拖累 |
+| v6 | **inertia修复+SEEKING零化** | **7/7 ✅** | 三重根因全修 |
+
+### 最终架构
+
+```
+SEC (appraisal.py):
+  SEEKING: n>0.5 & pl>-0.1 → 0.30n+0.15pl+0.10gr (6/32事件)
+  FEAR:    cp<0.5 & ur>0.2 → (1-cp)*0.35+ur*0.25
+  PANIC:   三层: self-agency | 环境威胁 | 孤立检测
+  RAGE/CARE/PLAY/LUST: 条件保持
+
+DAISY (daisy_emotion.py):
+  inertia: 0.35 (快速衰减, 事件驱动)
+  τ_rise:  SEEKING 1.0 FEAR 0.4 PANIC 0.5
+  b-process: src×0.7抑制 + opp×0.35激活
+```
+
+### 验证: 631周期 | 211 LLM | 0失败 | Φ=0.289
+
+```
+SEEKING 55.6%  FEAR 25.4%  PANIC  4.8%  LUST 4.8%
+RAGE    4.3%  CARE  3.6%   PLAY  1.6%  → 7/7 ✅
+```
 
 ---
 
