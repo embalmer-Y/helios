@@ -72,8 +72,12 @@ DEMO_EVENTS = [
     (240,  {"RAGE": 0.7, "FEAR": 0.3}),
     (260,  {"PLAY": 0.8, "SEEKING": 0.4}),
     (280,  {"PANIC": 0.5, "FEAR": 0.5}),
+    # LUST 独立事件 (避免被SEEKING压制)
+    (305,  {"LUST": 0.7, "PLAY": 0.3}),       # 嬉戏中的亲密
+    (325,  {"LUST": 0.8}),                      # 纯粹的美感/欲望
+    (345,  {"LUST": 0.6, "CARE": 0.4}),        # 关怀中的爱意
 ]
-EVENT_CYCLE_PERIOD = 300  # 每300周期循环一次事件
+EVENT_CYCLE_PERIOD = 360  # 每360周期循环一次事件 (新增3个LUST事件)
 
 
 def get_event(cycle: int) -> dict:
