@@ -22,6 +22,7 @@ Dynamic Allostatic Integrated System for emotionYnamics
 import math
 from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
+from helios_utils import clamp
 
 # ═══════════════════════════════════════════════
 # 常量 & 配置
@@ -188,7 +189,6 @@ class AffectiveChronometer:
         self.event_peak *= 0.99
 
         # 确保不过界
-        from helios_utils import clamp
         self.activation = clamp(self.activation, 0.0, 1.0)
 
         self.history.append(self.activation)
@@ -295,11 +295,12 @@ class DaisySystemEngine:
       X1: 7维共激活矢量
       X2: 每个系统独立时序 (AffectiveChronometer)
       X3: 对向过程 (OpponentRegulator)
+      X5: 人格+心境调制 (PersonalityProfile + MoodTracker)
 
     接口: 与 emotions.py 的 PankseppEmotionEngine 完全兼容
     """
 
-    def __init__(self):
+    def __init__(self, personality=None, mood_tracker=None):
         # 7 个时序控制器
         self.systems: Dict[str, AffectiveChronometer] = {}
         for name in PANKSEPP_SYSTEMS:
@@ -309,6 +310,10 @@ class DaisySystemEngine:
         self.opponents: Dict[str, OpponentRegulator] = {}
         for name in PANKSEPP_SYSTEMS:
             self.opponents[name] = OpponentRegulator(name)
+
+        # X5: 人格 + 心境
+        self.personality = personality  # PersonalityProfile | None
+        self.mood_tracker = mood_tracker  # MoodTracker | None
 
         # 历史
         self.state_history: List[AffectState] = []
@@ -332,6 +337,10 @@ class DaisySystemEngine:
         Returns:
             AffectState
         """
+
+        # ── 第〇步: X5 心境调制事件触发器 ──
+        if triggers and self.mood_tracker is not None:
+            triggers = self.mood_tracker.modulate_triggers(triggers)
 
         # ── 第一步: 事件冲击 → X2 时序 + X3 对向 ──
         if triggers:
@@ -367,6 +376,16 @@ class DaisySystemEngine:
         if neurochem is not None:
             self._apply_neurochem_modulation(neurochem)
 
+        # ── 第五点五步: X5 人格调制 ──
+        if self.personality is not None:
+            for sys_name in PANKSEPP_SYSTEMS:
+                gain = self.personality.neuro_gains.get(sys_name, 1.0)
+                # 调制当前激活 (gain ≠ 1.0 时偏离基线)
+                if abs(gain - 1.0) > 0.01:
+                    sys = self.systems[sys_name]
+                    sys.activation *= gain
+                    sys.activation = clamp(sys.activation, 0.0, 1.0)
+
         # ── 第六步: 稳态压力 (v2.5 兼容) ──
         self._apply_homeostatic_pressure()
 
@@ -384,7 +403,6 @@ class DaisySystemEngine:
             total_weight += w
 
         if total_weight > 0:
-            from helios_utils import clamp
             valence = clamp(total_valence / total_weight, -1, 1)
             arousal = clamp(total_arousal / total_weight, 0, 1)
         else:
@@ -417,6 +435,10 @@ class DaisySystemEngine:
         self.state_history.append(state)
         if len(self.state_history) > self.max_history:
             self.state_history.pop(0)
+
+        # ── X5: 心境累积 ──
+        if self.mood_tracker is not None:
+            self.mood_tracker.update(valence, arousal)
 
         return state
 
