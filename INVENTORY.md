@@ -159,7 +159,7 @@
 | G0 | **独立主循环** | helios_main.py, systemd, 配置 | **✅** |
 | G1+G2 | **情感调节学习器** | regulation.py, 记忆驱动行为选择 | **✅** |
 | G3 | **LLM 对话生成** | 情感上下文→自然语言 | ⬜ |
-| G4 | **QQ 消息收发** | napcat HTTP API, 跟主人对话 | ⬜ |
+| G4 | **QQ 消息收发** | napcat HTTP API, 跟主人对话 | **✅ v2: 独立 WebSocket** |
 | G5 | **阿里云 TTS** | 文字→语音 | ⬜ |
 | G6 | **阿里云 STT** | 语音→文字 | ⬜ |
 | G7 | **璃光记忆迁入** | PROFILE→人格种子, MEMORY→自传 | ⬜ |
