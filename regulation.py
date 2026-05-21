@@ -187,6 +187,12 @@ class RegulationEngine:
             )
             self.memories[action][emotion] = mem
     
+    def note_action_executed(self, action_type: str):
+        """标记行为已执行 (供外部调用)"""
+        if action_type in self.memories:
+            for emotion, mem in self.memories[action_type].items():
+                mem.last_executed = time.time()
+    
     # ═══════════════════════════════════════════
     # 主入口
     # ═══════════════════════════════════════════

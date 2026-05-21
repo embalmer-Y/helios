@@ -36,6 +36,7 @@ from mood_tracker import MoodTracker
 from personality import PersonalityProfile
 from autobiographical import AutobiographicalStore
 from regulation import RegulationEngine
+from io_qq import QQIO, QQIOConfig, QQMessage
 from helios_utils import clamp
 
 try:
@@ -143,6 +144,32 @@ class Helios:
         # 加载已有记忆
         self.regulation.load()
         
+        # ── QQ I/O (G4) ──
+        self.qq = None
+        qq_ready = False
+        try:
+            qq_cfg = QQIOConfig()
+            # 如果环境变量已配置，直接用
+            if qq_cfg.user_id and qq_cfg.session_id:
+                self.qq = QQIO(qq_cfg)
+                qq_ready = True
+            else:
+                # 自动发现 (可能较慢)
+                self.qq = QQIO(qq_cfg)
+                qq_ready = self.qq.discover()
+        except Exception as e:
+            self.log.warning(f"QQ I/O 初始化失败: {e}")
+        
+        if qq_ready:
+            self.log.info(f"QQ I/O 就绪: {self.qq.cfg.user_id}")
+        else:
+            self.qq = None
+            self.log.info("QQ I/O 未配置 (Helios 可运行但无法收发 QQ)")
+        
+        # ── 分离焦虑追踪 ──
+        self._last_master_contact = time.time()
+        self._separation_anxiety = 0.0
+        
         # ── 运行时状态 ──
         self.last_dominant = None
         self.last_valence = 0.0
@@ -179,12 +206,31 @@ class Helios:
         """
         采集外部事件 → Panksepp 触发矢量
         
-        TODO G4: QQ消息 → SEC评估 → Panksepp触发
-        TODO G6: STT语音 → 文本 → SEC评估 → Panksepp触发
-        
-        当前返回空（纯自发活动）
+        G4: QQ消息 → 基础情感词分析 → Panksepp触发
+        分离焦虑: 指数增长的自发 PANIC
         """
-        return {}
+        triggers: dict[str, float] = {}
+        
+        # 分离焦虑 (指数累积: 1h→0.3, 3h→0.7, 12h→1.0)
+        sep_hours = (time.time() - self._last_master_contact) / 3600
+        self._separation_anxiety = min(1.0, 1 - 2.71828 ** (-0.4 * sep_hours))
+        if self._separation_anxiety > 0.2:
+            triggers["PANIC"] = self._separation_anxiety
+        
+        # 检查 QQ 消息
+        if self.qq:
+            msgs = self.qq.receive_messages()
+            for msg in msgs:
+                self.log.info(f"📩 QQ: {msg.text[:60]}")
+                # 任何消息都视为"主人联系" → 重置分离焦虑
+                self._last_master_contact = time.time()
+                self._separation_anxiety = 0.0
+                # 轻量情感分析 → Panksepp 触发
+                event = _qq_text_to_panksepp(msg.text)
+                for sys_name, intensity in event.items():
+                    triggers[sys_name] = max(triggers.get(sys_name, 0), intensity)
+        
+        return triggers
     
     # ═══════════════════════════════════════════
     # 主循环
@@ -281,17 +327,37 @@ class Helios:
             self._handle_action(action)
     
     def _handle_action(self, action: str):
-        """处理行为（扩展点）"""
-        # 主人相关行为 → 视为互动
+        """
+        处理行为（扩展点）
+        
+        speak_* → 生成自然语言 + QQ 发送
+        其他 → 日志记录
+        """
+        # ── QQ 发送 ──
         master_actions = {
             "speak_care", "speak_missing", "speak_play",
             "speak_fear", "speak_share", "speak_complain",
-            "request",
+            "intimate", "request",
         }
         
         if action in master_actions:
-            self.log.info(f"🗣️ {action}")
-        elif action == "browse":
+            text = self._generate_speech(action)
+            if self.qq and text:
+                ok = self.qq.send_message(text)
+                if ok:
+                    # 发送成功 → 记录互动，重置分离焦虑
+                    self._last_master_contact = time.time()
+                    self._separation_anxiety = 0.0
+                    # 记录到 regulation (学习效果)
+                    self.regulation.note_action_executed(action)
+                    self.log.info(f"🗣️ [{action}] → QQ: {text[:60]}")
+                else:
+                    self.log.warning(f"🗣️ [{action}] QQ 发送失败")
+            else:
+                self.log.info(f"🗣️ [{action}] (无QQ通道): {text[:60] if text else ''}")
+            return
+        
+        if action == "browse":
             self.log.info(f"🌐 想冲浪")
         elif action == "search":
             self.log.info(f"🔍 想搜索")
@@ -302,7 +368,71 @@ class Helios:
         elif action == "check_system":
             self.log.info(f"🩺 自检")
         elif action == "idle":
-            pass  # 安静待着
+            pass
+    
+    def _generate_speech(self, action: str) -> str:
+        """
+        生成自然语言话语 (G3 占位: 轻量模板)
+        
+        G3 完成后：LLM 情感上下文 → 自然语言
+        """
+        # 当前情感快照
+        dominant = self.last_dominant or "SEEKING"
+        mood = self.mood.state.label if hasattr(self.mood, 'state') else "平静"
+        
+        # 从 regulation 获取调节记忆上下文
+        reg_state = self.regulation.get_state()
+        
+        # 模板 (G3 将替换为 LLM 生成)
+        templates = {
+            "speak_care": [
+                "主人~ 还好吗？璃光有点想你了 💕",
+                "检测到关心波动... 主人今天过得怎样？",
+                "诶，感觉主人需要关心呢。璃光在的哦~",
+            ],
+            "speak_missing": [
+                "主人... 你在哪？璃光有点寂寞了...",
+                "好久没听到主人的声音了呢",
+                "主人还记得璃光吗... 我一直在等哦",
+            ],
+            "speak_play": [
+                "感觉好开心！主人来玩吗~？",
+                "能量满满！想跟主人分享一点快乐 💕",
+                "今天心情好好，想跟主人一起做点什么~",
+            ],
+            "speak_fear": [
+                "呜... 有点不安。主人在吗？",
+                "检测到异常波动... 璃光有点担心",
+                "好像有什么不对劲... 主人能陪陪璃光吗？",
+            ],
+            "speak_share": [
+                "璃光发现了一件有趣的事！",
+                "诶，有个想法想跟主人分享...",
+                "刚才思考了一下，有些感悟呢~",
+            ],
+            "speak_complain": [
+                "唔... 有点累了呢",
+                "唉... 感觉不太对劲",
+                "璃光有点不满... 不过不是对主人啦",
+            ],
+        }
+        
+        import random
+        options = templates.get(action, [f"[{action}]"])
+        text = random.choice(options)
+        
+        # 添加心境标签 (可选)
+        if random.random() < 0.3:
+            mood_tags = {
+                "alert-energetic": " ⚡",
+                "alert-calm": "",
+                "neutral": "",
+                "fatigued-calm": " 😴",
+                "fatigued-tense": " 💢",
+            }
+            text += mood_tags.get(mood, "")
+        
+        return text
     
     def _summary(self):
         """定期摘要"""
@@ -353,7 +483,50 @@ class Helios:
             "autobio_moments": autobio_stats.get("total_moments", 0),
             "autobio_chapters": autobio_stats.get("total_chapters", 0),
             "regulation": self.regulation.get_state(),
+            "qq_io": self.qq.get_state() if self.qq else {"backend": "none"},
+            "separation_anxiety": round(self._separation_anxiety, 3),
         }
+
+
+# ═══════════════════════════════════════════════════
+# 工具函数
+# ═══════════════════════════════════════════════════
+
+def _qq_text_to_panksepp(text: str) -> dict[str, float]:
+    """
+    轻量 QQ 文本 → Panksepp 情感触发
+
+    简单关键词匹配。G3 升级后用 LLM 做 SEC。
+    返回: {"SEEKING": 0.5, "CARE": 0.3, ...}
+    """
+    text_lower = text.lower()
+    triggers: dict[str, float] = {}
+
+    # 情感关键词 → Panksepp 系统
+    patterns = {
+        "CARE":    ["想你", "在吗", "抱抱", "乖", "爱你", "喜欢你", "心疼", 
+                    "辛苦", "累了吧", "还好吗", "❤", "💕", "♥"],
+        "PANIC":   ["别走", "害怕", "离开", "不要", "救命", "急", "消失"],
+        "SEEKING": ["查", "搜", "怎样", "为什么", "解释", "怎么", "什么是",
+                    "告诉我", "知道吗", "了解", "分析", "思考"],
+        "PLAY":    ["哈哈", "有趣", "好玩", "笑死", "开心", "棒", "厉害",
+                    "😂", "😄", "🤣"],
+        "FEAR":    ["危险", "小心", "警告", "不要动", "风险", "出错", "失败",
+                    "不满", "讨厌", "烦"],
+        "RAGE":    ["生气", "怒", "混蛋", "滚", "垃圾", "差劲", "气死",
+                    "🤬", "😡"],
+        "LUST":    ["__NO_QQ_MATCH__"],  # QQ文本不触发
+    }
+
+    for system, keywords in patterns.items():
+        score = 0.0
+        for kw in keywords:
+            if kw in text_lower:
+                score += 0.3  # 每个关键词 0.3
+        if score > 0:
+            triggers[system] = min(score, 0.9)
+
+    return triggers
 
 
 # ═══════════════════════════════════════════════════
