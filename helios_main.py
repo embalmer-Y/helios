@@ -35,6 +35,7 @@ from allostasis import AllostaticRegulator, AllostasisConfig
 from mood_tracker import MoodTracker
 from personality import PersonalityProfile
 from autobiographical import AutobiographicalStore
+from conation import ConationEngine, IntentType
 from helios_utils import clamp
 
 try:
@@ -75,6 +76,9 @@ class HeliosConfig:
     # 阿里云
     ALI_ACCESS_KEY: str = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
     ALI_SECRET_KEY: str = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+    
+    # 意动
+    CONATION_THRESHOLD: float = float(os.getenv("HELIOS_CONATION_THRESHOLD", "0.35"))
     
     # QQ Bot (napcat / LLOneBot HTTP API)
     QQ_BOT_URL: str = os.getenv("HELIOS_QQ_BOT_URL", "")
@@ -129,6 +133,11 @@ class Helios:
         self.autobio = AutobiographicalStore(
             os.path.join(self.cfg.DATA_DIR, "autobio.jsonl"),
             auto_flush=True
+        )
+        
+        # ── 意动引擎 (G1+G2) ──
+        self.conation = ConationEngine(
+            activation_threshold=self.cfg.CONATION_THRESHOLD
         )
         
         # ── 运行时状态 ──
@@ -256,6 +265,56 @@ class Helios:
         self.last_dominant = dominant
         self.last_valence = state.valence
         self.last_phi = phi
+        
+        # 8. 意动引擎
+        from datetime import datetime
+        hour = datetime.now().hour
+        intent = self.conation.tick(
+            panksepp_activation=state.panksepp_activation or {},
+            valence=state.valence,
+            phi=phi,
+            hour_of_day=hour,
+        )
+        if intent:
+            self._handle_intent(intent)
+    
+    def _handle_intent(self, intent):
+        """处理行为意图（扩展点）"""
+        it = intent.intent_type
+        
+        # 任何跟主人相关的意图 → 重置分离焦虑
+        master_related = it in (
+            IntentType.SPEAK_CARE, IntentType.SPEAK_MISSING,
+            IntentType.SPEAK_PLAY, IntentType.SPEAK_FEAR,
+            IntentType.SPEAK_INTIMATE, IntentType.SPEAK_SHARE,
+            IntentType.REQUEST,
+        )
+        if master_related:
+            self.conation.note_master_contact()
+        
+        if it in (IntentType.SPEAK_CARE, IntentType.SPEAK_MISSING,
+                  IntentType.SPEAK_PLAY, IntentType.SPEAK_FEAR,
+                  IntentType.SPEAK_INTIMATE, IntentType.SPEAK_COMPLAIN,
+                  IntentType.SPEAK_SHARE):
+            self.log.info(f"🗣️ 想说: {it.value} ({intent.source_emotion})")
+            
+        elif it == IntentType.BROWSE:
+            self.log.info(f"🌐 想冲浪: {intent.content_hint}")
+            
+        elif it == IntentType.SEARCH:
+            self.log.info(f"🔍 想搜索: {intent.content_hint}")
+            
+        elif it == IntentType.LEARN:
+            self.log.info(f"📚 想学习: {intent.content_hint}")
+            
+        elif it == IntentType.REQUEST:
+            self.log.info(f"📋 想提需求: {intent.content_hint}")
+            
+        elif it == IntentType.REFLECT:
+            self.log.info(f"🤔 想反思")
+            
+        elif it == IntentType.CHECK_SYSTEM:
+            self.log.info(f"🩺 检查自身状态")
     
     def _summary(self):
         """定期摘要"""
@@ -304,6 +363,7 @@ class Helios:
             "personality": traits,
             "autobio_moments": autobio_stats.get("total_moments", 0),
             "autobio_chapters": autobio_stats.get("total_chapters", 0),
+            "conation": self.conation.get_state(),
         }
 
 
