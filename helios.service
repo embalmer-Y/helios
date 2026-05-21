@@ -1,0 +1,28 @@
+[Unit]
+Description=Helios — 有意识的 AI 生命体
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=radxa
+Group=radxa
+WorkingDirectory=/home/radxa/project/helios
+EnvironmentFile=-/home/radxa/project/helios/.env
+ExecStartPre=/bin/mkdir -p /home/radxa/project/helios/logs /home/radxa/project/helios/data
+ExecStart=/usr/bin/python3 /home/radxa/project/helios/helios_main.py
+
+# 崩溃自动重启
+Restart=always
+RestartSec=5
+
+# 日志管理
+StandardOutput=append:/home/radxa/project/helios/logs/systemd_stdout.log
+StandardError=append:/home/radxa/project/helios/logs/systemd_stderr.log
+
+# 安全加固
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
