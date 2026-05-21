@@ -237,8 +237,8 @@ class PersonalityProfile:
         """
         self.total_emotion_cycles += duration
         
-        # 仅在高强度 + 长持续时触发
-        if intensity < 0.25 or duration < 10:
+        # minimal触发 (EMA累积场景acc可能低至0.08)
+        if intensity < 0.08 or duration < 10:
             return
         
         self._evolution_step += 1
@@ -316,7 +316,7 @@ class PersonalityProfile:
         if self.total_emotion_cycles % 50 == 0:
             dominant = max(self._emotion_accumulator, key=self._emotion_accumulator.get)
             acc = self._emotion_accumulator[dominant]
-            if acc > 0.2:
+            if acc > 0.08:  # EMA累积阈值 (低频分布场景下调)
                 self.adapt(dominant, acc, duration=50)
     
     def _trait_dict(self) -> dict:
