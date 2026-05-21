@@ -1,0 +1,51 @@
+{
+  "timestamp": 1779306307.3702083,
+  "cycle": 631,
+  "llm_calls": 211,
+  "llm_fails": 0,
+  "total_tokens": 131775,
+  "limb_actions": 206,
+  "limb_successes": 206,
+  "phi": 0.28875147596477757,
+  "memory": {
+    "episodes_recorded": 211,
+    "facts_learned": 3,
+    "consolidations": 420,
+    "autobio_moments": 0,
+    "working_items": 0,
+    "episodic_items": 211,
+    "semantic_facts": 3
+  },
+  "json_parse_fallback_rate": 0.0,
+  "event_distribution": {
+    "suspense": 16,
+    "despair_crash": 13,
+    "transcendent_connection": 12,
+    "master_warmth": 11,
+    "justice_outrage": 11,
+    "epiphany": 11,
+    "slowdown": 10,
+    "system_crash": 10,
+    "envy_spark": 9,
+    "reminiscence": 8,
+    "relief": 8,
+    "task_failure": 8,
+    "anomaly_detected": 7,
+    "sacrifice": 7,
+    "creative_spark": 7,
+    "master_offline": 6,
+    "master_online": 6,
+    "self_doubt": 6,
+    "system_threat": 6,
+    "task_complete": 6
+  },
+  "emotion_distribution": {
+    "SEEKING": 351,
+    "FEAR": 160,
+    "PANIC": 30,
+    "LUST": 30,
+    "RAGE": 27,
+    "CARE": 23,
+    "PLAY": 10
+  }
+}

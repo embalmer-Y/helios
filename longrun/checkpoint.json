@@ -1,0 +1,19 @@
+{
+  "timestamp": 1779236284.5529478,
+  "cycle": 12455,
+  "llm_calls": 4152,
+  "llm_fails": 0,
+  "total_tokens": 2132933,
+  "limb_actions": 4151,
+  "limb_successes": 4151,
+  "phi": 0.542756130099838,
+  "memory": {
+    "episodes_recorded": 4152,
+    "facts_learned": 3,
+    "consolidations": 8303,
+    "autobio_moments": 0,
+    "working_items": 0,
+    "episodic_items": 500,
+    "semantic_facts": 3
+  }
+}

@@ -38,6 +38,7 @@ from daisy_emotion import (
 from allostasis import AllostaticRegulator, AllostasisConfig
 from mood_tracker import MoodTracker
 from personality import PersonalityProfile
+from autobiographical import AutobiographicalStore, create_autobiographical_store
 
 # 可选模块
 try:
@@ -91,6 +92,10 @@ class DashboardState:
         # 人格
         self.personality_summary: str = ""
         self.personality_traits: Dict[str, float] = {}
+        
+        # N1: 自传记忆统计
+        self.autobio_stats: dict = {}
+        self.autobio_narrative: str = ""
         
         # 历史 (最近200条)
         self.history: List[dict] = []
@@ -174,6 +179,7 @@ class DashboardState:
                     "summary": self.personality_summary,
                     "traits": dict(self.personality_traits),
                 },
+                "autobio": dict(self.autobio_stats),
                 "history": self.history[-50:],  # 最近50条
             }
 
@@ -185,7 +191,7 @@ class DashboardState:
 class HeliosRunner:
     """后台运行 Helios 引擎，更新 DashboardState"""
     
-    def __init__(self, state: DashboardState, event_source=None):
+    def __init__(self, state: DashboardState, event_source=None, autobio_store: AutobiographicalStore = None):
         self.state = state
         self.engine = DaisySystemEngine()
         self.allostasis = AllostaticRegulator()
@@ -200,6 +206,9 @@ class HeliosRunner:
         # 可选模块
         self.neurochem = NeurochemState() if HAS_NEUROCHEM else None
         self.phi_engine = UnifiedPhi() if HAS_PHI else None
+        
+        # N1: 自传记忆
+        self.autobio = autobio_store
         
         self.event_source = event_source
         self.running = False
@@ -275,7 +284,48 @@ class HeliosRunner:
                     "conscientiousness": self.personality.conscientiousness,
                 }
             
+            # N1: 自传统计 (每50周期)
+            if cycle % 50 == 0 and self.autobio:
+                stats = self.autobio.get_statistics()
+                update_kwargs["autobio_stats"] = stats
+                update_kwargs["autobio_narrative"] = self.autobio.get_narrative(10)
+            
             self.state.update(**update_kwargs)
+            
+            # N1: 记录自传时刻 (高Φ或重要事件)
+            if self.autobio and cycle % 5 == 0:  # 每5周期检查一次
+                phi = update_kwargs.get("phi", 0.0)
+                valence = update_kwargs.get("valence", 0.0)
+                
+                # 记录条件: Φ>0.3 或 极端效价
+                if phi > 0.3 or abs(valence) > 0.5:
+                    event_desc = ""
+                    if triggers:
+                        event_desc = "+".join(triggers.keys())
+                    
+                    narrative = ""
+                    if phi > 0.5:
+                        narrative = f"⚡ 意识闪耀时刻: {state.dominant_system}主导"
+                    elif abs(valence) > 0.5:
+                        direction = "正向" if valence > 0 else "负向"
+                        narrative = f"强烈{direction}体验: {state.dominant_system}"
+                    elif phi > 0.3:
+                        narrative = f"有意义的时刻: {state.dominant_system}"
+                    
+                    self.autobio.record(
+                        panksepp=update_kwargs["panksepp"],
+                        valence=valence,
+                        arousal=update_kwargs.get("arousal", 0.0),
+                        dominant=state.dominant_system,
+                        phi=phi,
+                        mood_valence=update_kwargs.get("mood_valence", 0.0),
+                        mood_arousal=update_kwargs.get("mood_arousal", 0.0),
+                        mood_label=update_kwargs.get("mood_label", "neutral"),
+                        allostatic_load=update_kwargs.get("allostasis_load", 0.0),
+                        narrative=narrative,
+                        event_trigger=event_desc,
+                        cycle=cycle,
+                    )
             
             cycle += 1
             time.sleep(self.cycle_interval)
@@ -656,7 +706,8 @@ def main():
     event_source = DemoEventSource() if args.demo else None
     
     # Helios 运行器
-    runner = HeliosRunner(state, event_source)
+    autobio = create_autobiographical_store()
+    runner = HeliosRunner(state, event_source, autobio_store=autobio)
     runner.cycle_interval = args.interval
     runner.start()
     
@@ -670,6 +721,7 @@ def main():
     except KeyboardInterrupt:
         print("\n关闭中...")
         runner.stop()
+        autobio.close()
         server.shutdown()
 
 
