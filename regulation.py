@@ -272,7 +272,7 @@ class RegulationEngine:
         
         for sys_name, activation in panksepp.items():
             deviation = abs(activation - self.baseline_activation)
-            if deviation > self.comfort_deviation:
+            if deviation >= self.comfort_deviation:
                 # 考虑效价的方向性
                 # 负效价 + 高激活 = 更急需调节
                 urgency = deviation

@@ -89,7 +89,8 @@ class HeliosConfig:
     ALI_SECRET_KEY: str = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
     
     # 意动
-    REGULATION_COMFORT_DEVIATION: float = float(os.getenv("HELIOS_COMFORT_DEVIATION", "0.2"))
+    REGULATION_COMFORT_DEVIATION: float = float(os.getenv("HELIOS_COMFORT_DEVIATION", "0.15"))
+    REGULATION_BASELINE: float = float(os.getenv("HELIOS_REGULATION_BASELINE", "0.10"))
     
     # QQ Bot
     QQ_APP_ID: str = os.getenv("HELIOS_QQ_APP_ID", os.getenv("QQ_APP_ID", ""))
@@ -156,6 +157,7 @@ class Helios:
         # ── 情感调节引擎 (G1+G2) ──
         self.regulation = RegulationEngine(
             comfort_deviation=self.cfg.REGULATION_COMFORT_DEVIATION,
+            baseline_activation=self.cfg.REGULATION_BASELINE,
             data_dir=self.cfg.DATA_DIR,
         )
         # 加载已有记忆
