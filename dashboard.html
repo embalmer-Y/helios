@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helios 情感仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;color:#d0e0ff;font-family:'Segoe UI',system-ui,sans-serif;overflow-x:hidden}
+.header{background:#101030;border-bottom:2px solid #203060;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:1.3em;color:#80b0ff}
+.header .cycle{color:#6080a0;font-size:0.9em}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px;padding:12px;max-width:1600px;margin:0 auto}
+.card{background:#101028;border:1px solid #1a1a40;border-radius:8px;padding:14px}
+.card h3{margin:0 0 10px 0;font-size:0.95em;color:#6090d0;border-bottom:1px solid #1a1a40;padding-bottom:6px}
+.card canvas{max-height:250px}
+.mood-badge{display:inline-block;padding:4px 10px;border-radius:12px;font-size:0.85em;font-weight:600}
+.mood-neg{background:#301020;color:#ff6070}
+.mood-neut{background:#202030;color:#8090a0}
+.mood-pos{background:#103020;color:#60ff80}
+.valence-bar{height:6px;border-radius:3px;background:linear-gradient(to right,#ff4060,#8080a0,#40ff60);margin:8px 0;position:relative}
+.valence-dot{width:12px;height:12px;border-radius:50%;background:white;position:absolute;top:-3px;transform:translateX(-50%);box-shadow:0 0 8px white}
+.panksepp-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}
+.panksepp-item{display:flex;align-items:center;gap:6px;font-size:0.82em}
+.panksepp-bar{flex:1;height:14px;border-radius:3px;background:#181830;overflow:hidden}
+.panksepp-fill{height:100%;border-radius:3px;transition:width 0.3s}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>☀️ Helios 情感仪表盘</h1>
+  <div class="cycle">周期 <span id="cycle-num">0</span></div>
+</div>
+<div class="grid">
+  <div class="card"><h3>🎯 Panksepp 7系统 雷达</h3><canvas id="radar"></canvas></div>
+  <div class="card"><h3>📊 情感时序</h3><canvas id="timeline"></canvas></div>
+  <div class="card">
+    <h3>💓 效价 / 唤醒 / Φ</h3>
+    <div id="mood-indicator"></div>
+    <div class="valence-bar"><div class="valence-dot" id="v-dot" style="left:50%"></div></div>
+    <canvas id="phi-chart" style="max-height:120px"></canvas>
+  </div>
+  <div class="card"><h3>🧪 神经化学</h3><canvas id="neurochem"></canvas></div>
+  <div class="card"><h3>⚖️ 异稳态负荷</h3><canvas id="allostasis"></canvas></div>
+  <div class="card">
+    <h3>📋 7系统激活柱状图</h3>
+    <div class="panksepp-grid" id="panksepp-grid"></div>
+  </div>
+</div>
+
+<script>
+const COLORS = {
+  SEEKING: '#60c0ff', PLAY: '#ffe060', CARE: '#ff80c0',
+  PANIC: '#c060ff', FEAR: '#ff4040', RAGE: '#ff8040', LUST: '#ff6080'
+};
+const LABELS_ZH = {
+  SEEKING: '探索欲', PLAY: '嬉戏', CARE: '关爱',
+  PANIC: '分离痛', FEAR: '恐惧', RAGE: '愤怒', LUST: '情欲'
+};
+const MOOD_LABELS = {
+  'calm-content':'😌 平静满足','pleased':'😊 愉悦','happy':'😄 快乐','excited':'🤩 兴奋',
+  'alert-neutral':'🧐 警觉','uneasy':'😟 不安','anxious':'😰 焦虑','tense':'😬 紧张',
+  'neutral-calm':'😐 中性','sad':'😢 悲伤','lethargic':'😴 倦怠','depressed':'😞 抑郁'
+};
+
+let charts = {};
+let historyData = [];
+
+function createCharts() {
+  charts.radar = new Chart(document.getElementById('radar'), {
+    type:'radar',data:{labels:Object.values(LABELS_ZH),datasets:[{
+      label:'激活度',data:Array(7).fill(0),backgroundColor:'rgba(96,160,255,0.2)',
+      borderColor:'rgba(96,160,255,0.8)',borderWidth:2,pointRadius:3
+    }]},
+    options:{responsive:true,scales:{r:{min:0,max:1,ticks:{stepSize:0.2,color:'#406080'},
+      grid:{color:'#1a1a40'},pointLabels:{color:'#6080a0',font:{size:11}}}},
+      plugins:{legend:{display:false}}}
+  });
+  
+  charts.timeline = new Chart(document.getElementById('timeline'), {
+    type:'line',data:{labels:[],datasets:[]},
+    options:{responsive:true,animation:false,
+      scales:{x:{display:false},y:{min:0,max:1,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
+      plugins:{legend:{position:'bottom',labels:{color:'#6080a0',font:{size:9},boxWidth:10}}}}
+  });
+  
+  charts.phi = new Chart(document.getElementById('phi-chart'), {
+    type:'line',data:{labels:[],datasets:[{
+      label:'Φ',data:[],borderColor:'#ffd040',borderWidth:1.5,pointRadius:0,tension:0.3
+    }]},
+    options:{responsive:true,animation:false,
+      scales:{x:{display:false},y:{min:0,max:1,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
+      plugins:{legend:{display:false}}}
+  });
+  
+  charts.neurochem = new Chart(document.getElementById('neurochem'), {
+    type:'line',data:{labels:[],datasets:[
+      {label:'DA',data:[],borderColor:'#ff6040',borderWidth:1.2,pointRadius:0},
+      {label:'OP',data:[],borderColor:'#40c0ff',borderWidth:1.2,pointRadius:0},
+      {label:'OXY',data:[],borderColor:'#ff80c0',borderWidth:1.2,pointRadius:0},
+      {label:'CORT',data:[],borderColor:'#c0c040',borderWidth:1.2,pointRadius:0}
+    ]},
+    options:{responsive:true,animation:false,
+      scales:{x:{display:false},y:{min:0,max:1,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
+      plugins:{legend:{position:'bottom',labels:{color:'#6080a0',font:{size:9},boxWidth:10}}}}
+  });
+  
+  charts.allostasis = new Chart(document.getElementById('allostasis'), {
+    type:'line',data:{labels:[],datasets:[{
+      label:'负荷',data:[],borderColor:'#ffa040',borderWidth:1.5,pointRadius:0,fill:true,
+      backgroundColor:'rgba(255,160,64,0.1)'
+    }]},
+    options:{responsive:true,animation:false,
+      scales:{x:{display:false},y:{min:0,max:1,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
+      plugins:{legend:{display:false}}}
+  });
+}
+
+let timelineSystems = ['SEEKING','PLAY','CARE','PANIC','FEAR','RAGE','LUST'];
+let timelineReady = false;
+
+function initTimeline() {
+  let ds = [];
+  for (let s of timelineSystems) {
+    ds.push({label:s,data:[],borderColor:COLORS[s],borderWidth:1,pointRadius:0});
+  }
+  charts.timeline.data.datasets = ds;
+  timelineReady = true;
+}
+
+function updateDashboard(data) {
+  document.getElementById('cycle-num').textContent = data.cycle;
+  
+  // 雷达图
+  let radarData = [];
+  for (let s of timelineSystems) radarData.push(data.panksepp[s] || 0);
+  charts.radar.data.datasets[0].data = radarData;
+  charts.radar.update('none');
+  
+  // 时序
+  if (!timelineReady) initTimeline();
+  charts.timeline.data.labels.push(data.cycle);
+  if (charts.timeline.data.labels.length > 120) {
+    charts.timeline.data.labels.shift();
+    for (let ds of charts.timeline.data.datasets) ds.data.shift();
+  }
+  for (let i = 0; i < timelineSystems.length; i++) {
+    charts.timeline.data.datasets[i].data.push(data.panksepp[timelineSystems[i]] || 0);
+  }
+  charts.timeline.update('none');
+  
+  // Φ
+  charts.phi.data.labels.push(data.cycle);
+  if (charts.phi.data.labels.length > 120) {
+    charts.phi.data.labels.shift();
+    charts.phi.data.datasets[0].data.shift();
+  }
+  charts.phi.data.datasets[0].data.push(data.phi || 0);
+  charts.phi.update('none');
+  
+  // 神经化学
+  if (data.neurochem && Object.keys(data.neurochem).length > 0) {
+    charts.neurochem.data.labels.push(data.cycle);
+    if (charts.neurochem.data.labels.length > 120) {
+      charts.neurochem.data.labels.shift();
+      for (let ds of charts.neurochem.data.datasets) ds.data.shift();
+    }
+    charts.neurochem.data.datasets[0].data.push(data.neurochem.dopamine || 0);
+    charts.neurochem.data.datasets[1].data.push(data.neurochem.opioids || 0);
+    charts.neurochem.data.datasets[2].data.push(data.neurochem.oxytocin || 0);
+    charts.neurochem.data.datasets[3].data.push(data.neurochem.cortisol || 0);
+    charts.neurochem.update('none');
+  }
+  
+  // 异稳态
+  let load = data.allostasis ? data.allostasis.load : 0;
+  charts.allostasis.data.labels.push(data.cycle);
+  if (charts.allostasis.data.labels.length > 120) {
+    charts.allostasis.data.labels.shift();
+    charts.allostasis.data.datasets[0].data.shift();
+  }
+  charts.allostasis.data.datasets[0].data.push(load);
+  charts.allostasis.update('none');
+  
+  // 效价点
+  let v = data.valence || 0;
+  let vPct = ((v + 1) / 2 * 100);
+  document.getElementById('v-dot').style.left = vPct + '%';
+  
+  // 心境标签
+  let mood = data.mood || {};
+  let ml = mood.label || 'neutral-calm';
+  let moodClass = 'mood-neut';
+  if (ml.includes('uneasy')||ml.includes('anxious')||ml.includes('tense')||ml.includes('sad')||ml.includes('depress')||ml.includes('lethargic'))
+    moodClass = 'mood-neg';
+  else if (ml.includes('pleased')||ml.includes('happy')||ml.includes('excite')||ml.includes('calm-content'))
+    moodClass = 'mood-pos';
+  document.getElementById('mood-indicator').innerHTML = 
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+    '<span style="font-size:1.1em"><b>' + (data.dominant||'--') + '</b> ' +
+    '<span style="color:#8090a0;font-size:0.8em">(' + (data.label||'') + ')</span></span>' +
+    '<span class="mood-badge ' + moodClass + '">' + (MOOD_LABELS[ml]||ml) + '</span>' +
+    '</div>';
+  
+  // 7系统柱状图
+  let grid = document.getElementById('panksepp-grid');
+  let html = '';
+  for (let s of timelineSystems) {
+    let v = (data.panksepp[s] || 0) * 100;
+    html += '<div class="panksepp-item">' +
+      '<span style="width:48px;text-align:right;font-size:0.78em;color:#6080a0">' + LABELS_ZH[s] + '</span>' +
+      '<div class="panksepp-bar"><div class="panksepp-fill" style="width:' + v + '%;background:' + COLORS[s] + '"></div></div>' +
+      '<span style="width:32px;font-size:0.75em">' + (data.panksepp[s]||0).toFixed(2) + '</span>' +
+      '</div>';
+  }
+  grid.innerHTML = html;
+}
+
+// 启动
+createCharts();
+
+// SSE 连接
+let es = new EventSource('/api/stream');
+es.onmessage = function(e) {
+  try {
+    let data = JSON.parse(e.data);
+    if (data.cycle !== undefined) updateDashboard(data);
+  } catch(err) {}
+};
+es.onerror = function() { setTimeout(() => location.reload(), 3000); };
+</script>
+</body>
+</html>
