@@ -231,7 +231,7 @@ class RegulationEngine:
         
         # 检查最佳候选是否值得执行
         best = candidates[0]
-        if best.score < 0.15:
+        if best.score < 0.08:
             return None  # 没有足够好的选项
         
         # 记录执行前状态
