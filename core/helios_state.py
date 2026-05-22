@@ -63,6 +63,20 @@ class HeliosState:
     llm_temperature: float = 0.85
     speech_style: str = ""
 
+    # Behavior Execution (from BehaviorExecutor)
+    behavior_queue_depth: int = 0
+    current_behavior: str = ""
+
+    # Thinking (Requirement 28)
+    dmn_active: bool = False
+    last_thought_type: str = ""
+    thought_generated_this_tick: bool = False
+
+    # Hardware IO Status (Requirements 30, 31, 32)
+    tts_available: bool = False
+    stt_available: bool = False
+    vision_available: bool = False
+
     @property
     def phi(self) -> float:
         """Deprecated: backward-compatible alias for ``icri``.

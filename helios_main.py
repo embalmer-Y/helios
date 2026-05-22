@@ -52,6 +52,7 @@ from helios_utils import clamp
 from utils.persistence import StatePersistence
 from regulation.drives import DriveOracle, HeliosSnapshot
 from cognition.habituation import HabituationTracker
+from cognition.thinking_integration import ThinkingEngineIntegration
 
 try:
     from cognition.phi import UnifiedPhi
@@ -97,6 +98,29 @@ sys.modules["helios_io_icri_temperature"] = _icri_temp_mod
 _icri_temp_spec.loader.exec_module(_icri_temp_mod)
 ICRITemperatureMapper = _icri_temp_mod.ICRITemperatureMapper
 
+# ── Behavior Execution (Limb) ──
+_limb_path = str(PROJECT_ROOT / "io" / "limb.py")
+_limb_spec = _ilu.spec_from_file_location("helios_io_limb", _limb_path)
+_limb_mod = _ilu.module_from_spec(_limb_spec)
+sys.modules["helios_io_limb"] = _limb_mod
+_limb_spec.loader.exec_module(_limb_mod)
+BehaviorExecutor = _limb_mod.BehaviorExecutor
+
+_bridge_path = str(PROJECT_ROOT / "io" / "limb_decision_bridge.py")
+_bridge_spec = _ilu.spec_from_file_location("helios_io_limb_decision_bridge", _bridge_path)
+_bridge_mod = _ilu.module_from_spec(_bridge_spec)
+sys.modules["helios_io_limb_decision_bridge"] = _bridge_mod
+_bridge_spec.loader.exec_module(_bridge_mod)
+LimbDecisionBridge = _bridge_mod.LimbDecisionBridge
+
+# ── TTS Module (G5) ──
+_tts_path = str(PROJECT_ROOT / "io" / "io_tts.py")
+_tts_spec = _ilu.spec_from_file_location("helios_io_tts", _tts_path)
+_tts_mod = _ilu.module_from_spec(_tts_spec)
+sys.modules["helios_io_tts"] = _tts_mod
+_tts_spec.loader.exec_module(_tts_mod)
+TTSModule = _tts_mod.TTSModule
+
 
 # ═══════════════════════════════════════════════════
 # 配置
@@ -138,6 +162,11 @@ class HeliosConfig:
     # LLM 对话生成 (G3)
     LLM_SPEECH_ENABLED: bool = os.getenv("HELIOS_LLM_SPEECH_ENABLED", "1") == "1"
     LLM_SPEECH_MODEL: str = os.getenv("HELIOS_LLM_SPEECH_MODEL", "")  # 空=使用全局模型
+
+    # TTS 语音合成 (G5)
+    TTS_ENABLED: bool = os.getenv("HELIOS_TTS_ENABLED", "1") == "1"
+    TTS_VOICE: str = os.getenv("HELIOS_TTS_VOICE", "xiaoyun")
+    ALI_NLS_APP_KEY: str = os.getenv("ALIBABA_NLS_APP_KEY", "")
 
 
 # ═══════════════════════════════════════════════════
@@ -213,6 +242,18 @@ class Helios:
         # ── 驱动神谕 (Free Energy Drives) ──
         self.drive_oracle = DriveOracle()
         
+        # ── 内部思维流 (Requirement 28) ──
+        # ThinkingEngineIntegration manages spontaneous thought generation
+        # during rest periods. Uses a stub thinking engine if ThinkingManager
+        # is not available.
+        self._init_thinking_integration()
+        
+        # ── 行为执行框架 (Requirement 29) ──
+        self.behavior_executor = BehaviorExecutor()
+        self.limb_bridge = LimbDecisionBridge(self.behavior_executor)
+        # Result callback: feed behavior completion results back to RegulationEngine memory
+        self.behavior_executor.set_result_callback(self._on_behavior_complete)
+        
         # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
         self.qq: Optional[QQBotClient] = None
         self._msg_queue: queue.Queue = queue.Queue()
@@ -271,6 +312,17 @@ class Helios:
                 self.log.info(f"LLM 语音生成就绪: {self.speech.model}")
             except Exception as e:
                 self.log.warning(f"LLM 语音生成初始化失败: {e}")
+        
+        # ── TTS 语音合成 (G5) ──
+        self.tts = TTSModule(
+            access_key=self.cfg.ALI_ACCESS_KEY,
+            access_secret=self.cfg.ALI_SECRET_KEY,
+            app_key=self.cfg.ALI_NLS_APP_KEY,
+            voice=self.cfg.TTS_VOICE,
+            enabled=self.cfg.TTS_ENABLED,
+        )
+        if self.tts._available:
+            self.tts.register()
         
         # ── Passive Reply Pipeline (SEC + ResponsePipeline) ──
         self.sec_evaluator = LLMSECEvaluator(
@@ -372,6 +424,53 @@ class Helios:
         except Exception as e:
             self.log.warning(f"Failed to save allostasis: {e}")
         self.log.debug("Periodic state persistence complete (tick %d)", self.tick_count)
+    
+    # ═══════════════════════════════════════════
+    # 内部思维流初始化 (Requirement 28)
+    # ═══════════════════════════════════════════
+    
+    def _init_thinking_integration(self):
+        """
+        Initialize ThinkingEngineIntegration with a thinking engine and autobio store.
+        
+        Uses ThinkingManager if available, otherwise creates a minimal stub that
+        satisfies the ThinkingEngineIntegration interface.
+        """
+        thinking_engine = None
+        try:
+            from cognition.thinking import ThinkingManager
+            thinking_engine = ThinkingManager()
+        except (ImportError, Exception) as e:
+            self.log.debug(f"ThinkingManager not available, using stub: {e}")
+            thinking_engine = _StubThinkingEngine()
+        
+        self.thinking_integration = ThinkingEngineIntegration(
+            thinking_engine=thinking_engine,
+            autobio_store=self.autobio,
+        )
+        self.log.info("ThinkingEngineIntegration 初始化完成")
+    
+    # ═══════════════════════════════════════════
+    # 行为执行反馈 (Requirement 29.5)
+    # ═══════════════════════════════════════════
+    
+    def _on_behavior_complete(self, behavior_cmd):
+        """
+        Callback invoked when BehaviorExecutor completes a behavior.
+        
+        Feeds the execution result back to RegulationEngine memory so that
+        the regulation system can learn from action outcomes.
+        
+        Args:
+            behavior_cmd: The completed BehaviorCommand with result populated.
+        """
+        action = behavior_cmd.action
+        result = behavior_cmd.result or {}
+        self.log.debug(
+            f"Behavior completed: '{behavior_cmd.name}' action='{action}' result={result}"
+        )
+        # Notify regulation engine that the action was executed
+        self.regulation.note_action_executed(action)
     
     # ═══════════════════════════════════════════
     # 事件采集（EventSource 注册表模式）
@@ -636,6 +735,43 @@ class Helios:
             state.phi = self.phi_engine.aggregate()
             state.consciousness_label = self.phi_engine.label.value if hasattr(self.phi_engine.label, 'value') else str(self.phi_engine.label)
         
+        # ── 5b. Internal Thought Stream (Requirement 28) ──
+        # Generate spontaneous thoughts after ICRI computation.
+        # Writes dmn_active, last_thought_type, thought_generated_this_tick into state.
+        # Feeds generated thought content to ICRI dmn_depth source.
+        state.thought_generated_this_tick = False
+        try:
+            thought = self.thinking_integration.generate(state)
+            # Determine DMN activity status for state
+            dmn_active = True
+            if hasattr(self.thinking_integration, '_engine'):
+                engine = self.thinking_integration._engine
+                if hasattr(engine, 'current_mode'):
+                    dmn_active = engine.current_mode != getattr(
+                        engine, 'MODE_EXTERNAL', 'external'
+                    )
+            state.dmn_active = dmn_active
+            
+            if thought is not None:
+                state.thought_generated_this_tick = True
+                state.last_thought_type = thought.type
+                
+                # Feed thought content to ICRI dmn_depth source for consciousness enrichment
+                if self.phi_engine and hasattr(self.phi_engine, 'feed_dmn_from_thinking'):
+                    self.phi_engine.feed_dmn_from_thinking(
+                        thinking_mode="active",
+                        thought_count=1,
+                    )
+                    # Re-aggregate ICRI with updated dmn_depth
+                    state.phi = self.phi_engine.aggregate()
+                    
+                self.log.debug(
+                    f"💭 Thought [{thought.type}]: {thought.content[:40]}..."
+                )
+        except Exception as e:
+            self.log.warning(f"ThinkingEngineIntegration error: {e}")
+            state.dmn_active = False
+        
         # ── 6. Personality adaptation ──
         dominant = state.dominant_system
         intensity = max(state.panksepp.values()) if state.panksepp else 0
@@ -681,6 +817,22 @@ class Helios:
         )
         if action:
             state.last_action = action
+            # Enqueue via LimbDecisionBridge for priority-ordered execution
+            # Use the regulation score (drive_urgency as proxy) for priority mapping
+            reg_score = max(state.drive_urgency, abs(state.valence))
+            self.limb_bridge.convert_and_enqueue(
+                action=action,
+                score=reg_score,
+                params={"valence": state.valence, "dominant": state.dominant_system},
+            )
+        
+        # ── 9b. Write behavior execution state into HeliosState ──
+        state.behavior_queue_depth = self.behavior_executor.queue_depth
+        current_cmd = self.behavior_executor.current
+        state.current_behavior = current_cmd.name if current_cmd else ""
+        
+        # ── 9c. Write hardware IO status into HeliosState ──
+        state.tts_available = self.tts.is_available
         
         # ── 10. Memory — record significant events ──
         # Autobiographical memory (meaningful moments, sampled every 10 ticks)
@@ -757,6 +909,10 @@ class Helios:
                     elif reply:
                         self.log.info(f"💬 回复 (无QQ) [{user_id[:10]}]: {reply[:60]}")
                     
+                    # TTS: synthesize and play reply audio when available
+                    if reply and self.tts.is_available:
+                        self.tts.synthesize_and_play(reply)
+                    
                     if reply:
                         state.pending_reply = reply
                 
@@ -775,9 +931,15 @@ class Helios:
                     sec_result=sec_result,
                 )
         
-        # ── 12. Active expression (regulation → speech) ──
-        if action:
-            self._handle_action(action, temperature_override=state.llm_temperature)
+        # ── 12. Active expression (regulation → behavior executor → speech) ──
+        # Execute the current behavior from the BehaviorExecutor
+        current_cmd = self.behavior_executor.current
+        if current_cmd and current_cmd.status.value == "executing":
+            self._handle_action(current_cmd.action, temperature_override=state.llm_temperature)
+            # Mark behavior as completed with result feedback
+            self.behavior_executor.complete_current(
+                result={"action": current_cmd.action, "tick": self.tick_count}
+            )
         
         # ── 13. Consolidation check ──
         self._ticks_since_consolidation += 1
@@ -841,6 +1003,11 @@ class Helios:
                     self.log.warning(f"🗣️ [{action}] QQ 发送失败")
             else:
                 self.log.info(f"🗣️ [{action}] (无QQ): {text[:60] if text else ''}")
+            
+            # TTS: synthesize and play audio when available
+            if text and self.tts.is_available:
+                self.tts.synthesize_and_play(text)
+            
             return
         
         if action == "browse":
@@ -1071,6 +1238,20 @@ class _KeywordSECEvaluator:
     def evaluate(self, text: str) -> dict[str, float]:
         """Evaluate text using keyword matching, return Panksepp trigger dictionary."""
         return _qq_text_to_panksepp(text)
+
+
+class _StubThinkingEngine:
+    """Minimal stub for ThinkingEngineIntegration when ThinkingManager is unavailable.
+    
+    Provides the interface expected by ThinkingEngineIntegration without requiring
+    the full ThinkingManager module and its dependencies.
+    """
+
+    current_mode = "resting"  # DMN is active in resting mode
+
+    def generate_thoughts(self, valence=0.0, arousal=0.0, panksepp_state=None, limit=1):
+        """Return empty list — stub does not generate thoughts via LLM."""
+        return []
 
 
 # ═══════════════════════════════════════════════════

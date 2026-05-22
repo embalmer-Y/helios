@@ -66,6 +66,39 @@ if _ldb_mod_name not in sys.modules:
 else:
     _ldb_mod = sys.modules[_ldb_mod_name]
 
+_tts_mod_name = "helios_io_tts"
+if _tts_mod_name not in sys.modules:
+    _tts_spec = importlib.util.spec_from_file_location(
+        _tts_mod_name, str(_pkg_dir / "io_tts.py")
+    )
+    _tts_mod = importlib.util.module_from_spec(_tts_spec)
+    sys.modules[_tts_mod_name] = _tts_mod
+    _tts_spec.loader.exec_module(_tts_mod)
+else:
+    _tts_mod = sys.modules[_tts_mod_name]
+
+_stt_mod_name = "helios_io_stt"
+if _stt_mod_name not in sys.modules:
+    _stt_spec = importlib.util.spec_from_file_location(
+        _stt_mod_name, str(_pkg_dir / "io_stt.py")
+    )
+    _stt_mod = importlib.util.module_from_spec(_stt_spec)
+    sys.modules[_stt_mod_name] = _stt_mod
+    _stt_spec.loader.exec_module(_stt_mod)
+else:
+    _stt_mod = sys.modules[_stt_mod_name]
+
+_vision_mod_name = "helios_io_vision"
+if _vision_mod_name not in sys.modules:
+    _vision_spec = importlib.util.spec_from_file_location(
+        _vision_mod_name, str(_pkg_dir / "io_vision.py")
+    )
+    _vision_mod = importlib.util.module_from_spec(_vision_spec)
+    sys.modules[_vision_mod_name] = _vision_mod
+    _vision_spec.loader.exec_module(_vision_mod)
+else:
+    _vision_mod = sys.modules[_vision_mod_name]
+
 ConversationExchange = _ch_mod.ConversationExchange
 ConversationHistoryManager = _ch_mod.ConversationHistoryManager
 ResponsePipeline = _rp_mod.ResponsePipeline
@@ -74,3 +107,6 @@ BehaviorStatus = _limb_mod.BehaviorStatus
 BehaviorCommand = _limb_mod.BehaviorCommand
 BehaviorExecutor = _limb_mod.BehaviorExecutor
 LimbDecisionBridge = _ldb_mod.LimbDecisionBridge
+TTSModule = _tts_mod.TTSModule
+STTModule = _stt_mod.STTModule
+VisionModule = _vision_mod.VisionModule

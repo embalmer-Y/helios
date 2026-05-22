@@ -388,7 +388,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Ensure external monitoring tools can query both `phi` and `icri` field names during deprecation period
     - _Requirements: 25.1, 25.2, 25.3, 25.4, 25.5_
 
-- [ ] 18. Checkpoint - Ensure all tests pass
+- [x] 18. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 19. Implement LLM temperature modulation
@@ -404,7 +404,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 29: ICRI-to-Temperature 5-Tier Mapping**
     - **Validates: Requirements 26.1, 26.2, 26.3, 26.4, 26.5**
 
-  - [ ] 19.3 Wire ICRITemperatureMapper into LLM speech generation
+  - [x] 19.3 Wire ICRITemperatureMapper into LLM speech generation
     - Modify `LLMSpeechGenerator` to accept temperature override parameter from HeliosState ICRI value
     - Call `ICRITemperatureMapper.map_temperature(state.icri)` before each LLM invocation
     - Write `llm_temperature` and `speech_style` into HeliosState each tick
@@ -412,7 +412,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - _Requirements: 26.6_
 
 - [ ] 20. Implement internal thought stream
-  - [ ] 20.1 Implement ThinkingEngineIntegration class
+  - [x] 20.1 Implement ThinkingEngineIntegration class
     - Create `cognition/thinking_integration.py` with `ThinkingEngineIntegration` class
     - Implement `should_generate(icri, dmn_active, now)` — suppress when ICRI < 0.10 or DMN inactive
     - Implement `get_biased_types(dominant_system)` using EMOTION_THOUGHT_BIAS mapping (PANIC/FEAR → rumination/future_projection, SEEKING → free_association/self_question)
@@ -470,7 +470,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Implement `_score_to_priority(score)` mapping function
     - _Requirements: 29.2_
 
-  - [ ] 21.5 Wire BehaviorExecutor into regulation pipeline
+  - [x] 21.5 Wire BehaviorExecutor into regulation pipeline
     - Initialize BehaviorExecutor and LimbDecisionBridge on startup
     - Replace direct action execution with `LimbDecisionBridge.convert_and_enqueue()` calls from RegulationEngine
     - Set result callback on BehaviorExecutor to feed back to RegulationEngine memory
@@ -481,7 +481,7 @@ This plan implements the systematic integration, persistence, and extension of H
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 23. Implement multimodal I/O modules
-  - [ ] 23.1 Implement TTSModule
+  - [x] 23.1 Implement TTSModule
     - Create `io/io_tts.py` with `TTSModule` class
     - Implement graceful initialization: check for Alibaba NLS SDK (`nls`) and credentials
     - Implement `synthesize_and_play(text)` wrapping nls.NlsSpeechSynthesizer
@@ -491,7 +491,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Wire into LLM speech output path (call synthesize after text generation when available)
     - _Requirements: 30.1, 30.2, 30.3, 30.4_
 
-  - [ ] 23.2 Implement STTModule as EventSource
+  - [x] 23.2 Implement STTModule as EventSource
     - Create `io/io_stt.py` with `STTModule` class implementing `EventSource` interface
     - Implement graceful initialization: check for nls SDK, pyaudio, and microphone hardware
     - Implement `poll(state)` returning empty dict (triggers come from SEC evaluation of text)
@@ -501,7 +501,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Register with EventSource registry on startup when available
     - _Requirements: 31.1, 31.2, 31.3, 31.4_
 
-  - [ ] 23.3 Implement VisionModule as EventSource
+  - [x] 23.3 Implement VisionModule as EventSource
     - Create `io/io_vision.py` with `VisionModule` class implementing `EventSource` interface
     - Implement graceful initialization: check for OpenCV and camera device availability
     - Implement `poll(state)` with configurable capture interval (default 5 seconds)
@@ -577,7 +577,59 @@ This plan implements the systematic integration, persistence, and extension of H
     - Register hardware I/O modules (TTS, STT, Vision) with EventSource registry when available
     - _Requirements: 33.1, 33.2, 34.1, 35.1_
 
-- [ ] 25. Final checkpoint - Ensure all tests pass
+- [ ] 25. Implement messaging gateway abstraction
+  - [ ] 25.1 Design and implement ChannelAdapter abstract base class
+    - Create `core/channel_adapter.py` with abstract `ChannelAdapter` class
+    - Define `receive() -> List[ChannelMessage]` abstract method (pull pending inbound messages)
+    - Define `send(message: ChannelMessage) -> bool` abstract method (push outbound message)
+    - Define `is_connected() -> bool` abstract method
+    - Define `channel_id` property (unique identifier like "qq", "stt", "terminal")
+    - Define `ChannelMessage` dataclass (text, user_id, channel_id, timestamp, metadata: dict, direction: "inbound"|"outbound")
+    - _Requirements: 10.1 (generalized from EventSource for bidirectional messaging)_
+
+  - [ ] 25.2 Implement MessageGateway in core
+    - Create `core/message_gateway.py` with `MessageGateway` class
+    - Implement `register_channel(adapter: ChannelAdapter)` — add channel to registry
+    - Implement `unregister_channel(channel_id: str)` — remove channel from registry
+    - Implement `poll_all() -> List[ChannelMessage]` — drain all channels, return unified message list
+    - Implement `send(channel_id: str, message: ChannelMessage) -> bool` — route outbound to specific channel
+    - Implement `broadcast(message: ChannelMessage)` — send to all connected channels
+    - Implement `get_connected_channels() -> List[str]` — list active channel IDs
+    - Maintain per-channel message statistics (received_count, sent_count, last_active)
+    - Log channel connect/disconnect events
+
+  - [ ] 25.3 Refactor QQEventSource into QQChannelAdapter
+    - Create `io/qq_channel_adapter.py` with `QQChannelAdapter(ChannelAdapter)` class
+    - Move QQ-specific message normalization and queue draining logic from `core/qq_event_source.py`
+    - Implement `receive()` — drain QQ message queue, normalize to ChannelMessage format
+    - Implement `send()` — delegate to QQBotClient.send_c2c / send_group
+    - Implement `is_connected()` — delegate to QQBotClient connection status
+    - Set `channel_id = "qq"`
+    - Keep `core/qq_event_source.py` as a thin backward-compat wrapper that uses QQChannelAdapter internally
+
+  - [ ] 25.4 Create GatewayEventSource bridging gateway to EventSource pipeline
+    - Create `core/gateway_event_source.py` with `GatewayEventSource(EventSource)` class
+    - Implement `poll(state)` — calls `gateway.poll_all()`, evaluates each message via SEC, returns merged Panksepp triggers
+    - Implement `get_messages()` — returns pending messages from last poll
+    - This replaces the direct QQEventSource registration in the main loop
+    - The SEC evaluation logic (currently in QQEventSource) moves here as the gateway-level concern
+
+  - [ ] 25.5 Wire MessageGateway into helios_main.py
+    - Initialize MessageGateway on startup
+    - Register QQChannelAdapter with the gateway
+    - Replace QQEventSource in EventSource registry with GatewayEventSource
+    - Route outbound replies through `gateway.send("qq", ...)` instead of direct QQ client calls
+    - Future channels (STT, Terminal, WebSocket) register with the same gateway
+    - Preserve all existing behavior — this is a pure refactoring with no functional change
+
+  - [ ]* 25.6 Write unit tests for MessageGateway
+    - Test channel registration and unregistration
+    - Test poll_all drains all registered channels
+    - Test send routes to correct channel
+    - Test graceful handling when channel disconnects
+    - Test backward compatibility (existing QQ message flow unchanged)
+
+- [ ] 26. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
@@ -593,6 +645,7 @@ This plan implements the systematic integration, persistence, and extension of H
 - Tasks 17-25 cover deep enhancement requirements (24-35): adaptive ICRI, temperature modulation, cognitive impact, internal thought stream, behavior execution, multimodal I/O, stability, memory compression, and seed memory import
 - Multimodal I/O modules (TTS, STT, Vision) are hardware-optional and degrade gracefully
 - The Phi→ICRI rename maintains backward compatibility via deprecated property aliases
+- Task 25 introduces a messaging gateway abstraction: `core/` defines the gateway interface, `io/` holds channel adapters (QQ, STT, etc.). This decouples core from specific messaging platforms.
 
 ## Task Dependency Graph
 
@@ -622,7 +675,10 @@ This plan implements the systematic integration, persistence, and extension of H
     { "id": 20, "tasks": ["20.2", "20.3", "20.4", "20.5", "24.1", "24.2"] },
     { "id": 21, "tasks": ["24.3", "24.6"] },
     { "id": 22, "tasks": ["24.4", "24.5", "24.7", "24.8"] },
-    { "id": 23, "tasks": ["24.9"] }
+    { "id": 23, "tasks": ["24.9"] },
+    { "id": 24, "tasks": ["25.1", "25.2"] },
+    { "id": 25, "tasks": ["25.3", "25.4"] },
+    { "id": 26, "tasks": ["25.5", "25.6"] }
   ]
 }
 ```

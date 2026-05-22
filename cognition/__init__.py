@@ -31,6 +31,12 @@ from cognition.phi import (
 )
 from cognition.habituation import HabituationTracker
 from cognition.agent_awareness import AgentAwareness
+from cognition.thinking_integration import (
+    ThinkingEngineIntegration,
+    Thought,
+    THOUGHT_TYPES,
+    EMOTION_THOUGHT_BIAS,
+)
 
 __all__ = [
     # daisy_emotion
@@ -57,4 +63,9 @@ __all__ = [
     "HabituationTracker",
     # agent_awareness
     "AgentAwareness",
+    # thinking_integration
+    "ThinkingEngineIntegration",
+    "Thought",
+    "THOUGHT_TYPES",
+    "EMOTION_THOUGHT_BIAS",
 ]
