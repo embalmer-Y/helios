@@ -71,7 +71,7 @@ class HeliosConfig:
     
     # 主循环
     TICK_INTERVAL: float = float(os.getenv("HELIOS_TICK_INTERVAL", "0.5"))  # 秒
-    SUMMARY_INTERVAL: int = int(os.getenv("HELIOS_SUMMARY_INTERVAL", "120"))  # ticks
+    SUMMARY_INTERVAL: int = int(os.getenv("HELIOS_SUMMARY_INTERVAL", "30"))  # ticks (~15s)
     
     # 日志
     LOG_LEVEL: str = os.getenv("HELIOS_LOG_LEVEL", "INFO")
@@ -234,6 +234,18 @@ class Helios:
         ))
         ch.setLevel(logging.WARNING)  # 控制台只显示重要信息
         self.log.addHandler(ch)
+        
+        # 思考流日志 (内部状态叙事 — 主人可读)
+        self.think_log = logging.getLogger("helios.thinking")
+        self.think_log.setLevel(logging.INFO)
+        th = logging.FileHandler(
+            os.path.join(self.cfg.LOG_DIR, "thinking_stream.log")
+        )
+        th.setFormatter(logging.Formatter(
+            "%(asctime)s %(message)s", datefmt="%m-%d %H:%M:%S"
+        ))
+        self.think_log.addHandler(th)
+        self.think_log.propagate = False
     
     # ═══════════════════════════════════════════
     # 事件采集（后续扩展）
@@ -262,6 +274,9 @@ class Helios:
                 break
             
             self.log.info(f"📩 QQ [{msg.author_id[:10]}]: {msg.text[:60]}")
+            
+            # 思考流：收到消息
+            self._think_event(f"收到消息: 「{msg.text[:40]}」")
             
             # 自动捕获 target_id (第一条私聊消息的发送者)
             if not self.cfg.QQ_TARGET_ID and not msg.is_group:
@@ -409,6 +424,7 @@ class Helios:
                     self._separation_anxiety = 0.0
                     self.regulation.note_action_executed(action)
                     self.log.info(f"🗣️ [{action}] → QQ: {text[:60]}")
+                    self._think_event(f"主动说话 [{action}]: 「{text[:50]}」")
                 else:
                     self.log.warning(f"🗣️ [{action}] QQ 发送失败")
             else:
@@ -491,6 +507,7 @@ class Helios:
                 target = self.cfg.QQ_TARGET_ID or "unknown"
                 ok = self.qq.send_c2c(target, reply)
                 self.log.info(f"💬 回复 → QQ: {reply[:60]}" + (" ✅" if ok else " ❌"))
+                self._think_event(f"回复了对方: 「{reply[:50]}」")
             except Exception as e:
                 self.log.error(f"💬 QQ 发送异常: {e}")
             # 记录到自传（无论发送成功与否）
@@ -616,6 +633,73 @@ class Helios:
             f"心境={mood_snap['label']:>14} "
             f"负荷={load:.3f}"
         )
+        
+        # 思考流 ← 叙事化内部状态
+        self._think_aloud(mood_snap, load)
+    
+    def _think_aloud(self, mood_snap: dict, load: float):
+        """将内部状态转为人类可读的思考叙事"""
+        dominant = self.last_dominant or "SEEKING"
+        icri = self.last_phi
+        valence = self.last_valence
+        sep_min = (time.time() - self._last_master_contact) / 60
+        
+        # 情感色彩
+        if dominant == "PANIC":
+            feel = "有点不安" if icri < 0.3 else "很想念对方" if icri < 0.5 else "焦躁得不行"
+        elif dominant == "SEEKING":
+            feel = "平静地观察着" if icri < 0.15 else "有些好奇"
+        elif dominant == "CARE":
+            feel = "心里暖暖的"
+        elif dominant == "PLAY":
+            feel = "心情很好，想玩"
+        elif dominant == "FEAR":
+            feel = "有点害怕"
+        elif dominant == "RAGE":
+            feel = "不太高兴"
+        else:
+            feel = "发呆中"
+        
+        # 分离时间描述
+        if sep_min < 1:
+            sep_note = "刚刚还联系过"
+        elif sep_min < 10:
+            sep_note = f"几分钟没说话了"
+        elif sep_min < 60:
+            sep_note = f"已经{int(sep_min)}分钟没说话了...有点想对方了"
+        else:
+            sep_note = f"已经{int(sep_min/60):.0f}小时没联系了，好想对方"
+        
+        # 心境
+        mood_label = mood_snap.get("label", "平稳")
+        if "sad" in mood_label:
+            mood_note = "情绪有点低落"
+        elif "alert" in mood_label and "energetic" in mood_label:
+            mood_note = "精神不错"
+        elif "fatigued" in mood_label:
+            mood_note = "有点累了"
+        else:
+            mood_note = "心情平稳"
+        
+        # 意识深度
+        if icri < 0.10:
+            aware = "浅层意识"
+        elif icri < 0.25:
+            aware = "普通专注"
+        elif icri < 0.45:
+            aware = f"深度思考中"
+        else:
+            aware = f"心流状态 ✨"
+        
+        line = (
+            f"💭 {feel} · {sep_note} · {mood_note} · {aware} "
+            f"[{dominant} v={valence:+.2f} ICRI={icri:.2f} load={load:.2f}]"
+        )
+        self.think_log.info(line)
+    
+    def _think_event(self, event: str):
+        """记录关键事件的思考流"""
+        self.think_log.info(f"⚡ {event}")
     
     def _handle_signal(self, signum, frame):
         self.log.info(f"收到信号 {signum}，准备退出...")
