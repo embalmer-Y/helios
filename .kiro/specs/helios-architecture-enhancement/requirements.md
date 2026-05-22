@@ -439,3 +439,17 @@ The current architecture has all core modules implemented but suffers from incom
 3. THE Autobiographical_Store SHALL preserve seed memories across restarts identically to organically generated memories
 4. THE Helios SHALL allow personality to evolve naturally from seed memory emotional valence without directly modifying PersonalityProfile parameters
 5. WHEN generating replies, THE ResponsePipeline SHALL treat seed memories identically to organic memories when retrieving relevant context for conversation
+
+### Requirement 36: Channel Gateway Architecture
+
+**User Story:** As a system architect, I want external I/O channels (QQ, voice, vision, future Discord/Telegram/Web) managed through a unified Gateway abstraction in core, so that adding or removing communication channels does not require modifying the main loop or core logic, and replies are automatically routed back to their originating channel.
+
+#### Acceptance Criteria
+
+1. THE core SHALL define a `Channel` abstract interface that extends EventSource with bidirectional capabilities: `connect()`, `disconnect()`, `is_connected`, `send(message)`, `channel_id`, and `capabilities`
+2. THE Channel interface SHALL be backward-compatible with EventSource — any Channel can be used wherever an EventSource is expected
+3. THE core SHALL implement a `ChannelGateway` class that manages the lifecycle (register, deregister, health monitoring) of all Channel instances
+4. WHEN polling for events, THE ChannelGateway SHALL iterate all registered channels, merge their trigger dictionaries using max-value semantics, and tag each inbound message with `_channel_id` metadata identifying its source
+5. WHEN routing a reply, THE ChannelGateway SHALL dispatch the reply to the correct Channel based on the `_channel_id` metadata in the original message
+6. THE existing QQEventSource SHALL be migrated to `io/channels/qq_channel.py` as a `QQChannel` implementing the Channel interface, with a backward-compatible re-export during deprecation period
+7. THE main tick loop SHALL use ChannelGateway for all external channel I/O, while internal event sources (SeparationAnxietySource, InternalDriveSource) remain as direct EventSources outside the Gateway

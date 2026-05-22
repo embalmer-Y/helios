@@ -251,7 +251,7 @@ This plan implements the systematic integration, persistence, and extension of H
 - [x] 11. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 12. Implement habituation and memory lifecycle
+- [x] 12. Implement habituation and memory lifecycle
   - [x] 12.1 Integrate HabituationTracker into event processing
     - Pass each event trigger through HabituationTracker before DAISY
     - Compute novelty factor and multiply trigger intensity by it
@@ -317,7 +317,7 @@ This plan implements the systematic integration, persistence, and extension of H
 - [x] 13. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 14. Implement conversation personalization and pipeline wiring
+- [x] 14. Implement conversation personalization and pipeline wiring
   - [x] 14.1 Implement conversation personalization from Autobiographical Memory
     - Query AutobiographicalStore for memories related to conversation topic/user
     - Include up to 3 relevant memory narratives in LLM context for reply generation
@@ -337,7 +337,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 27: HeliosState Pipeline Forward Propagation**
     - **Validates: Requirements 9.4**
 
-- [ ] 15. Implement directory restructuring
+- [x] 15. Implement directory restructuring
   - [x] 15.1 Reorganize source files into domain packages
     - Move files into `core/`, `memory/`, `cognition/`, `io/`, `regulation/`, `utils/` packages
     - Keep `helios_main.py` at project root as entry point
@@ -354,7 +354,7 @@ This plan implements the systematic integration, persistence, and extension of H
 - [x] 16. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 17. Implement adaptive ICRI engine and Phi-to-ICRI rename
+- [x] 17. Implement adaptive ICRI engine and Phi-to-ICRI rename
   - [x] 17.1 Implement AdaptiveAlphaICRI class in phi.py
     - Create `AdaptiveAlphaICRI` class with 3-tier adaptive EMA alpha (0.55 for intensity > 0.60, 0.30 for 0.30-0.60, 0.10 for < 0.10)
     - Implement `select_alpha(max_event_intensity)` method with deterministic tier selection
@@ -388,10 +388,10 @@ This plan implements the systematic integration, persistence, and extension of H
     - Ensure external monitoring tools can query both `phi` and `icri` field names during deprecation period
     - _Requirements: 25.1, 25.2, 25.3, 25.4, 25.5_
 
-- [ ] 18. Checkpoint - Ensure all tests pass
+- [x] 18. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 19. Implement LLM temperature modulation
+- [x] 19. Implement LLM temperature modulation
   - [x] 19.1 Implement ICRITemperatureMapper class
     - Create `ICRITemperatureMapper` class in `io/icri_temperature.py`
     - Implement 5-tier static mapping: ICRI < 0.10 → 0.3, [0.10, 0.25) → 0.5, [0.25, 0.45) → 0.75, [0.45, 0.65) → 1.0, ≥ 0.65 → 1.3
@@ -404,15 +404,15 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 29: ICRI-to-Temperature 5-Tier Mapping**
     - **Validates: Requirements 26.1, 26.2, 26.3, 26.4, 26.5**
 
-  - [ ] 19.3 Wire ICRITemperatureMapper into LLM speech generation
+  - [x] 19.3 Wire ICRITemperatureMapper into LLM speech generation
     - Modify `LLMSpeechGenerator` to accept temperature override parameter from HeliosState ICRI value
     - Call `ICRITemperatureMapper.map_temperature(state.icri)` before each LLM invocation
     - Write `llm_temperature` and `speech_style` into HeliosState each tick
     - Pass computed temperature to both ResponsePipeline and ExpressionPipeline LLM calls
     - _Requirements: 26.6_
 
-- [ ] 20. Implement internal thought stream
-  - [ ] 20.1 Implement ThinkingEngineIntegration class
+- [x] 20. Implement internal thought stream
+  - [x] 20.1 Implement ThinkingEngineIntegration class
     - Create `cognition/thinking_integration.py` with `ThinkingEngineIntegration` class
     - Implement `should_generate(icri, dmn_active, now)` — suppress when ICRI < 0.10 or DMN inactive
     - Implement `get_biased_types(dominant_system)` using EMOTION_THOUGHT_BIAS mapping (PANIC/FEAR → rumination/future_projection, SEEKING → free_association/self_question)
@@ -436,14 +436,14 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 33: Thought Suppression Below ICRI Threshold**
     - **Validates: Requirements 28.7**
 
-  - [ ] 20.5 Wire ThinkingEngineIntegration into tick pipeline
+  - [x] 20.5 Wire ThinkingEngineIntegration into tick pipeline
     - Initialize ThinkingEngineIntegration on startup with thinking_engine and autobio_store
     - Call `generate(state)` each tick after Phi/ICRI computation
     - Write `dmn_active`, `last_thought_type`, `thought_generated_this_tick` into HeliosState
     - Feed generated thought content to ICRI dmn_depth source
     - _Requirements: 28.1, 28.5_
 
-- [ ] 21. Implement behavioral execution abstraction
+- [x] 21. Implement behavioral execution abstraction
   - [x] 21.1 Implement BehaviorExecutor class
     - Create `io/limb.py` with `BehaviorExecutor` class
     - Define `BehaviorStatus` enum (QUEUED, EXECUTING, PAUSED, COMPLETED, CANCELLED)
@@ -470,18 +470,78 @@ This plan implements the systematic integration, persistence, and extension of H
     - Implement `_score_to_priority(score)` mapping function
     - _Requirements: 29.2_
 
-  - [ ] 21.5 Wire BehaviorExecutor into regulation pipeline
+  - [x] 21.5 Wire BehaviorExecutor into regulation pipeline
     - Initialize BehaviorExecutor and LimbDecisionBridge on startup
     - Replace direct action execution with `LimbDecisionBridge.convert_and_enqueue()` calls from RegulationEngine
     - Set result callback on BehaviorExecutor to feed back to RegulationEngine memory
     - Write `behavior_queue_depth` and `current_behavior` into HeliosState each tick
     - _Requirements: 29.1, 29.2, 29.5_
 
-- [ ] 22. Checkpoint - Ensure all tests pass
+- [x] 22. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 23. Implement multimodal I/O modules
-  - [ ] 23.1 Implement TTSModule
+- [x] 23. Implement Channel Gateway architecture
+  - [x] 23.1 Define Channel abstract interface
+    - Create `core/channel.py` with abstract `Channel` class
+    - Define `connect()` → bool abstract method (establish connection to external service)
+    - Define `disconnect()` abstract method (graceful shutdown)
+    - Define `is_connected` property (health check)
+    - Define `send(message: dict) -> bool` abstract method (outbound message delivery)
+    - Define `poll(state: HeliosState) -> Dict[str, float]` method (inherit from EventSource for inbound triggers)
+    - Define `get_messages() -> List[dict]` method (inherit from EventSource for inbound messages)
+    - Define `channel_id` property (unique identifier for routing)
+    - Define `capabilities` property returning set of strings (e.g. {"text", "image", "voice"})
+    - Channel extends EventSource — backward compatible with existing poll/merge logic
+    - _Requirements: 36.1, 36.2_
+
+  - [x] 23.2 Implement ChannelGateway manager
+    - Create `core/gateway.py` with `ChannelGateway` class
+    - Implement `register(channel: Channel)` — add channel to registry, call connect()
+    - Implement `deregister(channel_id: str)` — call disconnect(), remove from registry
+    - Implement `poll_all(state: HeliosState) -> Tuple[Dict[str, float], List[dict]]` — iterate channels, merge triggers (max-value), collect messages with source tagging
+    - Implement `route_reply(message: dict, reply: str) -> bool` — route outbound reply to originating channel via `channel_id` in message metadata
+    - Implement `get_channel(channel_id: str) -> Optional[Channel]` — lookup by ID
+    - Implement `get_status() -> Dict[str, bool]` — return {channel_id: is_connected} for all registered channels
+    - Tag each inbound message with `_channel_id` metadata for reply routing
+    - _Requirements: 36.3, 36.4, 36.5_
+
+  - [x] 23.3 Migrate QQEventSource to QQChannel
+    - Move `core/qq_event_source.py` → `io/channels/qq_channel.py`
+    - Create `io/channels/__init__.py` package
+    - Implement Channel interface: `connect()` (no-op for queue-based), `disconnect()`, `is_connected`, `send()` (dispatch reply to QQ bot client)
+    - Preserve existing poll/SEC-evaluation/merge logic unchanged
+    - Set `channel_id = "qq"` and `capabilities = {"text", "image"}`
+    - Update `core/__init__.py` to remove QQEventSource export
+    - Add backward-compatible re-export: `from io.channels.qq_channel import QQChannel as QQEventSource` in core for deprecation period
+    - _Requirements: 36.6_
+
+  - [x] 23.4 Wire ChannelGateway into main tick loop
+    - Replace direct EventSource list management with ChannelGateway in `helios_main.py`
+    - Register QQChannel via gateway on startup
+    - Keep SeparationAnxietySource and InternalDriveSource as direct EventSources (internal, not channels)
+    - Modify `_poll_event_sources()` to combine Gateway.poll_all() with internal source polls
+    - Route replies through `gateway.route_reply()` instead of direct QQ send
+    - Write `active_channels` count into HeliosState
+    - _Requirements: 36.7_
+
+  - [ ]* 23.5 Write property tests for Channel Gateway
+    - **Property 40: Gateway Message Source Tagging**
+    - Test that all messages from poll_all() carry `_channel_id` metadata
+    - **Property 41: Gateway Reply Routing Correctness**
+    - Test that route_reply() dispatches to correct channel based on message metadata
+    - **Validates: Requirements 36.3, 36.4, 36.5**
+
+  - [ ]* 23.6 Write unit tests for QQChannel migration
+    - Test that QQChannel passes all existing QQEventSource test cases
+    - Test Channel interface compliance (connect/disconnect/send/is_connected)
+    - Test backward-compatible import path still works
+    - _Requirements: 36.6_
+
+- [x] 24. Checkpoint - Ensure all tests pass after gateway refactor
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 25. Implement multimodal I/O modules
+  - [x] 25.1 Implement TTSModule
     - Create `io/io_tts.py` with `TTSModule` class
     - Implement graceful initialization: check for Alibaba NLS SDK (`nls`) and credentials
     - Implement `synthesize_and_play(text)` wrapping nls.NlsSpeechSynthesizer
@@ -491,7 +551,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Wire into LLM speech output path (call synthesize after text generation when available)
     - _Requirements: 30.1, 30.2, 30.3, 30.4_
 
-  - [ ] 23.2 Implement STTModule as EventSource
+  - [x] 25.2 Implement STTModule as EventSource
     - Create `io/io_stt.py` with `STTModule` class implementing `EventSource` interface
     - Implement graceful initialization: check for nls SDK, pyaudio, and microphone hardware
     - Implement `poll(state)` returning empty dict (triggers come from SEC evaluation of text)
@@ -501,7 +561,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Register with EventSource registry on startup when available
     - _Requirements: 31.1, 31.2, 31.3, 31.4_
 
-  - [ ] 23.3 Implement VisionModule as EventSource
+  - [x] 25.3 Implement VisionModule as EventSource
     - Create `io/io_vision.py` with `VisionModule` class implementing `EventSource` interface
     - Implement graceful initialization: check for OpenCV and camera device availability
     - Implement `poll(state)` with configurable capture interval (default 5 seconds)
@@ -512,8 +572,8 @@ This plan implements the systematic integration, persistence, and extension of H
     - Register with EventSource registry on startup when available
     - _Requirements: 32.1, 32.2, 32.3, 32.4_
 
-- [ ] 24. Implement long-running stability and memory lifecycle
-  - [ ] 24.1 Implement StabilityMonitor class
+- [x] 26. Implement long-running stability and memory lifecycle
+  - [x] 26.1 Implement StabilityMonitor class
     - Create `utils/stability_monitor.py` with `StabilityMonitor` class
     - Implement `rss_mb` property using `psutil.Process().memory_info().rss`
     - Implement `check_memory()` returning False when RSS exceeds 100MB limit
@@ -523,7 +583,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Configure logrotate integration (create `helios.logrotate` config file)
     - _Requirements: 33.1, 33.2, 33.5_
 
-  - [ ] 24.2 Implement WebSocketReconnector
+  - [x] 26.2 Implement WebSocketReconnector
     - Create `WebSocketReconnector` class in `io/io_qq.py` (or separate util)
     - Implement `on_disconnect()` incrementing attempt counter
     - Implement `get_backoff()` with exponential backoff capped at 30 seconds
@@ -532,7 +592,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Implement automatic token refresh before expiry without interrupting message flow
     - _Requirements: 33.3, 33.4_
 
-  - [ ] 24.3 Implement MemoryCompressor class
+  - [x] 26.3 Implement MemoryCompressor class
     - Create `memory/memory_compressor.py` with `MemoryCompressor` class
     - Define `CompressedSummary` dataclass (date, summary, emotional_arc, moment_count, key_events, source_ids)
     - Implement `find_compressible_days()` — identify days > 7 days old with > 100 moments
@@ -541,15 +601,15 @@ This plan implements the systematic integration, persistence, and extension of H
     - Log compression stats (moments compressed, summaries produced, days compressed)
     - _Requirements: 34.1, 34.2, 34.3, 34.4_
 
-  - [ ]* 24.4 Write property test for memory compression trigger condition
+  - [ ]* 26.4 Write property test for memory compression trigger condition
     - **Property 36: Memory Compression Trigger Condition**
     - **Validates: Requirements 34.1**
 
-  - [ ]* 24.5 Write property test for compression preserving archive
+  - [ ]* 26.5 Write property test for compression preserving archive
     - **Property 37: Compression Reduces Active Store Preserving Archive**
     - **Validates: Requirements 34.3**
 
-  - [ ] 24.6 Implement SeedMemoryImporter class
+  - [x] 26.6 Implement SeedMemoryImporter class
     - Create `memory/seed_memory_importer.py` with `SeedMemoryImporter` class
     - Define `SeedMoment` dataclass (summary, timestamp, valence, arousal, emotional_tag, source, original_section)
     - Implement `import_document(content, source_label, base_date)` — parse markdown, create seed moments with timestamps predating system start
@@ -561,15 +621,15 @@ This plan implements the systematic integration, persistence, and extension of H
     - Allow personality to evolve naturally from seed valence — no direct PersonalityProfile modification
     - _Requirements: 35.1, 35.2, 35.3, 35.4, 35.5_
 
-  - [ ]* 24.7 Write property test for seed memory creation
+  - [ ]* 26.7 Write property test for seed memory creation
     - **Property 38: Seed Memory Creation with Pre-dated Timestamps and Source Tags**
     - **Validates: Requirements 35.1, 35.2**
 
-  - [ ]* 24.8 Write property test for seed memory equivalence
+  - [ ]* 26.8 Write property test for seed memory equivalence
     - **Property 39: Seed Memory Equivalence in Persistence and Retrieval**
     - **Validates: Requirements 35.3, 35.5**
 
-  - [ ] 24.9 Wire stability and memory lifecycle into main loop
+  - [x] 26.9 Wire stability and memory lifecycle into main loop
     - Initialize StabilityMonitor, WebSocketReconnector, MemoryCompressor on startup
     - Call `StabilityMonitor.check_memory()` every 100 ticks, log warning if exceeded
     - Schedule memory compression during consolidation cycles (after standard consolidation completes)
@@ -577,7 +637,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Register hardware I/O modules (TTS, STT, Vision) with EventSource registry when available
     - _Requirements: 33.1, 33.2, 34.1, 35.1_
 
-- [ ] 25. Final checkpoint - Ensure all tests pass
+- [x] 27. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
@@ -590,8 +650,9 @@ This plan implements the systematic integration, persistence, and extension of H
 - The design specifies Python 3.10+ as the target runtime
 - All persistence operations use atomic write (tempfile + rename) to prevent corruption
 - Directory restructuring (task 15) is done after core integrations to avoid import churn
-- Tasks 17-25 cover deep enhancement requirements (24-35): adaptive ICRI, temperature modulation, cognitive impact, internal thought stream, behavior execution, multimodal I/O, stability, memory compression, and seed memory import
-- Multimodal I/O modules (TTS, STT, Vision) are hardware-optional and degrade gracefully
+- Tasks 17-27 cover deep enhancement requirements (24-36): adaptive ICRI, temperature modulation, cognitive impact, internal thought stream, behavior execution, Channel Gateway, multimodal I/O, stability, memory compression, and seed memory import
+- Task 23 (Channel Gateway) refactors QQEventSource from core/ into a pluggable Channel abstraction — no logic changes, only organizational restructuring and interface upgrade
+- Multimodal I/O modules (TTS, STT, Vision) are hardware-optional and degrade gracefully; they register as Channels via the Gateway
 - The Phi→ICRI rename maintains backward compatibility via deprecated property aliases
 
 ## Task Dependency Graph
@@ -618,11 +679,13 @@ This plan implements the systematic integration, persistence, and extension of H
     { "id": 16, "tasks": ["17.1", "19.1", "21.1"] },
     { "id": 17, "tasks": ["17.2", "17.3", "19.2", "21.2", "21.3", "21.4"] },
     { "id": 18, "tasks": ["17.4", "17.5", "19.3", "21.5"] },
-    { "id": 19, "tasks": ["20.1", "23.1", "23.2", "23.3"] },
-    { "id": 20, "tasks": ["20.2", "20.3", "20.4", "20.5", "24.1", "24.2"] },
-    { "id": 21, "tasks": ["24.3", "24.6"] },
-    { "id": 22, "tasks": ["24.4", "24.5", "24.7", "24.8"] },
-    { "id": 23, "tasks": ["24.9"] }
+    { "id": 19, "tasks": ["23.1", "23.2"] },
+    { "id": 20, "tasks": ["23.3", "23.4"] },
+    { "id": 21, "tasks": ["23.5", "23.6", "20.1", "25.1", "25.2", "25.3"] },
+    { "id": 22, "tasks": ["20.2", "20.3", "20.4", "20.5", "26.1", "26.2"] },
+    { "id": 23, "tasks": ["26.3", "26.6"] },
+    { "id": 24, "tasks": ["26.4", "26.5", "26.7", "26.8"] },
+    { "id": 25, "tasks": ["26.9"] }
   ]
 }
 ```

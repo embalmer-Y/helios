@@ -52,6 +52,11 @@ from helios_utils import clamp
 from utils.persistence import StatePersistence
 from regulation.drives import DriveOracle, HeliosSnapshot
 from cognition.habituation import HabituationTracker
+from cognition.thinking_integration import ThinkingEngineIntegration
+from utils.stability_monitor import StabilityMonitor
+from utils.ws_reconnector import WebSocketReconnector
+from memory.memory_compressor import MemoryCompressor
+from memory.seed_memory_importer import SeedMemoryImporter
 
 try:
     from cognition.phi import UnifiedPhi
@@ -71,6 +76,7 @@ from core.separation_source import SeparationAnxietySource
 from core.qq_event_source import QQEventSource
 from core.drive_source import InternalDriveSource
 from core.helios_state import HeliosState
+from core.gateway import ChannelGateway
 
 # ── Passive Reply Pipeline ──
 import importlib.util as _ilu
@@ -96,6 +102,30 @@ _icri_temp_mod = _ilu.module_from_spec(_icri_temp_spec)
 sys.modules["helios_io_icri_temperature"] = _icri_temp_mod
 _icri_temp_spec.loader.exec_module(_icri_temp_mod)
 ICRITemperatureMapper = _icri_temp_mod.ICRITemperatureMapper
+
+# ── BehaviorExecutor & LimbDecisionBridge ──
+_limb_path = str(PROJECT_ROOT / "io" / "limb.py")
+_limb_spec = _ilu.spec_from_file_location("helios_io_limb", _limb_path)
+_limb_mod = _ilu.module_from_spec(_limb_spec)
+sys.modules["helios_io_limb"] = _limb_mod
+_limb_spec.loader.exec_module(_limb_mod)
+BehaviorExecutor = _limb_mod.BehaviorExecutor
+BehaviorStatus = _limb_mod.BehaviorStatus
+
+_bridge_path = str(PROJECT_ROOT / "io" / "limb_decision_bridge.py")
+_bridge_spec = _ilu.spec_from_file_location("helios_io_limb_decision_bridge", _bridge_path)
+_bridge_mod = _ilu.module_from_spec(_bridge_spec)
+sys.modules["helios_io_limb_decision_bridge"] = _bridge_mod
+_bridge_spec.loader.exec_module(_bridge_mod)
+LimbDecisionBridge = _bridge_mod.LimbDecisionBridge
+
+# ── QQChannel ──
+_qq_ch_path = str(PROJECT_ROOT / "io" / "channels" / "qq_channel.py")
+_qq_ch_spec = _ilu.spec_from_file_location("helios_io_channels_qq_channel", _qq_ch_path)
+_qq_ch_mod = _ilu.module_from_spec(_qq_ch_spec)
+sys.modules["helios_io_channels_qq_channel"] = _qq_ch_mod
+_qq_ch_spec.loader.exec_module(_qq_ch_mod)
+QQChannel = _qq_ch_mod.QQChannel
 
 
 # ═══════════════════════════════════════════════════
@@ -201,6 +231,19 @@ class Helios:
             episodic_capacity=500,
         )
         
+        # ── 内生思考引擎集成 ──
+        self.thinking_integration = ThinkingEngineIntegration(
+            thinking_engine=None,  # Will use template fallback until full ThinkingEngine is wired
+            autobio_store=self.autobio,
+        )
+
+        # ── 稳定性监控 & 记忆生命周期 ──
+        self.stability_monitor = StabilityMonitor()
+        self.ws_reconnector = WebSocketReconnector()
+        self.memory_compressor = MemoryCompressor(autobio_store=self.autobio)
+        self._seed_importer = SeedMemoryImporter(autobio_store=self.autobio)
+        self._run_seed_import()
+
         # ── 情感调节引擎 (G1+G2) ──
         self.regulation = RegulationEngine(
             comfort_deviation=self.cfg.REGULATION_COMFORT_DEVIATION,
@@ -212,6 +255,11 @@ class Helios:
         
         # ── 驱动神谕 (Free Energy Drives) ──
         self.drive_oracle = DriveOracle()
+
+        # ── 行为执行框架 (BehaviorExecutor + LimbDecisionBridge) ──
+        self.behavior_executor = BehaviorExecutor()
+        self.limb_bridge = LimbDecisionBridge(self.behavior_executor)
+        self.behavior_executor.set_result_callback(self._on_behavior_complete)
         
         # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
         self.qq: Optional[QQBotClient] = None
@@ -243,23 +291,30 @@ class Helios:
         self._separation_anxiety = 0.0
         
         # ── EventSource 注册表 ──
-        # Register all pluggable event sources. Each is polled once per tick.
-        self._event_sources: list[EventSource] = []
-        
+        # Internal event sources (not channels — polled directly each tick)
+        self._internal_sources: list[EventSource] = []
+
         # SeparationAnxietySource — computes PANIC from elapsed separation time
         self._separation_source = SeparationAnxietySource()
-        self._event_sources.append(self._separation_source)
-        
-        # QQEventSource — drains QQ message queue and evaluates via SEC
-        self._qq_event_source = QQEventSource(
-            msg_queue=self._msg_queue,
-            sec_evaluator=_KeywordSECEvaluator(),
-        )
-        self._event_sources.append(self._qq_event_source)
-        
+        self._internal_sources.append(self._separation_source)
+
         # InternalDriveSource — maps dominant drive urgency to Panksepp triggers
         self._drive_source = InternalDriveSource()
-        self._event_sources.append(self._drive_source)
+        self._internal_sources.append(self._drive_source)
+
+        # ── Channel Gateway (external bidirectional channels) ──
+        self._gateway = ChannelGateway()
+
+        # QQChannel — wraps QQ message queue + SEC evaluation
+        self._qq_channel = QQChannel(
+            msg_queue=self._msg_queue,
+            sec_evaluator=_KeywordSECEvaluator(),
+            qq_client=self.qq,
+        )
+        self._gateway.register(self._qq_channel)
+
+        # Legacy compatibility: keep _event_sources list for any code referencing it
+        self._event_sources: list[EventSource] = self._internal_sources.copy()
         
         # ── LLM 语音生成 (G3) ──
         self.speech = None
@@ -420,18 +475,23 @@ class Helios:
     def _poll_event_sources(self, state: HeliosState) -> tuple[dict[str, float], list[dict]]:
         """
         Core event polling logic shared by _collect_events and _collect_events_with_state.
-        
-        Polls all registered EventSources, merges triggers using max-value semantics,
-        and handles QQ-specific side effects.
+
+        Combines ChannelGateway.poll_all() for external channels with direct polling
+        of internal event sources. Merges triggers using max-value semantics.
         """
-        # Poll all registered event sources
         merged_triggers: dict[str, float] = {}
         all_messages: list[dict] = []
-        
-        for source in self._event_sources:
+
+        # 1. Poll external channels via Gateway
+        gw_triggers, gw_messages = self._gateway.poll_all(state)
+        for system, intensity in gw_triggers.items():
+            merged_triggers[system] = max(merged_triggers.get(system, 0.0), intensity)
+        all_messages.extend(gw_messages)
+
+        # 2. Poll internal event sources (SeparationAnxiety, InternalDrive)
+        for source in self._internal_sources:
             try:
                 src_triggers = source.poll(state)
-                # Merge using max-value semantics for overlapping keys
                 for system, intensity in src_triggers.items():
                     merged_triggers[system] = max(
                         merged_triggers.get(system, 0.0), intensity
@@ -442,8 +502,11 @@ class Helios:
                     "EventSource %s poll failed: %s",
                     type(source).__name__, e,
                 )
-        
-        # Handle QQ-specific side effects: reset separation on message receipt
+
+        # Write active_channels count into state
+        state.active_channels = len(self._gateway.get_status())
+
+        # Handle message side effects: reset separation on message receipt
         if all_messages:
             self._last_master_contact = time.time()
             self._separation_anxiety = 0.0
@@ -451,16 +514,16 @@ class Helios:
                 text = msg.get("text", "")
                 user_id = msg.get("user_id", "")
                 self.log.info(f"📩 QQ [{user_id[:10]}]: {text[:60]}")
-                
+
                 # Auto-capture target_id from first private message
                 if not self.cfg.QQ_TARGET_ID and not msg.get("is_group", False):
                     self.cfg.QQ_TARGET_ID = user_id
                     self.log.info(f"🎯 自动捕获主人 openid: {user_id}")
-        
+
         # Track separation anxiety for state queries
         sep_hours = (time.time() - self._last_master_contact) / 3600
         self._separation_anxiety = min(1.0, 1 - 2.71828 ** (-0.4 * sep_hours))
-        
+
         return merged_triggers, all_messages
     
     # ═══════════════════════════════════════════
@@ -495,9 +558,54 @@ class Helios:
             )
     
     # ═══════════════════════════════════════════
+    # 种子记忆导入
+    # ═══════════════════════════════════════════
+
+    def _run_seed_import(self):
+        """Import seed memories from data/seeds/ on first startup."""
+        seeds_dir = os.path.join(self.cfg.DATA_DIR, "seeds")
+        if not os.path.isdir(seeds_dir):
+            return
+        for filename in os.listdir(seeds_dir):
+            if filename.endswith(".md"):
+                filepath = os.path.join(seeds_dir, filename)
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    self._seed_importer.import_document(
+                        content=content,
+                        source_label=filename.replace(".md", ""),
+                    )
+                except Exception as e:
+                    self.log.warning(f"Seed import failed for {filename}: {e}")
+
+    # ═══════════════════════════════════════════
+    # BehaviorExecutor 集成
+    # ═══════════════════════════════════════════
+
+    def _get_regulation_score(self, action: str, state: HeliosState) -> float:
+        """Estimate a regulation score [0, 1] for the selected action.
+
+        Uses the same deviation magnitude that led to the action being chosen.
+        Higher deviation + higher drive urgency → higher score.
+        """
+        deviations = self.regulation._detect_deviations(
+            state.panksepp or {}, state.valence
+        )
+        max_deviation = deviations[0][1] if deviations else 0.0
+        emotional_component = min(max_deviation / 0.8, 1.0)
+        drive_component = state.drive_urgency
+        return clamp(0.7 * emotional_component + 0.3 * drive_component, 0.0, 1.0)
+
+    def _on_behavior_complete(self, cmd):
+        """Callback from BehaviorExecutor — feed result back to RegulationEngine memory."""
+        if cmd.result and cmd.result.get("executed"):
+            self.regulation.note_action_executed(cmd.action)
+
+    # ═══════════════════════════════════════════
     # 主循环
     # ═══════════════════════════════════════════
-    
+
     def start(self):
         """启动 Helios"""
         self.running = True
@@ -636,6 +744,19 @@ class Helios:
             state.phi = self.phi_engine.aggregate()
             state.consciousness_label = self.phi_engine.label.value if hasattr(self.phi_engine.label, 'value') else str(self.phi_engine.label)
         
+        # ── 5b. Internal thought stream (after ICRI computation) ──
+        state.dmn_active = state.icri >= 0.10
+        thought = self.thinking_integration.generate(state)
+        if thought:
+            state.thought_generated_this_tick = True
+            state.last_thought_type = thought.type
+            # Feed thought content to ICRI dmn_depth source
+            if self.phi_engine and hasattr(self.phi_engine, 'feed_dmn_from_thinking'):
+                self.phi_engine.feed_dmn_from_thinking(
+                    thinking_mode="active",
+                    thought_count=self.thinking_integration.generated_count,
+                )
+
         # ── 6. Personality adaptation ──
         dominant = state.dominant_system
         intensity = max(state.panksepp.values()) if state.panksepp else 0
@@ -681,6 +802,13 @@ class Helios:
         )
         if action:
             state.last_action = action
+            # Route through BehaviorExecutor via LimbDecisionBridge
+            reg_score = self._get_regulation_score(action, state)
+            self.limb_bridge.convert_and_enqueue(
+                action=action,
+                score=reg_score,
+                params={"temperature_override": state.llm_temperature},
+            )
         
         # ── 10. Memory — record significant events ──
         # Autobiographical memory (meaningful moments, sampled every 10 ticks)
@@ -748,16 +876,20 @@ class Helios:
                         msg, state, sec_result,
                         temperature_override=state.llm_temperature,
                     )
-                    if reply and self.qq and self.qq.is_connected():
-                        ok = self.qq.send_c2c(user_id, reply)
+                    if reply:
+                        # Route reply through ChannelGateway (uses _channel_id tag)
+                        ok = self._gateway.route_reply(msg, reply)
                         if ok:
                             self.log.info(f"💬 回复 [{user_id[:10]}]: {reply[:60]}")
+                        elif self.qq and self.qq.is_connected():
+                            # Fallback: direct QQ send for messages without _channel_id
+                            ok = self.qq.send_c2c(user_id, reply)
+                            if ok:
+                                self.log.info(f"💬 回复(direct) [{user_id[:10]}]: {reply[:60]}")
+                            else:
+                                self.log.warning(f"💬 回复发送失败 [{user_id[:10]}]")
                         else:
-                            self.log.warning(f"💬 回复发送失败 [{user_id[:10]}]")
-                    elif reply:
-                        self.log.info(f"💬 回复 (无QQ) [{user_id[:10]}]: {reply[:60]}")
-                    
-                    if reply:
+                            self.log.info(f"💬 回复 (无通道) [{user_id[:10]}]: {reply[:60]}")
                         state.pending_reply = reply
                 
                 # Record exchange in conversation history
@@ -775,9 +907,19 @@ class Helios:
                     sec_result=sec_result,
                 )
         
-        # ── 12. Active expression (regulation → speech) ──
-        if action:
-            self._handle_action(action, temperature_override=state.llm_temperature)
+        # ── 12. Active expression (BehaviorExecutor → execute current behavior) ──
+        current_cmd = self.behavior_executor.current
+        if current_cmd and current_cmd.status == BehaviorStatus.EXECUTING:
+            temp_override = current_cmd.params.get("temperature_override", state.llm_temperature)
+            self._handle_action(current_cmd.action, temperature_override=temp_override)
+            self.behavior_executor.complete_current({"executed": True, "action": current_cmd.action})
+
+        # Write behavior execution state into HeliosState
+        state.behavior_queue_depth = self.behavior_executor.queue_depth
+        state.current_behavior = (
+            self.behavior_executor.current.action
+            if self.behavior_executor.current else ""
+        )
         
         # ── 13. Consolidation check ──
         self._ticks_since_consolidation += 1
@@ -798,10 +940,23 @@ class Helios:
                     stats.get("memories_promoted", 0),
                     stats.get("items_pruned", 0),
                 )
-        
+                # Schedule memory compression after standard consolidation
+                comp_stats = self.memory_compressor.execute_compression()
+                if comp_stats.get("moments_compressed", 0) > 0:
+                    self.log.info(
+                        "📦 记忆压缩 — moments=%d, summaries=%d, days=%d",
+                        comp_stats["moments_compressed"],
+                        comp_stats["summaries_produced"],
+                        comp_stats["days_compressed"],
+                    )
+
         # ── 14. Periodic persistence (every 600 ticks) ──
         if self.tick_count % 600 == 0:
             self._persist_state()
+
+        # ── 15. Stability monitoring (every 100 ticks) ──
+        if self.tick_count % 100 == 0:
+            self.stability_monitor.check_memory()
         
         # ── Update runtime state for external queries ──
         self.last_dominant = state.dominant_system

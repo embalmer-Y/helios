@@ -63,6 +63,18 @@ class HeliosState:
     llm_temperature: float = 0.85
     speech_style: str = ""
 
+    # Behavior Execution (from BehaviorExecutor)
+    behavior_queue_depth: int = 0
+    current_behavior: str = ""
+
+    # Channel Gateway
+    active_channels: int = 0
+
+    # Internal Thought Stream
+    dmn_active: bool = False
+    last_thought_type: str = ""
+    thought_generated_this_tick: bool = False
+
     @property
     def phi(self) -> float:
         """Deprecated: backward-compatible alias for ``icri``.
