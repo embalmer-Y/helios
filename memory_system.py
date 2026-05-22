@@ -20,6 +20,7 @@ Helios 记忆系统 — MemorySystem v1.0
     ms.consolidate(phi=0.1)  # 低Φ时巩固
 """
 
+import os
 import time
 import math
 import json
@@ -409,6 +410,155 @@ class EpisodicMemory:
         for item in self.items:
             item.recalc_importance()
 
+    # ── 持久化 ──
+
+    def save_to_file(self, filepath: str, importance_threshold: float = 0.3) -> None:
+        """
+        Serialize EpisodicMemory items with importance > threshold to JSON file (atomic write).
+
+        Uses tempfile + os.replace for atomic writes.
+        Logs warning and returns gracefully on failure.
+
+        Args:
+            filepath: Path to the JSON file (e.g., data/episodic_memory.json)
+            importance_threshold: Only serialize items with importance > this value (default 0.3)
+        """
+        import tempfile
+
+        # Filter items by importance threshold
+        items_to_save = [
+            item for item in self.items
+            if item.importance > importance_threshold
+        ]
+
+        data = {
+            "version": 1,
+            "timestamp": time.time(),
+            "importance_threshold": importance_threshold,
+            "items": [
+                {
+                    "id": item.id,
+                    "summary": item.summary,
+                    "valence": item.valence,
+                    "arousal": item.arousal,
+                    "phi": item.phi,
+                    "importance": item.importance,
+                    "emotional_tag": item.emotional_tag,
+                    "timestamp": item.timestamp,
+                    "access_count": item.access_count,
+                    "content": item.content,
+                }
+                for item in items_to_save
+            ],
+        }
+
+        dir_name = os.path.dirname(filepath)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".tmp",
+            prefix=".helios_episodic_",
+            dir=dir_name or ".",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, filepath)
+            logger.info(
+                "EpisodicMemory: saved %d/%d items (importance > %.2f) to %s",
+                len(items_to_save), len(self.items), importance_threshold, filepath,
+            )
+        except Exception as e:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            logger.warning("EpisodicMemory: failed to save to %s: %s", filepath, e)
+            raise
+
+    def load_from_file(self, filepath: str) -> None:
+        """
+        Load EpisodicMemory items from JSON file.
+
+        Handles missing files, corruption (JSONDecodeError, KeyError) gracefully:
+        logs a warning and initializes with empty storage without crashing.
+
+        Args:
+            filepath: Path to the JSON file (e.g., data/episodic_memory.json)
+        """
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                logger.warning(
+                    "EpisodicMemory: file %s contains non-dict root; ignoring.",
+                    filepath,
+                )
+                return
+
+            items = data.get("items", [])
+            if not isinstance(items, list):
+                logger.warning(
+                    "EpisodicMemory: file %s has invalid 'items' key; ignoring.",
+                    filepath,
+                )
+                return
+
+            loaded_count = 0
+            for item_data in items:
+                try:
+                    item = MemoryItem(
+                        memory_type="episodic",
+                        summary=item_data.get("summary", ""),
+                        content=item_data.get("content", {}),
+                        valence=item_data.get("valence", 0.0),
+                        arousal=item_data.get("arousal", 0.0),
+                        phi=item_data.get("phi", 0.0),
+                        ttl=float("inf"),
+                        emotional_tag=item_data.get("emotional_tag", "neutral"),
+                    )
+                    # Restore additional fields
+                    if "id" in item_data:
+                        item.id = item_data["id"]
+                    if "timestamp" in item_data:
+                        item.timestamp = item_data["timestamp"]
+                    if "access_count" in item_data:
+                        item.access_count = item_data["access_count"]
+                    if "importance" in item_data:
+                        item.importance = item_data["importance"]
+
+                    self.items.append(item)
+                    loaded_count += 1
+                except (KeyError, TypeError) as e:
+                    logger.debug(
+                        "EpisodicMemory: skipping invalid item entry: %s", e
+                    )
+                    continue
+
+            # Update total_recorded counter
+            self.total_recorded += loaded_count
+
+            logger.info(
+                "EpisodicMemory: loaded %d items from %s",
+                loaded_count, filepath,
+            )
+        except FileNotFoundError:
+            logger.debug("EpisodicMemory: no saved file at %s; using empty storage.", filepath)
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "EpisodicMemory: file %s is corrupted (JSONDecodeError: %s); "
+                "using empty storage.",
+                filepath, e,
+            )
+        except (OSError, IOError) as e:
+            logger.warning(
+                "EpisodicMemory: cannot read file %s (%s); using empty storage.",
+                filepath, e,
+            )
+
     def _affect_similarity(self, item: MemoryItem, valence: float, arousal: float) -> float:
         """计算情感向量相似度"""
         v_dist = abs(item.valence - valence) / 2.0
@@ -545,6 +695,146 @@ class SemanticMemory:
                     if not keys:
                         del self.concepts[tag]
             del self.facts[key]
+
+    # ── 持久化 ──
+
+    def save_to_file(self, filepath: str) -> None:
+        """
+        Serialize SemanticMemory facts to JSON file (atomic write).
+
+        Uses tempfile + os.replace for atomic writes.
+        Logs warning and returns gracefully on failure.
+
+        Args:
+            filepath: Path to the JSON file (e.g., data/semantic_memory.json)
+        """
+        import tempfile
+        data = {
+            "version": 1,
+            "timestamp": time.time(),
+            "facts": [
+                {
+                    "key": key,
+                    "value": item.content.get("value"),
+                    "confidence": item.content.get("confidence", 0.5),
+                    "last_accessed": item.last_accessed,
+                    "access_count": item.access_count,
+                    "tags": list(item.tags),
+                }
+                for key, item in self.facts.items()
+            ],
+        }
+
+        dir_name = os.path.dirname(filepath)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".tmp",
+            prefix=".helios_semantic_",
+            dir=dir_name or ".",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, filepath)
+            logger.info(
+                "SemanticMemory: saved %d facts to %s",
+                len(self.facts), filepath,
+            )
+        except Exception as e:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            logger.warning("SemanticMemory: failed to save to %s: %s", filepath, e)
+            raise
+
+    def load_from_file(self, filepath: str) -> None:
+        """
+        Load SemanticMemory facts from JSON file.
+
+        Handles missing files, corruption (JSONDecodeError, KeyError) gracefully:
+        logs a warning and initializes with empty storage without crashing.
+
+        Args:
+            filepath: Path to the JSON file (e.g., data/semantic_memory.json)
+        """
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                logger.warning(
+                    "SemanticMemory: file %s contains non-dict root; ignoring.",
+                    filepath,
+                )
+                return
+
+            facts = data.get("facts", [])
+            if not isinstance(facts, list):
+                logger.warning(
+                    "SemanticMemory: file %s has invalid 'facts' key; ignoring.",
+                    filepath,
+                )
+                return
+
+            loaded_count = 0
+            for fact_data in facts:
+                try:
+                    key = fact_data["key"]
+                    value = fact_data.get("value")
+                    confidence = fact_data.get("confidence", 0.5)
+                    tags = fact_data.get("tags", [])
+                    last_accessed = fact_data.get("last_accessed", time.time())
+                    access_count = fact_data.get("access_count", 0)
+
+                    item = MemoryItem(
+                        memory_type="semantic",
+                        summary=f"fact:{key}",
+                        content={"key": key, "value": value, "confidence": confidence},
+                        valence=0.0,
+                        arousal=0.0,
+                        ttl=float("inf"),
+                        tags=set(tags),
+                    )
+                    item.last_accessed = last_accessed
+                    item.access_count = access_count
+                    item.recalc_importance()
+                    self.facts[key] = item
+
+                    # Rebuild tag index
+                    for tag in tags:
+                        if tag not in self.concepts:
+                            self.concepts[tag] = []
+                        if key not in self.concepts[tag]:
+                            self.concepts[tag].append(key)
+
+                    loaded_count += 1
+                except (KeyError, TypeError) as e:
+                    logger.debug(
+                        "SemanticMemory: skipping invalid fact entry: %s", e
+                    )
+                    continue
+
+            logger.info(
+                "SemanticMemory: loaded %d facts from %s",
+                loaded_count, filepath,
+            )
+        except FileNotFoundError:
+            logger.debug("SemanticMemory: no saved file at %s; using empty storage.", filepath)
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "SemanticMemory: file %s is corrupted (JSONDecodeError: %s); "
+                "using empty storage.",
+                filepath, e,
+            )
+        except (OSError, IOError) as e:
+            logger.warning(
+                "SemanticMemory: cannot read file %s (%s); using empty storage.",
+                filepath, e,
+            )
 
 
 # ═══════════════════════════════════════════════════
@@ -993,6 +1283,65 @@ class MemorySystem:
     def decay(self):
         """全局衰减 (定期调用)"""
         self.semantic.decay()
+
+    # ── 持久化 ──
+
+    def save_to_directory(self, data_dir: str) -> None:
+        """
+        Save all memory state to the specified directory.
+
+        Serializes:
+          - SemanticMemory facts → data_dir/semantic_memory.json
+          - EpisodicMemory items with importance > 0.3 → data_dir/episodic_memory.json
+
+        Handles errors gracefully (logs warnings, does not crash).
+
+        Args:
+            data_dir: Directory path for persistence files
+        """
+        semantic_path = os.path.join(data_dir, "semantic_memory.json")
+        episodic_path = os.path.join(data_dir, "episodic_memory.json")
+
+        # Save semantic memory
+        try:
+            self.semantic.save_to_file(semantic_path)
+        except Exception as e:
+            logger.warning("MemorySystem: failed to save semantic memory: %s", e)
+
+        # Save episodic memory (high-importance items only)
+        try:
+            self.episodic.save_to_file(episodic_path, importance_threshold=0.3)
+        except Exception as e:
+            logger.warning("MemorySystem: failed to save episodic memory: %s", e)
+
+    def load_from_directory(self, data_dir: str) -> None:
+        """
+        Load memory state from the specified directory.
+
+        Loads:
+          - SemanticMemory facts ← data_dir/semantic_memory.json
+          - EpisodicMemory items ← data_dir/episodic_memory.json
+
+        Handles missing files and corruption gracefully (logs warning, 
+        initializes with empty storage without crashing).
+
+        Args:
+            data_dir: Directory path for persistence files
+        """
+        semantic_path = os.path.join(data_dir, "semantic_memory.json")
+        episodic_path = os.path.join(data_dir, "episodic_memory.json")
+
+        # Load semantic memory
+        try:
+            self.semantic.load_from_file(semantic_path)
+        except Exception as e:
+            logger.warning("MemorySystem: failed to load semantic memory: %s", e)
+
+        # Load episodic memory
+        try:
+            self.episodic.load_from_file(episodic_path)
+        except Exception as e:
+            logger.warning("MemorySystem: failed to load episodic memory: %s", e)
 
 
 # ═══════════════════════════════════════════════════

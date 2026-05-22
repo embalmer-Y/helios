@@ -169,7 +169,6 @@ class Helios:
         
         # ── 持久化 ──
         self.persistence = StatePersistence(self.cfg.DATA_DIR)
-        self._load_persisted_state()
         
         # 注入依赖
         self.daisy.allostasis = self.allostasis
@@ -192,6 +191,9 @@ class Helios:
             working_capacity=15,
             episodic_capacity=500,
         )
+        
+        # ── Load persisted state after all subsystems are initialized ──
+        self._load_persisted_state()
         
         # ── 情感调节引擎 (G1+G2) ──
         self.regulation = RegulationEngine(
@@ -317,7 +319,7 @@ class Helios:
     
     def _load_persisted_state(self):
         """
-        Load personality and allostasis from disk on startup.
+        Load personality, allostasis, and memory state from disk on startup.
         
         If files are missing or corrupted, StatePersistence returns None
         and we keep the freshly-initialized defaults.
@@ -352,9 +354,12 @@ class Helios:
             self.log.info("Loaded allostasis state from disk")
         else:
             self.log.info("No allostasis state found; using defaults")
+        
+        # -- Memory System (Requirement 22.2, 22.4) --
+        self.memory_system.load_from_directory(self.cfg.DATA_DIR)
     
     def _persist_state(self):
-        """Save personality and allostasis state to disk."""
+        """Save personality, allostasis, and memory state to disk."""
         try:
             self.persistence.save_personality(self.personality)
         except Exception as e:
@@ -363,6 +368,11 @@ class Helios:
             self.persistence.save_allostasis(self.allostasis)
         except Exception as e:
             self.log.warning(f"Failed to save allostasis: {e}")
+        # Save memory system state (Requirement 22.1, 22.3)
+        try:
+            self.memory_system.save_to_directory(self.cfg.DATA_DIR)
+        except Exception as e:
+            self.log.warning(f"Failed to save memory system: {e}")
         self.log.debug("Periodic state persistence complete (tick %d)", self.tick_count)
     
     # ═══════════════════════════════════════════
@@ -672,6 +682,31 @@ class Helios:
                     stats.get("items_pruned", 0),
                 )
         
+        # 10c. Memory pressure check (Requirement 23.4)
+        #      Trigger immediate consolidation when total items > 2000
+        mem_stats = self.memory_system.get_stats()
+        total_items = (
+            mem_stats["working_items"]
+            + mem_stats["episodic_items"]
+            + mem_stats["semantic_facts"]
+            + mem_stats["autobio_moments"]
+        )
+        if total_items > 2000:
+            self.log.warning(
+                "⚠️ Memory pressure: total items = %d > 2000 — triggering immediate consolidation",
+                total_items,
+            )
+            stats = self.memory_system.consolidate(phi)
+            if stats:
+                self._ticks_since_consolidation = 0
+                self.log.info(
+                    "🧠 紧急记忆巩固完成 — patterns_extracted=%d, memories_promoted=%d, items_pruned=%d, total_now=%d",
+                    stats.get("patterns_extracted", 0),
+                    stats.get("memories_promoted", 0),
+                    stats.get("items_pruned", 0),
+                    total_items - stats.get("items_pruned", 0),
+                )
+        
         # 11. 定期持久化 (每600 ticks)
         if self.tick_count % 600 == 0:
             self._persist_state()
@@ -828,6 +863,61 @@ class Helios:
             f"心境={mood_snap['label']:>14} "
             f"负荷={load:.3f}"
         )
+        
+        # Requirement 23.1: Log memory subsystem statistics at each summary interval
+        mem_stats = self.memory_system.get_stats()
+        self.log.info(
+            f"   记忆统计: working={mem_stats['working_items']} "
+            f"episodic={mem_stats['episodic_items']} "
+            f"semantic={mem_stats['semantic_facts']} "
+            f"autobio={mem_stats['autobio_moments']}"
+        )
+        
+        # Requirement 23.2: Check capacity warnings (80% threshold)
+        self._check_memory_capacity_warnings()
+    
+    def _check_memory_capacity_warnings(self):
+        """
+        Check in-memory collections for 80% capacity threshold (Requirement 23.2).
+        
+        Monitors:
+          - Episodic Memory items (capacity: episodic_capacity)
+          - DAISY state_history (capacity: 200)
+          - Conversation history per user (capacity: 20 per user)
+        
+        Logs WARNING when any collection exceeds 80% of configured capacity.
+        """
+        THRESHOLD = 0.80
+        
+        # Episodic Memory
+        episodic_count = len(self.memory_system.episodic.items)
+        episodic_capacity = self.memory_system.episodic.capacity
+        if episodic_count >= episodic_capacity * THRESHOLD:
+            self.log.warning(
+                f"⚠️ Episodic Memory at {episodic_count}/{episodic_capacity} "
+                f"({episodic_count/episodic_capacity*100:.0f}%) — approaching capacity"
+            )
+        
+        # DAISY state history
+        state_history_count = len(self.daisy.state_history)
+        state_history_capacity = self.daisy.max_history
+        if state_history_count >= state_history_capacity * THRESHOLD:
+            self.log.warning(
+                f"⚠️ State History at {state_history_count}/{state_history_capacity} "
+                f"({state_history_count/state_history_capacity*100:.0f}%) — approaching capacity"
+            )
+        
+        # Conversation history per user (ResponsePipeline tracks this)
+        if self.response_pipeline:
+            hist_state = self.response_pipeline._history_manager.get_state()
+            max_per_user = hist_state.get("max_history_per_user", 20)
+            per_user_counts = hist_state.get("per_user_counts", {})
+            for user_id, count in per_user_counts.items():
+                if count >= max_per_user * THRESHOLD:
+                    self.log.warning(
+                        f"⚠️ Conversation history for user [{user_id[:10]}] at "
+                        f"{count}/{max_per_user} ({count/max_per_user*100:.0f}%) — approaching capacity"
+                    )
     
     def _handle_signal(self, signum, frame):
         self.log.info(f"收到信号 {signum}，准备退出...")
@@ -838,7 +928,7 @@ class Helios:
         elapsed = time.time() - self.start_time
         self.log.info(f"Helios 退出 · 运行 {elapsed/60:.1f}min · {self.tick_count} ticks")
         
-        # 持久化 personality + allostasis
+        # 持久化 personality + allostasis + memory (Requirement 22)
         self._persist_state()
         
         # 停止 QQ Bot
@@ -858,6 +948,9 @@ class Helios:
         traits = self.personality._trait_dict()
         autobio_stats = self.autobio.get_statistics()
         
+        # Requirement 23.3: Expose memory statistics through get_state()
+        mem_stats = self.memory_system.get_stats()
+        
         return {
             "tick": self.tick_count,
             "uptime_seconds": time.time() - self.start_time,
@@ -870,6 +963,14 @@ class Helios:
             "personality": traits,
             "autobio_moments": autobio_stats.get("total_moments", 0),
             "autobio_chapters": autobio_stats.get("total_chapters", 0),
+            "memory": {
+                "working_items": mem_stats["working_items"],
+                "episodic_items": mem_stats["episodic_items"],
+                "semantic_facts": mem_stats["semantic_facts"],
+                "autobio_moments": mem_stats["autobio_moments"],
+                "episodic_capacity": self.memory_system.episodic.capacity,
+                "working_capacity": self.memory_system.working.capacity,
+            },
             "regulation": self.regulation.get_state(),
             "qq_io": self.qq.get_state() if self.qq else {"backend": "none"},
             "separation_anxiety": round(self._separation_anxiety, 3),

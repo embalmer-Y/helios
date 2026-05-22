@@ -4,8 +4,9 @@
 # Property 15: Episodic Memory Capacity Invariant
 # Property 16: Episodic Memory Importance Formula
 # Property 17: Episodic Pruning Promotes High-Importance Items
+# Property 25: Selective Episodic Serialization
 
-**Validates: Requirements 17.1, 17.2, 17.3, 17.4**
+**Validates: Requirements 17.1, 17.2, 17.3, 17.4, 22.3**
 """
 
 import sys
@@ -266,4 +267,185 @@ class TestEpisodicPruningPromotesHighImportance:
             # All discarded items have importance > 0.4, so all should be promoted.
             assert len(store.moments) == n_extra, (
                 f"Expected {n_extra} promotions, got {len(store.moments)}"
+            )
+
+
+# ------------------------------------------------------------------
+# Property 25: Selective Episodic Serialization
+# ------------------------------------------------------------------
+
+
+class TestSelectiveEpisodicSerialization:
+    """Property 25: For any set of EpisodicMemory items at shutdown, only items
+    with importance > 0.3 SHALL be serialized to the persistence file.
+
+    **Validates: Requirements 22.3**
+    """
+
+    @given(data=capacity_and_episodes())
+    @settings(max_examples=100)
+    def test_only_high_importance_items_serialized(self, data):
+        """Only items with importance > 0.3 should be serialized to file."""
+        import json
+
+        capacity, episodes = data
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "episodic.json")
+            em = EpisodicMemory(capacity=capacity)
+
+            for i, (v, a, p) in enumerate(episodes):
+                em.record(f"episode_{i}", valence=v, arousal=a, phi=p)
+
+            em.save_to_file(filepath, importance_threshold=0.3)
+
+            with open(filepath, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+
+            saved_items = saved_data["items"]
+
+            # All saved items must have importance > 0.3
+            for item in saved_items:
+                assert item["importance"] > 0.3, (
+                    f"Found item with importance {item['importance']:.4f} <= 0.3 in saved file"
+                )
+
+    @given(data=capacity_and_episodes())
+    @settings(max_examples=100)
+    def test_all_high_importance_items_included(self, data):
+        """All items with importance > 0.3 should be included in serialized file."""
+        import json
+
+        capacity, episodes = data
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "episodic.json")
+            em = EpisodicMemory(capacity=capacity)
+
+            for i, (v, a, p) in enumerate(episodes):
+                em.record(f"episode_{i}", valence=v, arousal=a, phi=p)
+
+            # Collect IDs of all items with importance > 0.3
+            high_importance_ids = {
+                it.id for it in em.items if it.importance > 0.3
+            }
+
+            em.save_to_file(filepath, importance_threshold=0.3)
+
+            with open(filepath, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+
+            saved_ids = {item["id"] for item in saved_data["items"]}
+
+            # All high-importance items should be in saved data
+            assert high_importance_ids == saved_ids, (
+                f"Expected {len(high_importance_ids)} high-importance items, "
+                f"got {len(saved_ids)}. Missing: {high_importance_ids - saved_ids}"
+            )
+
+    @given(data=capacity_and_episodes())
+    @settings(max_examples=100)
+    def test_low_importance_items_excluded(self, data):
+        """Items with importance <= 0.3 should NOT be in the serialized file."""
+        import json
+
+        capacity, episodes = data
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "episodic.json")
+            em = EpisodicMemory(capacity=capacity)
+
+            for i, (v, a, p) in enumerate(episodes):
+                em.record(f"episode_{i}", valence=v, arousal=a, phi=p)
+
+            # Collect IDs of items with importance <= 0.3
+            low_importance_ids = {
+                it.id for it in em.items if it.importance <= 0.3
+            }
+
+            em.save_to_file(filepath, importance_threshold=0.3)
+
+            with open(filepath, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+
+            saved_ids = {item["id"] for item in saved_data["items"]}
+
+            # No low-importance items should be in saved data
+            intersection = low_importance_ids & saved_ids
+            assert len(intersection) == 0, (
+                f"Found {len(intersection)} low-importance items (importance <= 0.3) "
+                f"in saved file: {intersection}"
+            )
+
+    @given(
+        valence=valence_st,
+        arousal=arousal_st,
+        phi=phi_st,
+    )
+    @settings(max_examples=100)
+    def test_boundary_importance_item_behavior(self, valence, arousal, phi):
+        """Items exactly at the importance boundary should not be serialized."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "episodic.json")
+            em = EpisodicMemory()
+
+            item = em.record("boundary_test", valence=valence, arousal=arousal, phi=phi)
+
+            em.save_to_file(filepath, importance_threshold=0.3)
+
+            with open(filepath, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+
+            # If importance > 0.3, it should be saved; if <= 0.3, it should not
+            if item.importance > 0.3:
+                assert len(saved_data["items"]) == 1, (
+                    f"Expected 1 item with importance {item.importance:.4f} > 0.3 to be saved"
+                )
+            else:
+                assert len(saved_data["items"]) == 0, (
+                    f"Expected 0 items with importance {item.importance:.4f} <= 0.3 to be saved"
+                )
+
+    @given(
+        episodes=lists(episode_st, min_size=0, max_size=50),
+        threshold=floats(min_value=0.05, max_value=0.95, allow_nan=False, allow_infinity=False),
+    )
+    @settings(max_examples=100)
+    def test_custom_threshold_respected(self, episodes, threshold):
+        """The serialization should respect custom importance thresholds."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "episodic.json")
+            em = EpisodicMemory(capacity=100)
+
+            for i, (v, a, p) in enumerate(episodes):
+                em.record(f"episode_{i}", valence=v, arousal=a, phi=p)
+
+            em.save_to_file(filepath, importance_threshold=threshold)
+
+            with open(filepath, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+
+            saved_items = saved_data["items"]
+            saved_threshold = saved_data.get("importance_threshold")
+
+            # The threshold should be recorded in the file
+            assert abs(saved_threshold - threshold) < 1e-9, (
+                f"Expected threshold {threshold}, got {saved_threshold}"
+            )
+
+            # All saved items must have importance > threshold
+            for item in saved_items:
+                assert item["importance"] > threshold, (
+                    f"Found item with importance {item['importance']:.4f} <= {threshold:.4f}"
+                )
+
+            # All items with importance > threshold should be saved
+            expected_ids = {it.id for it in em.items if it.importance > threshold}
+            saved_ids = {item["id"] for item in saved_items}
+            assert expected_ids == saved_ids, (
+                f"Expected {len(expected_ids)} items, got {len(saved_ids)}"
             )
