@@ -47,6 +47,7 @@ from autobiographical import AutobiographicalStore
 from regulation import RegulationEngine
 from io_qq import QQBotClient, QQMessage
 from llm_speech import LLMSpeechGenerator, SpeechContext
+from thinking import ThinkingManager, EmotionalEpisode
 from helios_utils import clamp
 
 try:
@@ -102,6 +103,9 @@ class HeliosConfig:
     # LLM 对话生成 (G3)
     LLM_SPEECH_ENABLED: bool = os.getenv("HELIOS_LLM_SPEECH_ENABLED", "1") == "1"
     LLM_SPEECH_MODEL: str = os.getenv("HELIOS_LLM_SPEECH_MODEL", "")  # 空=使用全局模型
+    
+    # 内生思维流 (T1)
+    THINK_INTERVAL: int = int(os.getenv("HELIOS_THINK_INTERVAL", "10"))  # ticks (~5s)
 
 
 # ═══════════════════════════════════════════════════
@@ -163,6 +167,9 @@ class Helios:
         # 加载已有记忆
         self.regulation.load()
         
+        # ── 内生思考引擎 (T1) ──
+        self.thinking_mgr = ThinkingManager()
+        
         # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
         self.qq: Optional[QQBotClient] = None
         self._msg_queue: queue.Queue = queue.Queue()
@@ -211,6 +218,9 @@ class Helios:
         self.last_dominant = None
         self.last_valence = 0.0
         self.last_phi = 0.0
+        
+        # 播种思考记忆
+        self._seed_thinking_memories()
         
         self.log.info("Helios 核心初始化完成")
     
@@ -353,6 +363,10 @@ class Helios:
         # 4. 神经化学
         if self.neurochem:
             self.neurochem.tick()
+        
+        # 4.5. 内生思维流 (T1) — 每 N tick 一次
+        if self.tick_count % self.cfg.THINK_INTERVAL == 0:
+            self._think_step(state, phi, events)
         
         # 5. 人格进化
         dominant = state.dominant_system
@@ -677,7 +691,117 @@ class Helios:
         elif icri < 0.45:  return 0.75   # 有创造力
         elif icri < 0.65:  return 1.00   # 高度创意
         else:              return 1.30   # 狂野联想
-
+    
+    # ═══════════════════════════════════════════
+    # T1: 内生思维流
+    # ═══════════════════════════════════════════
+    
+    def _seed_thinking_memories(self):
+        """从自传记忆播种 MemoryReplayEngine。如无真实记忆则用内置种子。"""
+        try:
+            class EpisodeStore:
+                def __init__(self):
+                    self.episodes = []
+            
+            store = EpisodeStore()
+            moments = self.autobio.moments[-50:]
+            
+            # 只保留有实质叙述的记忆（过滤"自发活动: XXX"等泛型）
+            for m in moments:
+                narrative = getattr(m, 'narrative', '')
+                if narrative and not narrative.startswith(('自发活动:', '事件响应:')):
+                    ep = EmotionalEpisode(
+                        timestamp=getattr(m, 'timestamp', time.time()),
+                        valence=getattr(m, 'valence', 0.0),
+                        arousal=getattr(m, 'arousal', 0.3),
+                        phi=getattr(m, 'phi', 0.2),
+                        label=getattr(m, 'dominant', '') or '',
+                        summary=narrative,
+                        tags=getattr(m, 'tags', []) if hasattr(m, 'tags') else [],
+                    )
+                    store.episodes.append(ep)
+            
+            if len(store.episodes) >= 3:
+                self.thinking_mgr.memory_replay.memory_store = store
+                self.log.info(f"思考记忆播种: {len(store.episodes)} 条 (自传)")
+            else:
+                # 内置种子记忆 (thinking.py 的 _mock_memories)
+                self.log.info("思考记忆播种: 使用内置种子 (自传不足)")
+        except Exception as e:
+            self.log.debug(f"播种思考记忆: {e}")
+    
+    def _think_step(self, state, phi: float, events: dict):
+        """
+        每 N tick 一次的内生思维。
+        
+        决定思维模式 → 生成思绪 → 记入思考流 + 可能触发行为
+        """
+        panksepp = dict(state.panksepp_activation) if state.panksepp_activation else {}
+        
+        # 外部刺激 = events 中有 PANIC 之外的事件（分离焦虑是内部的）
+        has_stimulus = bool(events) and any(k != "PANIC" for k in events)
+        
+        # 驱动总量 (暂用 arousal + separation_anxiety 近似)
+        drive_total = state.arousal * 0.5 + self._separation_anxiety * 0.5
+        
+        # 决定思维模式
+        mode = self.thinking_mgr.determine_mode(
+            has_external_stimulus=has_stimulus,
+            drive_total=drive_total,
+            valence=state.valence,
+            arousal=state.arousal,
+            play_activation=panksepp.get("PLAY", 0.0),
+        )
+        
+        # 生成思绪
+        thoughts = self.thinking_mgr.generate_thoughts(
+            valence=state.valence,
+            arousal=state.arousal,
+            panksepp_state=panksepp,
+            limit=3,
+        )
+        
+        mood_snap = self.mood.get_snapshot()
+        
+        if thoughts:
+            for thought in thoughts:
+                self._think_log(thought, mode, state.valence, phi)
+                
+                # 高冲击思绪 → 写入自传
+                if thought.phi_prediction > 0.4 or thought.actionable:
+                    from datetime import datetime as dt
+                    self.autobio.record(
+                        panksepp=panksepp,
+                        valence=thought.valence_bias,
+                        arousal=thought.arousal_bias,
+                        dominant=state.dominant_system,
+                        phi=thought.phi_prediction,
+                        mood_valence=mood_snap.get('valence', state.valence),
+                        mood_arousal=mood_snap.get('arousal', state.arousal),
+                        mood_label=mood_snap.get('label', 'neutral'),
+                        allostatic_load=self.allostasis.get_load_level(),
+                        narrative=thought.content,
+                        event_trigger=f"思维:{thought.source}",
+                        cycle=self.tick_count,
+                    )
+        else:
+            # 没生成思绪 → 降级到旧模板叙事
+            load = self.allostasis.get_load_level()
+            self._think_aloud(mood_snap, load)
+    
+    def _think_log(self, thought, mode: str, valence: float, phi: float):
+        """将生成的思绪写入思考流日志"""
+        icon = {"memory_replay": "💭", "counterfactual": "🔮",
+                "free_association": "💫", "daydream": "🌈"}.get(thought.source, "💡")
+        mode_label = {"external": "专注中", "wandering": "走神中",
+                      "daydreaming": "白日梦", "planning": "盘算中",
+                      "rest": "放空中"}.get(mode, mode)
+        line = (
+            f"{icon} [{mode_label}] {thought.content} "
+            f"[v={valence:+.2f} Φ={phi:.2f} n={thought.novelty:.2f}]"
+        )
+        self.think_log.info(line)
+    
     def _summary(self):
         """定期摘要"""
         elapsed = time.time() - self.start_time
@@ -692,9 +816,6 @@ class Helios:
             f"心境={mood_snap['label']:>14} "
             f"负荷={load:.3f}"
         )
-        
-        # 思考流 ← 叙事化内部状态
-        self._think_aloud(mood_snap, load)
     
     def _think_aloud(self, mood_snap: dict, load: float):
         """将内部状态转为人类可读的思考叙事"""
