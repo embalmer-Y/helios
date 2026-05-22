@@ -79,7 +79,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Handle missing/corrupted files gracefully with defaults
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 3.3_
 
-- [~] 4. Checkpoint - Ensure all tests pass
+- [x] 4. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 5. Implement EventSource abstraction and implementations
@@ -122,7 +122,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 7: EventSource Trigger Merge with Max Semantics**
     - **Validates: Requirements 10.4**
 
-- [~] 6. Checkpoint - Ensure all tests pass
+- [x] 6. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 7. Implement passive reply capability
@@ -171,7 +171,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Record exchange in conversation history
     - _Requirements: 7.3_
 
-- [~] 8. Checkpoint - Ensure all tests pass
+- [x] 8. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 9. Implement drives-regulation unification
@@ -248,7 +248,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - Pass as additional context to ResponsePipeline and ExpressionPipeline
     - _Requirements: 13.3_
 
-- [~] 11. Checkpoint - Ensure all tests pass
+- [x] 11. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 12. Implement habituation and memory lifecycle
@@ -291,7 +291,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 24: Autobiographical Store Archive Threshold**
     - **Validates: Requirements 21.1, 21.2, 21.3, 21.5**
 
-  - [ ] 12.7 Implement Memory System state persistence
+  - [x] 12.7 Implement Memory System state persistence
     - Serialize SemanticMemory facts to JSON on shutdown
     - Load SemanticMemory facts from JSON on startup
     - Serialize EpisodicMemory items with importance > 0.3 on shutdown
@@ -303,7 +303,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 25: Selective Episodic Serialization**
     - **Validates: Requirements 22.3**
 
-  - [ ] 12.9 Implement memory usage monitoring
+  - [x] 12.9 Implement memory usage monitoring
     - Log memory subsystem stats at each summary interval
     - Log WARNING when any collection exceeds 80% capacity
     - Expose memory statistics via `get_state()` method
@@ -314,11 +314,11 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 26: Capacity Monitoring Alerts**
     - **Validates: Requirements 23.2, 23.4**
 
-- [ ] 13. Checkpoint - Ensure all tests pass
+- [x] 13. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 14. Implement conversation personalization and pipeline wiring
-  - [ ] 14.1 Implement conversation personalization from Autobiographical Memory
+  - [x] 14.1 Implement conversation personalization from Autobiographical Memory
     - Query AutobiographicalStore for memories related to conversation topic/user
     - Include up to 3 relevant memory narratives in LLM context for reply generation
     - Handle gracefully when no relevant memories exist (no error)
@@ -328,7 +328,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 14: Autobiographical Memory Inclusion Bound**
     - **Validates: Requirements 16.2**
 
-  - [ ] 14.3 Wire complete enhanced tick pipeline
+  - [x] 14.3 Wire complete enhanced tick pipeline
     - Implement full tick pipeline as described in design: create state → collect events → habituation → DAISY → neurochem → Phi → personality → allostasis → drives → regulation → memory → reply → expression → consolidation check → periodic persistence
     - Ensure HeliosState forward propagation (modules see updated values from earlier pipeline stages)
     - _Requirements: 9.4_
@@ -338,7 +338,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Validates: Requirements 9.4**
 
 - [ ] 15. Implement directory restructuring
-  - [ ] 15.1 Reorganize source files into domain packages
+  - [x] 15.1 Reorganize source files into domain packages
     - Move files into `core/`, `memory/`, `cognition/`, `io/`, `regulation/`, `utils/` packages
     - Keep `helios_main.py` at project root as entry point
     - Create `__init__.py` in each package re-exporting public interfaces
@@ -351,11 +351,11 @@ This plan implements the systematic integration, persistence, and extension of H
     - Test that no existing API signatures have changed
     - _Requirements: 11.4_
 
-- [ ] 16. Checkpoint - Ensure all tests pass
+- [x] 16. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 17. Implement adaptive ICRI engine and Phi-to-ICRI rename
-  - [ ] 17.1 Implement AdaptiveAlphaICRI class in phi.py
+  - [x] 17.1 Implement AdaptiveAlphaICRI class in phi.py
     - Create `AdaptiveAlphaICRI` class with 3-tier adaptive EMA alpha (0.55 for intensity > 0.60, 0.30 for 0.30-0.60, 0.10 for < 0.10)
     - Implement `select_alpha(max_event_intensity)` method with deterministic tier selection
     - Implement `aggregate(max_event_intensity)` method using adaptive alpha EMA smoothing
@@ -368,7 +368,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 28: Adaptive Alpha Tier Selection**
     - **Validates: Requirements 24.1, 24.2, 24.3**
 
-  - [ ] 17.3 Implement CognitiveImpactProfile dataclass and ICRI source feeding
+  - [x] 17.3 Implement CognitiveImpactProfile dataclass and ICRI source feeding
     - Create `CognitiveImpactProfile` dataclass with four dimensions: sensory, cognitive, self_, novelty (all float [0, 1])
     - Implement `feed_from_impact(impact: CognitiveImpactProfile)` method in AdaptiveAlphaICRI
     - Map sensory → sensory_integration, cognitive → dmn_depth, self_ → self_reflection, novelty → global_ignition
@@ -380,7 +380,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 30: CognitiveImpactProfile Feeds ICRI Sources**
     - **Validates: Requirements 27.2, 27.3, 27.4, 27.5**
 
-  - [ ] 17.5 Rename Phi to ICRI throughout codebase
+  - [x] 17.5 Rename Phi to ICRI throughout codebase
     - Rename internal variable references from `phi` to `icri` in module interfaces and HeliosState
     - Update documentation, display outputs, and dashboard labels to use ICRI terminology
     - Add backward compatibility: accept old `phi` key in config files, map to `icri` internally
@@ -392,7 +392,7 @@ This plan implements the systematic integration, persistence, and extension of H
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 19. Implement LLM temperature modulation
-  - [ ] 19.1 Implement ICRITemperatureMapper class
+  - [x] 19.1 Implement ICRITemperatureMapper class
     - Create `ICRITemperatureMapper` class in `io/icri_temperature.py`
     - Implement 5-tier static mapping: ICRI < 0.10 → 0.3, [0.10, 0.25) → 0.5, [0.25, 0.45) → 0.75, [0.45, 0.65) → 1.0, ≥ 0.65 → 1.3
     - Implement `map_temperature(icri: float) -> float` static method
@@ -444,7 +444,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - _Requirements: 28.1, 28.5_
 
 - [ ] 21. Implement behavioral execution abstraction
-  - [ ] 21.1 Implement BehaviorExecutor class
+  - [x] 21.1 Implement BehaviorExecutor class
     - Create `io/limb.py` with `BehaviorExecutor` class
     - Define `BehaviorStatus` enum (QUEUED, EXECUTING, PAUSED, COMPLETED, CANCELLED)
     - Define `BehaviorCommand` dataclass (priority, name, action, params, status, result)
@@ -463,7 +463,7 @@ This plan implements the systematic integration, persistence, and extension of H
     - **Property 35: Behavior Completion Produces Feedback**
     - **Validates: Requirements 29.2, 29.5**
 
-  - [ ] 21.4 Implement LimbDecisionBridge class
+  - [x] 21.4 Implement LimbDecisionBridge class
     - Create `io/limb_decision_bridge.py` with `LimbDecisionBridge` class
     - Define priority threshold mapping: score ≥ 0.8 → 100, ≥ 0.6 → 75, ≥ 0.4 → 50, ≥ 0.2 → 25, else → 10
     - Implement `convert_and_enqueue(action, score, params)` converting regulation scores to priority-ordered BehaviorCommands

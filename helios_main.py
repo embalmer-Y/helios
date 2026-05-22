@@ -38,23 +38,23 @@ try:
 except ImportError:
     pass
 
-# ── 核心模块 ──
-from daisy_emotion import DaisySystemEngine, PANKSEPP_SYSTEMS
-from allostasis import AllostaticRegulator, AllostasisConfig
+# ── 核心模块 (domain packages) ──
+from cognition.daisy_emotion import DaisySystemEngine, PANKSEPP_SYSTEMS
+from regulation.allostasis import AllostaticRegulator, AllostasisConfig
 from mood_tracker import MoodTracker
 from personality import PersonalityProfile
-from autobiographical import AutobiographicalStore
-from memory_system import MemorySystem
-from regulation import RegulationEngine
+from memory.autobiographical import AutobiographicalStore
+from memory.memory_system import MemorySystem
+from regulation.regulation import RegulationEngine
 from io_qq import QQBotClient, QQMessage
 from llm_speech import LLMSpeechGenerator, SpeechContext
 from helios_utils import clamp
 from utils.persistence import StatePersistence
-from drives import DriveOracle, HeliosSnapshot
-from habituation import HabituationTracker
+from regulation.drives import DriveOracle, HeliosSnapshot
+from cognition.habituation import HabituationTracker
 
 try:
-    from phi import UnifiedPhi
+    from cognition.phi import UnifiedPhi
     HAS_PHI = True
 except ImportError:
     HAS_PHI = False
@@ -88,6 +88,14 @@ _rp_mod = _ilu.module_from_spec(_rp_spec)
 sys.modules["helios_io_response_pipeline"] = _rp_mod
 _rp_spec.loader.exec_module(_rp_mod)
 ResponsePipeline = _rp_mod.ResponsePipeline
+
+# ── ICRI Temperature Mapper ──
+_icri_temp_path = str(PROJECT_ROOT / "io" / "icri_temperature.py")
+_icri_temp_spec = _ilu.spec_from_file_location("helios_io_icri_temperature", _icri_temp_path)
+_icri_temp_mod = _ilu.module_from_spec(_icri_temp_spec)
+sys.modules["helios_io_icri_temperature"] = _icri_temp_mod
+_icri_temp_spec.loader.exec_module(_icri_temp_mod)
+ICRITemperatureMapper = _icri_temp_mod.ICRITemperatureMapper
 
 
 # ═══════════════════════════════════════════════════
@@ -389,7 +397,33 @@ class Helios:
             drive_dominant=getattr(self, '_last_drive_dominant', ''),
             drive_urgency=getattr(self, '_last_drive_urgency', 0.0),
         )
+        return self._poll_event_sources(state)
+    
+    def _collect_events_with_state(self, state: HeliosState) -> tuple[dict[str, float], list[dict]]:
+        """
+        采集外部事件 using the tick's HeliosState for forward propagation.
         
+        Same as _collect_events but uses the provided state object so that
+        EventSources see the current tick's state values.
+        
+        Args:
+            state: The current tick's HeliosState (forward-propagated).
+            
+        Returns:
+            Tuple of (merged_triggers, pending_messages).
+        """
+        # Populate state with drive info from previous tick for sources that need it
+        state.drive_dominant = getattr(self, '_last_drive_dominant', '')
+        state.drive_urgency = getattr(self, '_last_drive_urgency', 0.0)
+        return self._poll_event_sources(state)
+    
+    def _poll_event_sources(self, state: HeliosState) -> tuple[dict[str, float], list[dict]]:
+        """
+        Core event polling logic shared by _collect_events and _collect_events_with_state.
+        
+        Polls all registered EventSources, merges triggers using max-value semantics,
+        and handles QQ-specific side effects.
+        """
         # Poll all registered event sources
         merged_triggers: dict[str, float] = {}
         all_messages: list[dict] = []
@@ -424,6 +458,7 @@ class Helios:
                     self.log.info(f"🎯 自动捕获主人 openid: {user_id}")
         
         # Track separation anxiety for state queries
+        sep_hours = (time.time() - self._last_master_contact) / 3600
         self._separation_anxiety = min(1.0, 1 - 2.71828 ** (-0.4 * sep_hours))
         
         return merged_triggers, all_messages
@@ -496,13 +531,43 @@ class Helios:
         self._shutdown()
     
     def _tick(self):
-        """单次心跳"""
+        """
+        单次心跳 — Enhanced pipeline with full HeliosState forward propagation.
+        
+        Pipeline order (Requirement 9.4):
+          0. Create fresh HeliosState
+          1. Collect events from all EventSources
+          2. Habituation — apply novelty decay to triggers
+          3. DAISY emotion engine (with neurochem modulation)
+          4. Neurochem tick
+          5. Phi — feed all sources
+          6. Personality adaptation
+          7. Allostasis update
+          8. Drives computation
+          9. Regulation engine
+         10. Memory — record significant events
+         11. Passive reply pipeline
+         12. Active expression (regulation → speech)
+         13. Consolidation check
+         14. Periodic persistence
+        
+        Each stage writes results into the shared HeliosState so subsequent
+        stages observe updated values (forward propagation).
+        """
         self.tick_count += 1
         
-        # 1. 采集事件 (EventSource registry with max-value merging)
-        events, messages = self._collect_events()
+        # ── 0. Create fresh HeliosState ──
+        sep_hours = (time.time() - self._last_master_contact) / 3600
+        state = HeliosState(
+            tick=self.tick_count,
+            timestamp=time.time(),
+            separation_hours=sep_hours,
+        )
         
-        # 2. 习惯化 — 重复刺激 → 反应递减 (Requirement 14)
+        # ── 1. Collect events from all registered EventSources ──
+        events, messages = self._collect_events_with_state(state)
+        
+        # ── 2. Habituation — repeated stimuli → diminishing response ──
         for key, intensity in list(events.items()):
             novelty = self.habituation.get_novelty_factor(
                 key, self.tick_count, arousal=self.last_valence
@@ -511,83 +576,151 @@ class Helios:
             if intensity > 0.01:
                 self.habituation.register_exposure(key, self.tick_count)
         
-        # 3. DAISY 情感引擎 (with neurochem modulation)
-        state = self.daisy.cycle(events if events else {}, neurochem=self.neurochem)
+        # ── 3. DAISY emotion engine (with neurochem modulation) ──
+        affect = self.daisy.cycle(events if events else {}, neurochem=self.neurochem)
+        # Forward propagate: write affect into HeliosState
+        state.panksepp = dict(affect.panksepp_activation) if affect.panksepp_activation else {}
+        state.valence = affect.valence
+        state.arousal = affect.arousal
+        state.dominant_system = affect.dominant_system or ""
         
-        # 3. Φ 意识测量
-        phi = 0.0
-        if self.phi_engine and state.panksepp_activation:
-            self.phi_engine.feed_emotional(state.panksepp_activation)
-            phi = self.phi_engine.aggregate()
-        
-        # 4. 神经化学
+        # ── 4. Neurochem tick ──
         if self.neurochem:
             self.neurochem.tick()
+            # Forward propagate neurochem levels into state
+            state.dopamine = getattr(self.neurochem, 'dopamine', getattr(self.neurochem, '_dopamine', None))
+            state.cortisol = getattr(self.neurochem, 'cortisol', getattr(self.neurochem, '_cortisol', None))
+            state.opioids = getattr(self.neurochem, 'opioids', getattr(self.neurochem, '_opioids', None))
+            state.oxytocin = getattr(self.neurochem, 'oxytocin', getattr(self.neurochem, '_oxytocin', None))
+            # Handle NeurochemState attribute patterns (may be Chemical objects)
+            if hasattr(state.dopamine, 'current'):
+                state.dopamine = state.dopamine.current
+            if hasattr(state.cortisol, 'current'):
+                state.cortisol = state.cortisol.current
+            if hasattr(state.opioids, 'current'):
+                state.opioids = state.opioids.current
+            if hasattr(state.oxytocin, 'current'):
+                state.oxytocin = state.oxytocin.current
+            # Fallback to defaults if attributes not found
+            if state.dopamine is None:
+                state.dopamine = 0.3
+            if state.cortisol is None:
+                state.cortisol = 0.2
+            if state.opioids is None:
+                state.opioids = 0.5
+            if state.oxytocin is None:
+                state.oxytocin = 0.3
         
-        # 5. 人格进化
+        # ── 5. Phi — feed all sources (uses forward-propagated state) ──
+        if self.phi_engine:
+            # Feed emotional coherence from DAISY output
+            if state.panksepp:
+                self.phi_engine.feed_emotional(state.panksepp)
+            
+            # Feed DMN source from thinking mode
+            self.phi_engine.feed_dmn_from_thinking(
+                thinking_mode="resting",
+                thought_count=0,
+            )
+            
+            # Feed self_model from personality trait awareness
+            self.phi_engine.feed_self_model_from_personality(
+                self.personality._trait_dict()
+            )
+            
+            # Feed ignition from active Panksepp system count
+            if state.panksepp:
+                self.phi_engine.feed_ignition_from_panksepp(state.panksepp)
+            
+            # Sensory decays via TTL when no external input (handled internally)
+            state.phi = self.phi_engine.aggregate()
+            state.consciousness_label = self.phi_engine.label.value if hasattr(self.phi_engine.label, 'value') else str(self.phi_engine.label)
+        
+        # ── 6. Personality adaptation ──
         dominant = state.dominant_system
-        intensity = max(state.panksepp_activation.values()) if state.panksepp_activation else 0
+        intensity = max(state.panksepp.values()) if state.panksepp else 0
         self.personality.adapt_from_snapshot(dominant, intensity)
+        # Forward propagate personality traits into state
+        state.personality_traits = self.personality._trait_dict()
         
-        # 6. 驱动计算 (DriveOracle → HeliosState)
+        # ── 7. Allostasis update ──
+        self.allostasis.update(state.panksepp)
+        # Forward propagate allostasis into state
+        state.allostatic_load = self.allostasis.get_load_level()
+        state.is_fatigued = self.allostasis.is_fatigued()
+        
+        # ── 7b. ICRI Temperature Mapping (Requirement 26.6) ──
+        # Compute LLM temperature and speech style from current ICRI level
+        state.llm_temperature = ICRITemperatureMapper.map_temperature(state.icri)
+        state.speech_style = ICRITemperatureMapper.get_style_label(state.icri)
+        
+        # ── 8. Drives computation (uses forward-propagated phi, valence, arousal) ──
         sep_secs = time.time() - self._last_master_contact
         snapshot = HeliosSnapshot(
             valence=state.valence,
             arousal=state.arousal,
             time_since_last_interaction=sep_secs,
-            phi_value=phi,
+            phi_value=state.phi,
             cognitive_load=state.arousal,  # approximate via arousal
         )
         drive_vector = self.drive_oracle.cycle(snapshot, neurochem=self.neurochem)
+        # Forward propagate drives into state
+        state.drive_dominant = drive_vector.dominant
+        state.drive_urgency = drive_vector.total
         self._last_drive_dominant = drive_vector.dominant
         self._last_drive_urgency = drive_vector.total
         
-        # 7. 自传记忆 (有意义的时刻)
-        if self.tick_count % 10 == 0 and (phi > 0.3 or abs(state.valence) > 0.5):
+        # ── 9. Regulation engine (uses forward-propagated state) ──
+        hour = datetime.now().hour
+        action = self.regulation.tick(
+            panksepp=state.panksepp or {},
+            valence=state.valence,
+            hour_of_day=hour,
+            drive_urgency=state.drive_urgency,
+            drive_dominant=state.drive_dominant,
+        )
+        if action:
+            state.last_action = action
+        
+        # ── 10. Memory — record significant events ──
+        # Autobiographical memory (meaningful moments, sampled every 10 ticks)
+        if self.tick_count % 10 == 0 and (state.phi > 0.3 or abs(state.valence) > 0.5):
+            # Forward propagate mood into state before recording
+            state.mood_valence = self.mood.state.valence
+            state.mood_arousal = self.mood.state.arousal
+            state.mood_label = self.mood.state.label
             self.autobio.record(
-                panksepp=dict(state.panksepp_activation),
+                panksepp=state.panksepp,
                 valence=state.valence,
                 arousal=state.arousal,
                 dominant=dominant,
-                phi=phi,
-                mood_valence=self.mood.state.valence,
-                mood_arousal=self.mood.state.arousal,
-                mood_label=self.mood.state.label,
-                allostatic_load=self.allostasis.get_load_level(),
+                phi=state.phi,
+                mood_valence=state.mood_valence,
+                mood_arousal=state.mood_arousal,
+                mood_label=state.mood_label,
+                allostatic_load=state.allostatic_load,
                 narrative=f"自发活动: {dominant}" if not events else f"事件响应: {dominant}",
                 event_trigger="+".join(events.keys()) if events else "自发",
                 cycle=self.tick_count,
             )
         
-        # 7b. Significant event → Episodic Memory (Requirement 13.2)
-        #     Record when phi > 0.3 OR |valence| > 0.5
+        # Significant event → Episodic Memory (Requirement 13.2)
         self._record_significant_event(
-            phi=phi,
+            phi=state.phi,
             valence=state.valence,
             arousal=state.arousal,
             dominant=dominant,
             events=events,
         )
         
-        # 8. 运行时状态
-        self.last_dominant = dominant
-        self.last_valence = state.valence
-        self.last_phi = phi
-        
-        # 9. 被动回复管道 (Passive Reply Pipeline)
-        #    Evaluate each incoming message via SEC, generate + send reply if warranted
+        # ── 11. Passive reply pipeline (uses forward-propagated state) ──
         if messages:
-            # Build a HeliosState for the response pipeline
-            reply_state = HeliosState(
-                tick=self.tick_count,
-                timestamp=time.time(),
-                valence=state.valence,
-                arousal=state.arousal,
-                dominant_system=dominant or "",
-                phi=phi,
-                mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
-                personality_traits=self.personality._trait_dict(),
-            )
+            # Ensure mood is populated in state for reply context
+            if not state.mood_label or state.mood_label == "neutral":
+                state.mood_valence = self.mood.state.valence
+                state.mood_arousal = self.mood.state.arousal
+                state.mood_label = self.mood.state.label
+            
             for msg in messages:
                 text = msg.get("text", "")
                 user_id = msg.get("user_id", "unknown")
@@ -599,20 +732,21 @@ class Helios:
                 # Evaluate message via LLM SEC
                 sec_result = self.sec_evaluator.evaluate(text, context=context_texts)
                 
-                # Hold message + SEC result in Working Memory for immediate context
+                # Hold message + SEC result in Working Memory
                 self.memory_system.hold(
                     summary=f"QQ [{user_id[:8]}]: {text[:60]}",
                     content={"text": text, "user_id": user_id, "sec_result": sec_result},
                     valence=sec_result.get("pleasantness", 0),
                     arousal=sec_result.get("novelty", 0),
-                    phi=phi,
+                    phi=state.phi,
                 )
                 
-                # Decide whether to reply and generate
+                # Decide whether to reply and generate (state has full context)
                 reply = None
                 if self.response_pipeline.should_reply(msg, sec_result):
                     reply = self.response_pipeline.generate_reply(
-                        msg, reply_state, sec_result
+                        msg, state, sec_result,
+                        temperature_override=state.llm_temperature,
                     )
                     if reply and self.qq and self.qq.is_connected():
                         ok = self.qq.send_c2c(user_id, reply)
@@ -622,13 +756,16 @@ class Helios:
                             self.log.warning(f"💬 回复发送失败 [{user_id[:10]}]")
                     elif reply:
                         self.log.info(f"💬 回复 (无QQ) [{user_id[:10]}]: {reply[:60]}")
+                    
+                    if reply:
+                        state.pending_reply = reply
                 
-                # Record exchange in conversation history (regardless of reply outcome)
+                # Record exchange in conversation history
                 emotional_context = {
-                    "dominant_system": dominant or "",
+                    "dominant_system": state.dominant_system,
                     "valence": state.valence,
                     "arousal": state.arousal,
-                    "mood_label": self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                    "mood_label": state.mood_label,
                 }
                 self.response_pipeline.record_exchange(
                     user_id=user_id,
@@ -638,30 +775,20 @@ class Helios:
                     sec_result=sec_result,
                 )
         
-        # 10. 情感调节引擎 (with drive-regulation unification)
-        from datetime import datetime
-        hour = datetime.now().hour
-        action = self.regulation.tick(
-            panksepp=state.panksepp_activation or {},
-            valence=state.valence,
-            hour_of_day=hour,
-            drive_urgency=self._last_drive_urgency,
-            drive_dominant=self._last_drive_dominant,
-        )
+        # ── 12. Active expression (regulation → speech) ──
         if action:
-            self._handle_action(action)
+            self._handle_action(action, temperature_override=state.llm_temperature)
         
-        # 10b. 记忆巩固调度 (Requirement 20: consolidation scheduling)
-        #      Trigger when phi < 0.3 for 300 consecutive ticks, rate limit 600 ticks
+        # ── 13. Consolidation check ──
         self._ticks_since_consolidation += 1
-        if phi < 0.3:
+        if state.phi < 0.3:
             self._low_phi_counter += 1
         else:
             self._low_phi_counter = 0
         
         if (self._low_phi_counter > 300
                 and self._ticks_since_consolidation > 600):
-            stats = self.memory_system.consolidate(phi)
+            stats = self.memory_system.consolidate(state.phi)
             if stats:
                 self._ticks_since_consolidation = 0
                 self._low_phi_counter = 0
@@ -672,11 +799,16 @@ class Helios:
                     stats.get("items_pruned", 0),
                 )
         
-        # 11. 定期持久化 (每600 ticks)
+        # ── 14. Periodic persistence (every 600 ticks) ──
         if self.tick_count % 600 == 0:
             self._persist_state()
+        
+        # ── Update runtime state for external queries ──
+        self.last_dominant = state.dominant_system
+        self.last_valence = state.valence
+        self.last_phi = state.phi
     
-    def _handle_action(self, action: str):
+    def _handle_action(self, action: str, temperature_override: Optional[float] = None):
         """
         处理行为
         
@@ -689,7 +821,7 @@ class Helios:
         }
         
         if action in master_actions:
-            text = self._generate_speech(action)
+            text = self._generate_speech(action, temperature_override=temperature_override)
             if self.qq and self.qq.is_connected() and text:
                 # QQ Bot API 用 author.id 作为 openid
                 # 第一个收到的消息会记录 openid
@@ -724,7 +856,7 @@ class Helios:
         elif action == "idle":
             pass
     
-    def _generate_speech(self, action: str) -> str:
+    def _generate_speech(self, action: str, temperature_override: Optional[float] = None) -> str:
         """
         生成自然语言话语
 
@@ -792,7 +924,7 @@ class Helios:
                 total_messages_sent=self.speech.total_generated,
             )
 
-            text = self.speech.generate(ctx)
+            text = self.speech.generate(ctx, temperature_override=temperature_override)
             if text:
                 return text
             # LLM 失败 → 降级到模板
@@ -822,12 +954,16 @@ class Helios:
         
         self.log.info(
             f"[{elapsed/60:6.1f}min t={self.tick_count:>8d}] "
-            f"Φ={self.last_phi:.3f} "
+            f"ICRI={self.last_phi:.3f} "
             f"主导={self.last_dominant:>8} "
             f"效价={self.last_valence:+.3f} "
             f"心境={mood_snap['label']:>14} "
             f"负荷={load:.3f}"
         )
+
+        # Memory usage monitoring at each summary interval (Requirement 23.1, 23.2, 23.4)
+        if self.memory_system:
+            self.memory_system.monitor()
     
     def _handle_signal(self, signum, frame):
         self.log.info(f"收到信号 {signum}，准备退出...")
@@ -858,12 +994,13 @@ class Helios:
         traits = self.personality._trait_dict()
         autobio_stats = self.autobio.get_statistics()
         
-        return {
+        state = {
             "tick": self.tick_count,
             "uptime_seconds": time.time() - self.start_time,
             "dominant": self.last_dominant,
             "valence": round(self.last_valence, 3),
-            "phi": round(self.last_phi, 4),
+            "icri": round(self.last_phi, 4),
+            "phi": round(self.last_phi, 4),  # backward compat: deprecated alias
             "mood": mood,
             "allostatic_load": round(self.allostasis.get_load_level(), 3),
             "fatigued": self.allostasis.is_fatigued(),
@@ -874,6 +1011,12 @@ class Helios:
             "qq_io": self.qq.get_state() if self.qq else {"backend": "none"},
             "separation_anxiety": round(self._separation_anxiety, 3),
         }
+
+        # Expose memory statistics via get_state() (Requirement 23.3)
+        if self.memory_system:
+            state["memory"] = self.memory_system.get_state()
+
+        return state
 
 
 # ═══════════════════════════════════════════════════

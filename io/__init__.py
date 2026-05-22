@@ -33,6 +33,44 @@ if _rp_mod_name not in sys.modules:
 else:
     _rp_mod = sys.modules[_rp_mod_name]
 
+_it_mod_name = "helios_io_icri_temperature"
+if _it_mod_name not in sys.modules:
+    _it_spec = importlib.util.spec_from_file_location(
+        _it_mod_name, str(_pkg_dir / "icri_temperature.py")
+    )
+    _it_mod = importlib.util.module_from_spec(_it_spec)
+    sys.modules[_it_mod_name] = _it_mod
+    _it_spec.loader.exec_module(_it_mod)
+else:
+    _it_mod = sys.modules[_it_mod_name]
+
+_limb_mod_name = "helios_io_limb"
+if _limb_mod_name not in sys.modules:
+    _limb_spec = importlib.util.spec_from_file_location(
+        _limb_mod_name, str(_pkg_dir / "limb.py")
+    )
+    _limb_mod = importlib.util.module_from_spec(_limb_spec)
+    sys.modules[_limb_mod_name] = _limb_mod
+    _limb_spec.loader.exec_module(_limb_mod)
+else:
+    _limb_mod = sys.modules[_limb_mod_name]
+
+_ldb_mod_name = "helios_io_limb_decision_bridge"
+if _ldb_mod_name not in sys.modules:
+    _ldb_spec = importlib.util.spec_from_file_location(
+        _ldb_mod_name, str(_pkg_dir / "limb_decision_bridge.py")
+    )
+    _ldb_mod = importlib.util.module_from_spec(_ldb_spec)
+    sys.modules[_ldb_mod_name] = _ldb_mod
+    _ldb_spec.loader.exec_module(_ldb_mod)
+else:
+    _ldb_mod = sys.modules[_ldb_mod_name]
+
 ConversationExchange = _ch_mod.ConversationExchange
 ConversationHistoryManager = _ch_mod.ConversationHistoryManager
 ResponsePipeline = _rp_mod.ResponsePipeline
+ICRITemperatureMapper = _it_mod.ICRITemperatureMapper
+BehaviorStatus = _limb_mod.BehaviorStatus
+BehaviorCommand = _limb_mod.BehaviorCommand
+BehaviorExecutor = _limb_mod.BehaviorExecutor
+LimbDecisionBridge = _ldb_mod.LimbDecisionBridge

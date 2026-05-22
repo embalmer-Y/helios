@@ -148,6 +148,7 @@ class ResponsePipeline:
         message: dict,
         state,
         sec_result: dict,
+        temperature_override: Optional[float] = None,
     ) -> Optional[str]:
         """
         使用 LLM 生成带情感和记忆上下文的回复。
@@ -163,6 +164,8 @@ class ResponsePipeline:
             message: 消息字典 (需要 text, user_id 字段)
             state: HeliosState 当前状态
             sec_result: SEC 评估结果
+            temperature_override: If provided, overrides the default temperature (0.85)
+                with an ICRI-derived value from ICRITemperatureMapper.
 
         Returns:
             生成的回复文本，失败时返回 None
@@ -208,6 +211,9 @@ class ResponsePipeline:
             if client is None:
                 return None
 
+            # Use temperature override from ICRI mapping if provided, else default
+            effective_temperature = temperature_override if temperature_override is not None else 0.85
+
             response = client.chat.completions.create(
                 model=self._model,
                 messages=[
@@ -215,7 +221,7 @@ class ResponsePipeline:
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=200,
-                temperature=0.85,
+                temperature=effective_temperature,
                 presence_penalty=0.3,
             )
 
@@ -310,29 +316,46 @@ class ResponsePipeline:
 
     def _get_autobio_context(self, message_text: str) -> str:
         """
-        从自传体记忆中检索相关记忆 (最多 3 条)。
+        从自传体记忆中检索与对话话题相关的记忆 (最多 3 条)。
 
-        查询高 phi 值的记忆作为相关上下文，
-        返回格式化的叙事摘要字符串。
+        查询策略:
+          1. 从消息文本中提取关键词
+          2. 使用 query_by_topic() 按话题相关性搜索
+          3. 如果话题搜索无结果，回退到高 phi 记忆
+          4. 最多返回 3 条有叙事内容的记忆
+
+        当没有相关记忆时，返回空字符串（无错误）。
+
+        Requirements: 16.1, 16.2, 16.3
         """
         if self._autobio is None:
             return ""
         try:
-            # 查询最近的高 phi 记忆
-            memories = self._autobio.query_by_phi(min_phi=0.4)
-            if not memories:
-                return ""
+            relevant = []
 
-            # 取最近的有叙事内容的记忆 (最多 3 条)
-            relevant = [
-                m for m in memories[-10:] if getattr(m, "narrative", "")
-            ][-3:]
+            # 1. 尝试按话题关键词查询
+            keywords = self._extract_keywords(message_text)
+            if keywords:
+                topic_memories = self._autobio.query_by_topic(keywords, max_results=10)
+                # Filter to those with narrative content
+                relevant = [
+                    m for m in topic_memories if getattr(m, "narrative", "")
+                ][:3]
+
+            # 2. 回退: 如果话题搜索无结果，使用高 phi 记忆
+            if not relevant:
+                memories = self._autobio.query_by_phi(min_phi=0.4)
+                if memories:
+                    relevant = [
+                        m for m in memories[-10:] if getattr(m, "narrative", "")
+                    ][-3:]
 
             if not relevant:
                 return ""
 
+            # 3. 格式化输出 (最多 3 条)
             lines = ["相关记忆:"]
-            for m in relevant:
+            for m in relevant[:3]:
                 narrative = getattr(m, "narrative", "")
                 if narrative:
                     lines.append(f"  - {narrative}")
@@ -341,6 +364,38 @@ class ResponsePipeline:
         except Exception as e:
             log.debug(f"获取自传体记忆失败: {e}")
             return ""
+
+    def _extract_keywords(self, text: str) -> List[str]:
+        """
+        从消息文本中提取搜索关键词。
+
+        简单策略: 按标点和空格分词，过滤掉过短的词和停用词。
+        """
+        if not text:
+            return []
+
+        # 中文停用词 (常见无意义词)
+        stop_words = {
+            "的", "了", "是", "在", "我", "你", "他", "她", "它",
+            "吗", "呢", "吧", "啊", "哦", "嗯", "呀", "哈",
+            "和", "与", "或", "但", "而", "也", "都", "就",
+            "这", "那", "什么", "怎么", "为什么", "哪", "谁",
+            "有", "没有", "不", "很", "太", "好", "会", "能",
+            "要", "想", "去", "来", "到", "从", "把", "被",
+            "一", "个", "些", "点", "下", "上", "里", "中",
+        }
+
+        # Split by common delimiters (punctuation, spaces)
+        import re as _re
+        tokens = _re.split(r'[，。！？、；：\u201c\u201d\u2018\u2019（）\s\n\r\t,.!?;:\'"()\[\]{}]+', text)
+
+        # Filter: keep tokens with length >= 2 and not in stop words
+        keywords = [
+            t for t in tokens
+            if len(t) >= 2 and t.lower() not in stop_words
+        ]
+
+        return keywords[:10]  # Limit to 10 keywords max
 
     def _build_emotional_context(self, state) -> dict:
         """

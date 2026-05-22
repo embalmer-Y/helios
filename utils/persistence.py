@@ -229,3 +229,168 @@ class StatePersistence:
                 e,
             )
             return None
+
+    # ------------------------------------------------------------------
+    # Memory system persistence
+    # ------------------------------------------------------------------
+
+    def save_memory_state(self, memory_system) -> None:
+        """
+        Save Memory System state to disk.
+
+        Serializes:
+        - SemanticMemory facts → data/semantic_memory.json
+        - EpisodicMemory items with importance > 0.3 → data/episodic_memory.json
+
+        Requirements: 22.1, 22.3
+        """
+        self._save_semantic_memory(memory_system.semantic)
+        self._save_episodic_memory(memory_system.episodic)
+
+    def load_memory_state(self) -> dict:
+        """
+        Load saved memory state from disk.
+
+        Returns:
+            Dict with keys:
+            - "semantic_facts": list of fact dicts (or empty list on failure)
+            - "episodic_items": list of episodic item dicts (or empty list on failure)
+
+        On corruption or missing files, returns empty lists and logs a warning.
+
+        Requirements: 22.2, 22.4, 22.5
+        """
+        return {
+            "semantic_facts": self._load_semantic_memory(),
+            "episodic_items": self._load_episodic_memory(),
+        }
+
+    def _save_semantic_memory(self, semantic) -> None:
+        """
+        Serialize SemanticMemory facts to data/semantic_memory.json.
+
+        Each fact is stored with its key, value, confidence, last_accessed,
+        access_count, and tags for full reconstruction on load.
+        """
+        facts_list = []
+        for key, item in semantic.facts.items():
+            facts_list.append({
+                "key": key,
+                "value": item.content.get("value"),
+                "confidence": item.content.get("confidence", 0.5),
+                "last_accessed": item.last_accessed,
+                "access_count": item.access_count,
+                "tags": list(item.tags),
+            })
+
+        data = {
+            "version": 1,
+            "timestamp": time.time(),
+            "facts": facts_list,
+        }
+        filepath = self._path("semantic_memory.json")
+        self._atomic_write(filepath, data)
+        logger.debug("Saved semantic memory (%d facts) to %s", len(facts_list), filepath)
+
+    def _load_semantic_memory(self) -> list:
+        """
+        Load SemanticMemory facts from data/semantic_memory.json.
+
+        Returns:
+            List of fact dicts on success, empty list on failure/missing.
+        """
+        filepath = self._path("semantic_memory.json")
+        data = self._safe_load(filepath)
+        if data is None:
+            return []
+
+        try:
+            facts = data["facts"]
+            if not isinstance(facts, list):
+                raise KeyError("facts must be a list")
+            # Validate each fact has required fields
+            for fact in facts:
+                if not isinstance(fact, dict):
+                    raise KeyError("each fact must be a dict")
+                if "key" not in fact:
+                    raise KeyError("fact missing 'key' field")
+            return facts
+        except KeyError as e:
+            logger.warning(
+                "Semantic memory file %s has invalid structure (%s); "
+                "will initialize empty.",
+                filepath,
+                e,
+            )
+            return []
+
+    def _save_episodic_memory(self, episodic) -> None:
+        """
+        Serialize EpisodicMemory items with importance > 0.3 to
+        data/episodic_memory.json.
+
+        Only high-importance items are persisted to avoid storing
+        transient low-value memories across restarts.
+
+        Requirement: 22.3
+        """
+        items_list = []
+        for item in episodic.items:
+            if item.importance > 0.3:
+                items_list.append({
+                    "id": item.id,
+                    "summary": item.summary,
+                    "valence": round(item.valence, 4),
+                    "arousal": round(item.arousal, 4),
+                    "phi": round(item.phi, 4),
+                    "importance": round(item.importance, 4),
+                    "emotional_tag": item.emotional_tag,
+                    "timestamp": item.timestamp,
+                    "access_count": item.access_count,
+                    "content": item.content,
+                    "tags": list(item.tags),
+                })
+
+        data = {
+            "version": 1,
+            "timestamp": time.time(),
+            "items": items_list,
+        }
+        filepath = self._path("episodic_memory.json")
+        self._atomic_write(filepath, data)
+        logger.debug(
+            "Saved episodic memory (%d high-importance items) to %s",
+            len(items_list), filepath,
+        )
+
+    def _load_episodic_memory(self) -> list:
+        """
+        Load high-importance EpisodicMemory items from data/episodic_memory.json.
+
+        Returns:
+            List of episodic item dicts on success, empty list on failure/missing.
+        """
+        filepath = self._path("episodic_memory.json")
+        data = self._safe_load(filepath)
+        if data is None:
+            return []
+
+        try:
+            items = data["items"]
+            if not isinstance(items, list):
+                raise KeyError("items must be a list")
+            # Validate each item has required fields
+            for item in items:
+                if not isinstance(item, dict):
+                    raise KeyError("each item must be a dict")
+                if "summary" not in item:
+                    raise KeyError("item missing 'summary' field")
+            return items
+        except KeyError as e:
+            logger.warning(
+                "Episodic memory file %s has invalid structure (%s); "
+                "will initialize empty.",
+                filepath,
+                e,
+            )
+            return []

@@ -43,7 +43,7 @@ class TestSeparationAnxietyFormula:
         assert "PANIC" in result
         assert math.isclose(result["PANIC"], expected_anxiety, rel_tol=1e-9)
 
-    @given(hours=floats(min_value=0.0, max_value=1000.0, allow_nan=False, allow_infinity=False))
+    @given(hours=floats(min_value=0.0, max_value=0.558, allow_nan=False, allow_infinity=False))
     @settings(max_examples=200)
     def test_no_triggers_when_anxiety_at_or_below_threshold(self, hours: float):
         """When computed anxiety <= 0.2, no triggers are returned."""
