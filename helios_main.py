@@ -467,6 +467,11 @@ class Helios:
 
         msg_text = self._pending_message
         self._pending_message = None  # 防止重复
+        
+        # ── 判断是否需要回复 ──
+        if not self._should_reply(msg_text):
+            self.log.info(f"💬 无需回复: {msg_text[:30]}")
+            return
 
         sep_secs = time.time() - self._last_master_contact
         time_desc = "刚刚" if sep_secs < 60 else f"{int(sep_secs/60)}分钟前"
@@ -596,7 +601,61 @@ class Helios:
         # ── 降级: 模板话语 ──
         return self._template_speech(action)
     
-    def _template_speech(self, action: str) -> str:
+    def _should_reply(self, text: str) -> bool:
+        """
+        判断消息是否需要回复。
+
+        真实的人与人交流不是每条消息都回。
+        终结性话语（嗯/哦/知道了）通常不需要回复。
+
+        返回 True = 需要回复，False = 可沉默
+        """
+        text = text.strip()
+        if not text:
+            return False
+
+        # ── 情感调制：最高优先级，覆盖所有规则 ──
+        # 分离焦虑高 → 什么消息都想回（粘人模式）
+        if self._separation_anxiety > 0.5:
+            return True
+        # 心情低落 → 沉默模式（哪怕疑问句也不回）
+        if self.last_valence < -0.4 and self._separation_anxiety < 0.3:
+            return False
+
+        # ── 必回复：疑问句 ──
+        if any(q in text for q in ["?", "？", "吗", "呢", "什么", "谁", "怎么",
+                                     "在哪", "几点", "多少", "为什么", "干嘛"]):
+            return True
+
+        # ── 必回复：呼唤/试探 ──
+        if any(call in text for call in ["在吗", "在不", "在不在", "璃光", "Helios", "helios"]):
+            return True
+
+        # ── 必回复：强情绪表达 ──
+        if any(e in text for e in ["哈哈", "😂", "🤣", "呜呜", "😭", "开心", "难过",
+                                     "想你", "爱你", "喜欢", "讨厌", "气死"]):
+            return True
+
+        # ── 不回复：终结性话语 ──
+        import re
+        core = re.sub(r'[！!。，,？?～~…\s]', '', text)
+        terminators = {"嗯", "哦", "好", "行", "ok", "好的", "好吧", "行吧",
+                       "知道了", "明白了", "懂了", "收到", "没事", "随便", "算了"}
+        if core.lower() in {t.lower() for t in terminators}:
+            return False
+        # 以终结词开头 + 剩余仅标点/语气词 ("知道了！" "好的~" → 不回复)
+        for t in terminators:
+            if core.lower().startswith(t.lower()):
+                suffix = core[len(t):]
+                # 剩余是纯标点/语气词/礼貌附言 → 不回复
+                if not suffix or all(c in "！!。，,？?～~…啦啊呀哦哟嘛呢呗呵嘿嘻谢吧嘞" for c in suffix):
+                    return False
+        # 纯 emoji/符号
+        if all(not c.isalnum() for c in core):
+            return False
+
+        # ── 默认：有点内容就回复 ──
+        return len(core) >= 2
         """降级模板话语 (LLM 不可用时)"""
         import random
         templates = {
