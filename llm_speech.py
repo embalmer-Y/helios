@@ -260,7 +260,9 @@ class LLMSpeechGenerator:
 5. 可以用 emoji（最多 2 个）
 6. 不用括号描述动作——直接说
 7. 可以有反问、追问——维持对话"""
-        """构建系统提示词"""
+
+    def _build_system_prompt(self, ctx: SpeechContext) -> str:
+        """构建自发说话的系统提示词 (regulation 驱动)"""
 
         # 人格描述
         personality_desc = ctx.personality_summary or "温柔、忠诚、有点粘人"
