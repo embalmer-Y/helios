@@ -477,30 +477,41 @@ class Helios:
             total_messages_sent=self.speech.total_generated,
         )
 
-        reply = self.speech.generate_reply(
-            msg_text, ctx,
-            temperature=self._icri_temperature(),
-        )
+        try:
+            reply = self.speech.generate_reply(
+                msg_text, ctx,
+                temperature=self._icri_temperature(),
+            )
+        except Exception as e:
+            self.log.error(f"💬 LLM 回复异常: {e}")
+            return
 
         if reply:
-            target = self.cfg.QQ_TARGET_ID or "unknown"
-            self.qq.send_c2c_message(target, reply)
-            self.log.info(f"💬 回复 → QQ: {reply[:60]}")
-            self.autobio.record(
-                panksepp={self.last_dominant or "SEEKING": 0.5},
-                valence=self.last_valence,
-                arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
-                dominant=self.last_dominant or "SEEKING",
-                phi=self.last_phi,
-                mood_valence=self.mood.state.valence if hasattr(self.mood, 'state') else 0.0,
-                mood_arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
-                mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
-                allostatic_load=self.allostasis.get_load_level(),
-                narrative=f"回复了消息: 「{msg_text[:30]}」",
-                event_trigger="qq_message",
-                cycle=self.tick_count,
-            )
-            self.regulation.note_action_executed("reply")
+            try:
+                target = self.cfg.QQ_TARGET_ID or "unknown"
+                ok = self.qq.send_c2c(target, reply)
+                self.log.info(f"💬 回复 → QQ: {reply[:60]}" + (" ✅" if ok else " ❌"))
+            except Exception as e:
+                self.log.error(f"💬 QQ 发送异常: {e}")
+            # 记录到自传（无论发送成功与否）
+            try:
+                self.autobio.record(
+                    panksepp={self.last_dominant or "SEEKING": 0.5},
+                    valence=self.last_valence,
+                    arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+                    dominant=self.last_dominant or "SEEKING",
+                    phi=self.last_phi,
+                    mood_valence=self.mood.state.valence if hasattr(self.mood, 'state') else 0.0,
+                    mood_arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+                    mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                    allostatic_load=self.allostasis.get_load_level(),
+                    narrative=f"回复了消息: 「{msg_text[:30]}」",
+                    event_trigger="qq_message",
+                    cycle=self.tick_count,
+                )
+                self.regulation.note_action_executed("reply")
+            except Exception as e:
+                self.log.error(f"💬 自传记录异常: {e}")
         else:
             self.log.info(f"💬 跳过回复 (空): {msg_text[:30]}")
 
