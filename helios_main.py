@@ -50,7 +50,7 @@ from llm_speech import LLMSpeechGenerator, SpeechContext
 from helios_utils import clamp
 
 try:
-    from phi import UnifiedPhi
+    from phi import UnifiedConsciousness as UnifiedPhi
     HAS_PHI = True
 except ImportError:
     HAS_PHI = False
@@ -473,7 +473,7 @@ class Helios:
                 total_messages_sent=self.speech.total_generated,
             )
 
-            text = self.speech.generate(ctx)
+            text = self.speech.generate(ctx, temperature=self._icri_temperature())
             if text:
                 return text
             # LLM 失败 → 降级到模板
@@ -495,6 +495,15 @@ class Helios:
         options = templates.get(action, ["..."])
         return random.choice(options)
 
+    def _icri_temperature(self) -> float:
+        """ICRI → LLM 温度映射: 意识越丰富，表达越狂野"""
+        icri = self.last_phi  # 当前意识光谱
+        if icri < 0.10:    return 0.30   # 机械简短
+        elif icri < 0.25:  return 0.50   # 温和
+        elif icri < 0.45:  return 0.75   # 有创造力
+        elif icri < 0.65:  return 1.00   # 高度创意
+        else:              return 1.30   # 狂野联想
+
     def _summary(self):
         """定期摘要"""
         elapsed = time.time() - self.start_time
@@ -503,7 +512,7 @@ class Helios:
         
         self.log.info(
             f"[{elapsed/60:6.1f}min t={self.tick_count:>8d}] "
-            f"Φ={self.last_phi:.3f} "
+            f"ICRI={self.last_phi:.3f} "
             f"主导={self.last_dominant:>8} "
             f"效价={self.last_valence:+.3f} "
             f"心境={mood_snap['label']:>14} "

@@ -123,9 +123,15 @@ class LLMSpeechGenerator:
                 raise ImportError("需要 openai: pip install openai")
         return self._client
 
-    def generate(self, ctx: SpeechContext, max_tokens: int = 200) -> str:
+    def generate(self, ctx: SpeechContext, max_tokens: int = 200,
+                 temperature: Optional[float] = None) -> str:
         """
         生成自然语言话语。
+
+        Args:
+            ctx: 情感+行为上下文
+            max_tokens: 最大 token 数
+            temperature: LLM 温度 (None=默认0.85, 可被 ICRI 动态覆盖)
 
         Returns:
             生成的话语 (失败时返回空字符串)
@@ -143,6 +149,8 @@ class LLMSpeechGenerator:
         user_prompt = self._build_user_prompt(ctx)
 
         try:
+            # 若未指定温度，使用默认 0.85
+            temp = temperature if temperature is not None else 0.85
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -150,7 +158,7 @@ class LLMSpeechGenerator:
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=max_tokens,
-                temperature=0.85,  # 略高，增加表达多样性
+                temperature=temp,
                 presence_penalty=0.3,  # 减少重复
             )
 

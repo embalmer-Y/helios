@@ -1,24 +1,31 @@
 """
-Helios 统一 Φ 引擎
-══════════════════
+Helios ICRI 意识光谱引擎
+════════════════════════
+
+ICRI = Integrated Consciousness Richness Index (整合意识丰富度指数)
 
 设计原则：
-  - 单一真相来源：所有子系统读/写同一个 UnifiedPhi
-  - 多源融合：L1信息整合 + Panksepp共振 + DMN深度 + L3自我反思 + L2点火
-  - 双向调制：Φ 反映意识状态，也反过来调制各子系统
+  - 单一真相来源：所有子系统读/写同一个 UnifiedConsciousness
+  - 多源融合：感官整合 + Panksepp情感共振 + DMN思维深度 + 自我反思 + 全局点火
+  - 双向调制：ICRI 反映意识状态，也反过来调制各子系统
   - 意识时刻检测：aha/共振/流状态 (Dehaene 2006)
 
+⚠ 诚实定位：这不是 Tononi IIT 的 Φ。
+  IIT Φ 是因果信息量（需穷举分区 + 计算有效信息），
+  我们的指标更接近"整合意识丰富度指数"——一个工程化的意识光谱。
+
 理论基础：
-  - Tononi (2004) 信息整合理论 (IIT): Φ = 系统整体的信息量 - 各部分信息量之和
   - Dehaene (2006) 全局神经元工作空间: 意识 = 全局广播 + 点火
-  - Seth (2011) 预测处理: 意识 = 自上而下预测 + 自下而上误差的精确加权
+  - Panksepp (1998) 情感神经科学: 多系统共振 = 情感意识丰富度
+  - Seth (2011) 预测处理: 意识 = 自上而下预测 + 误差的精确加权
+  - IIT (Tononi 2004) 启发：信息整合的直觉（非实现）
 
 用法:
-  from phi import UnifiedPhi, PhiModulator, ConsciousnessDetector
-  phi = UnifiedPhi()
-  phi.feed_sensory(l1_output)
-  phi.feed_emotional(panksepp_activation)
-  current = phi.aggregate()
+  from phi import UnifiedConsciousness, ConsciousnessModulator, ConsciousnessDetector
+  icri = UnifiedConsciousness()
+  icri.feed_sensory(l1_output)
+  icri.feed_emotional(panksepp_activation)
+  current = icri.aggregate()
 """
 
 import time
@@ -44,18 +51,19 @@ def smooth(prev: float, curr: float, alpha: float = 0.3) -> float:
 # ═══════════════════════════════════════════════
 
 class ConsciousnessLabel(str, Enum):
-    MINIMAL = "minimal"      # Φ < 0.2: 最低意识
-    FOCUSED = "focused"      # 0.2 ≤ Φ < 0.4: 专注
-    REFLECTIVE = "reflective" # 0.4 ≤ Φ < 0.6: 反思
-    FLOW = "flow"             # 0.6 ≤ Φ < 0.8: 心流
-    PEAK = "peak"             # Φ ≥ 0.8: 巅峰
+    """意识光谱分层"""
+    MINIMAL = "minimal"      # ICRI < 0.2: 最低意识
+    FOCUSED = "focused"      # 0.2 ≤ ICRI < 0.4: 专注
+    REFLECTIVE = "reflective" # 0.4 ≤ ICRI < 0.6: 反思
+    FLOW = "flow"             # 0.6 ≤ ICRI < 0.8: 心流
+    PEAK = "peak"             # ICRI ≥ 0.8: 巅峰
 
 
 @dataclass
 class ConsciousnessMoment:
     """意识时刻 (Dehaene 2006)"""
     type: str                      # "aha" / "resonance" / "flow"
-    phi_value: float
+    icri_value: float
     timestamp: float = field(default_factory=time.time)
     subsystems: Dict[str, float] = field(default_factory=dict)
     description: str = ""
@@ -66,11 +74,11 @@ class ConsciousnessMoment:
 # ═══════════════════════════════════════════════
 
 @dataclass
-class UnifiedPhi:
+class UnifiedConsciousness:
     """
-    Helios 的统一 Φ 模型
+    Helios 的 ICRI 整合意识丰富度指数
 
-    Φ 是意识丰富度的度量 (0~1):
+    ICRI 是意识丰富度的度量 (0~1):
     0.0 = 无意识/昏迷
     0.2 = 最低意识 (基础感知)
     0.4 = 专注意识 (集中注意)
@@ -82,7 +90,7 @@ class UnifiedPhi:
     # ── 子成分 ──
     sensory_integration: float = 0.0     # L1: 多模态信息整合
     emotional_coherence: float = 0.0     # Panksepp: 多系统共振
-    temporal_depth: float = 0.0          # DMN: 思维活跃度
+    temporal_depth: float = 0.0          # DMN: 思维活跃度 (原 temporal_depth)
     self_reflection: float = 0.0         # L3: 元认知强度
     global_ignition: float = 0.0         # L2: 全局点火强度
 
@@ -96,11 +104,11 @@ class UnifiedPhi:
     })
 
     # ── 动态 ──
-    _phi: float = 0.0                    # 平滑后的 Φ
-    _phi_raw: float = 0.0                # 聚合前
+    _phi: float = 0.0                    # 平滑后的 ICRI
+    _phi_raw: float = 0.0                # 聚合前原始值
     history: List[float] = field(default_factory=list)
     max_history: int = 60
-    smoothing_alpha: float = 0.25        # 平滑系数
+    smoothing_alpha: float = 0.25        # 平滑系数 (动态计算时覆盖)
 
     # ── 源有效性 ──
     _sources_valid: Dict[str, float] = field(default_factory=lambda: {
@@ -113,11 +121,11 @@ class UnifiedPhi:
     source_ttl: float = 5.0              # 源数据有效期 (cycles)
 
     # ── 调制器 ──
-    modulator: Optional["PhiModulator"] = None
+    modulator: Optional["ConsciousnessModulator"] = None
     detector: Optional["ConsciousnessDetector"] = None
 
     def __post_init__(self):
-        self.modulator = PhiModulator(self)
+        self.modulator = ConsciousnessModulator(self)
         self.detector = ConsciousnessDetector()
 
     # ── 喂入接口 ──
@@ -233,6 +241,17 @@ class UnifiedPhi:
         else:
             self._phi_raw = 0.05  # 最低意识基线
 
+        # ── 动态平滑 α：高冲击快响应，静息慢漂移 ──
+        raw = self._phi_raw
+        if raw > 0.45:
+            self.smoothing_alpha = 0.55   # 高冲击：快速跃迁
+        elif raw > 0.25:
+            self.smoothing_alpha = 0.30   # 中等：正常
+        elif raw < 0.10:
+            self.smoothing_alpha = 0.10   # 静息：缓慢回落
+        else:
+            self.smoothing_alpha = 0.20   # 默认
+
         # 指数平滑
         self._phi = smooth(self._phi, self._phi_raw, self.smoothing_alpha)
 
@@ -247,6 +266,12 @@ class UnifiedPhi:
 
     @property
     def phi(self) -> float:
+        """向后兼容别名，推荐用 .icri"""
+        return self._phi
+
+    @property
+    def icri(self) -> float:
+        """ICRI 整合意识丰富度指数"""
         return self._phi
 
     @property
@@ -271,7 +296,7 @@ class UnifiedPhi:
         return self._phi > 0.6
 
     def describe(self) -> str:
-        return (f"Φ={self._phi:.2f} [{self.label.value}] "
+        return (f"ICRI={self._phi:.2f} [{self.label.value}] "
                 f"si={self.sensory_integration:.2f} "
                 f"ec={self.emotional_coherence:.2f} "
                 f"td={self.temporal_depth:.2f} "
@@ -280,19 +305,21 @@ class UnifiedPhi:
 
 
 # ═══════════════════════════════════════════════
-# Φ 调制器
+# ICRI 调制器
 # ═══════════════════════════════════════════════
 
-class PhiModulator:
+class ConsciousnessModulator:
     """
-    Φ 对子系统的调制器
+    ICRI 对子系统的调制器
 
-    核心规则: Φ 高 → 系统更敏感/更协调/更深思
-              Φ 低 → 系统更迟钝/更竞争/更浅层
+    核心规则: ICRI 高 → 系统更敏感/更协调/更深思
+              ICRI 低 → 系统更迟钝/更竞争/更浅层
     """
 
-    def __init__(self, phi: UnifiedPhi):
-        self.phi = phi
+    def __init__(self, consciousness: "UnifiedConsciousness"):
+        self.consciousness = consciousness
+        # 向后兼容别名
+        self.phi = consciousness
 
     # ── Panksepp ──
 
@@ -379,20 +406,20 @@ class ConsciousnessDetector:
     Flow:      Φ 持续 >0.65 超过 5 cycles
     """
 
-    def detect(self, phi: UnifiedPhi,
+    def detect(self, consciousness: "UnifiedConsciousness",
                subsystems: Optional[Dict[str, float]] = None
                ) -> Optional[ConsciousnessMoment]:
-        h = phi.history
-        ph = phi.phi
+        h = consciousness.history
+        ph = consciousness.phi
 
-        # Aha: Φ 突变检测
+        # Aha: ICRI 突变检测
         if len(h) >= 3:
             prev = sum(h[-4:-1]) / 3 if len(h) >= 4 else sum(h[-3:-1]) / 2
             if ph - prev > 0.25:
                 return ConsciousnessMoment(
                     type="aha",
-                    phi_value=ph,
-                    description=f"Φ 飙升 {prev:.2f}→{ph:.2f}",
+                    icri_value=ph,
+                    description=f"ICRI 飙升 {prev:.2f}→{ph:.2f}",
                 )
 
         # Resonance: 多系统共激活
@@ -401,16 +428,16 @@ class ConsciousnessDetector:
             if active_high >= 3 and ph > 0.50:
                 return ConsciousnessMoment(
                     type="resonance",
-                    phi_value=ph,
+                    icri_value=ph,
                     subsystems=subsystems,
-                    description=f"{active_high} 子系统共振 (Φ={ph:.2f})",
+                    description=f"{active_high} 子系统共振 (ICRI={ph:.2f})",
                 )
 
-        # Flow: 持续高 Φ
+        # Flow: 持续高 ICRI
         if len(h) >= 5 and all(p > 0.65 for p in h[-5:]):
             return ConsciousnessMoment(
                 type="flow",
-                phi_value=ph,
+                icri_value=ph,
                 description=f"流状态持续 {sum(1 for p in h if p > 0.65)} cycles",
             )
 
@@ -422,34 +449,34 @@ class ConsciousnessDetector:
 # ═══════════════════════════════════════════════
 
 if __name__ == "__main__":
-    print("🧪 UnifiedPhi 自测")
+    print("🧪 UnifiedConsciousness (ICRI) 自测")
     print("=" * 50)
 
     # 创建
-    phi = UnifiedPhi()
+    icri = UnifiedConsciousness()
 
     # 喂数据
-    phi.feed_sensory(0.3)
-    phi.feed_emotional({"SEEKING": 0.6, "PLAY": 0.5, "CARE": 0.4,
+    icri.feed_sensory(0.3)
+    icri.feed_emotional({"SEEKING": 0.6, "PLAY": 0.5, "CARE": 0.4,
                          "FEAR": 0.1, "PANIC": 0.1, "RAGE": 0.0, "LUST": 0.2})
-    phi.feed_dmn(4, 0.5, ["memory_replay", "counterfactual"])
-    phi.feed_ignition(True, 0.6)
-    phi.feed_self_model(0.5, 0.4)
+    icri.feed_dmn(4, 0.5, ["memory_replay", "counterfactual"])
+    icri.feed_ignition(True, 0.6)
+    icri.feed_self_model(0.5, 0.4)
 
     # 聚合
-    agg = phi.aggregate()
-    print(f"  {phi.describe()}")
-    print(f"  label: {phi.label.value}")
-    print(f"  is_conscious: {phi.is_conscious}")
+    agg = icri.aggregate()
+    print(f"  {icri.describe()}")
+    print(f"  label: {icri.label.value}")
+    print(f"  is_conscious: {icri.is_conscious}")
 
     # 调制
-    mod = phi.modulator
+    mod = icri.modulator
     print(f"\n  调制值:")
     for k, v in mod.get_modulation_summary().items():
         print(f"    {k}: {v:.3f}")
 
     # 意识时刻
-    moment = phi.detector.detect(phi, {
+    moment = icri.detector.detect(icri, {
         "SEEKING": 0.7, "PLAY": 0.7, "CARE": 0.7,
         "FEAR": 0.1, "PANIC": 0.1, "RAGE": 0.0, "LUST": 0.2,
     })
@@ -460,18 +487,27 @@ if __name__ == "__main__":
 
     print("\n✅ 自测通过!")
 
-    # 模拟 20 个 cycle
-    print(f"\n📈 模拟 20 cycles:")
-    phi2 = UnifiedPhi()
+    # 模拟 20 个 cycle — 测试动态 α
+    print(f"\n📈 模拟 20 cycles (动态 α):")
+    icri2 = UnifiedConsciousness()
     for i in range(20):
         s = i / 30 + 0.1
         e = {"SEEKING": 0.3 + s, "PLAY": 0.2 + s, "CARE": 0.1 + s}
-        phi2.feed_sensory(s)
-        phi2.feed_emotional(e)
-        phi2.feed_dmn(i % 5, 0.3 + s * 0.5)
-        val = phi2.aggregate()
+        icri2.feed_sensory(s)
+        icri2.feed_emotional(e)
+        icri2.feed_dmn(i % 5, 0.3 + s * 0.5)
+        val = icri2.aggregate()
         bar = "█" * int(val * 30)
         flags = ""
-        m = phi2.detector.detect(phi2, e)
+        m = icri2.detector.detect(icri2, e)
         if m: flags = f" ⚡{m.type}"
-        print(f"  [{i:2d}] {bar:<30} Φ={val:.2f} {phi2.label.value}{flags}")
+        α = icri2.smoothing_alpha
+        print(f"  [{i:2d}] {bar:<30} ICRI={val:.2f} α={α:.2f} {icri2.label.value}{flags}")
+
+
+# ═══════════════════════════════════════════════
+# 向后兼容别名（旧代码仍可用）
+# ═══════════════════════════════════════════════
+
+UnifiedPhi = UnifiedConsciousness          # 旧: 统一Φ模型
+PhiModulator = ConsciousnessModulator     # 旧: Φ调制器
