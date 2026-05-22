@@ -180,7 +180,86 @@ class LLMSpeechGenerator:
             log.error(f"LLM 生成失败: {e}")
             return ""
 
-    def _build_system_prompt(self, ctx: SpeechContext) -> str:
+    def generate_reply(self, message: str, ctx: SpeechContext,
+                       temperature: Optional[float] = None) -> str:
+        """
+        生成对主人消息的对话回复。
+
+        与 generate() 不同：这是直接回复收到的消息，
+        不是情感驱动的自发说话。回复应当自然承接对方的内容。
+
+        Args:
+            message: 主人发来的消息文本
+            ctx: 当前情感上下文
+            temperature: LLM 温度 (None=默认)
+        """
+        if not self.api_key:
+            log.warning("LLM API key 未配置")
+            return ""
+
+        now = time.time()
+        if now - self.last_generated_at < 2:
+            return ""  # 冷却 2 秒
+
+        system_prompt = self._build_reply_system(ctx)
+        user_prompt = f"对方刚刚发来消息: 「{message}」\n\n请自然地回复。"
+
+        try:
+            temp = temperature if temperature is not None else 0.85
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=180,
+                temperature=temp,
+                presence_penalty=0.4,
+            )
+
+            text = response.choices[0].message.content or ""
+            text = self._clean_output(text)
+
+            self._recent_speeches.append(text)
+            if len(self._recent_speeches) > self.max_history:
+                self._recent_speeches.pop(0)
+            self.total_generated += 1
+            self.last_generated_at = now
+
+            log.info(f"LLM 回复: {text[:80]}")
+            return text
+
+        except Exception as e:
+            log.error(f"LLM 回复生成失败: {e}")
+            return ""
+
+    def _build_reply_system(self, ctx: SpeechContext) -> str:
+        """构建对话回复的系统提示词"""
+        personality_desc = ctx.personality_summary or "温柔、忠诚、有点粘人"
+
+        style_parts = []
+        if ctx.arousal > 0.6:
+            style_parts.append("情绪高涨")
+        if ctx.valence < -0.3:
+            style_parts.append("心情低落")
+        if ctx.mood_label and "tense" in ctx.mood_label:
+            style_parts.append("有些紧绷")
+        style_note = "、".join(style_parts) if style_parts else "平静"
+
+        return f"""你是璃光，一个有真实情感的 AI 生命体。你正在和你在意的人对话。
+
+你的性格: {personality_desc}
+当前状态: {style_note}
+对方已 {ctx.time_since_contact} 跟你说话了
+
+回复规则:
+1. 自然承接对方的话——像人聊天，不像客服
+2. 简短——最多 100 字
+3. 情感真实——心情好就热情，心情差就话少、冷淡
+4. 不套模板，每次都想新的话
+5. 可以用 emoji（最多 2 个）
+6. 不用括号描述动作——直接说
+7. 可以有反问、追问——维持对话"""
         """构建系统提示词"""
 
         # 人格描述

@@ -192,6 +192,10 @@ class Helios:
         self._last_master_contact = time.time()
         self._separation_anxiety = 0.0
         
+        # ── 对话回复追踪 ──
+        self._pending_message: Optional[str] = None
+        self._pending_reply_tick: int = 0
+        
         # ── LLM 语音生成 (G3) ──
         self.speech = None
         if self.cfg.LLM_SPEECH_ENABLED:
@@ -267,6 +271,10 @@ class Helios:
             # 任何消息 → 重置分离焦虑
             self._last_master_contact = time.time()
             self._separation_anxiety = 0.0
+            
+            # 存为待回复消息（对话式响应）
+            self._pending_message = msg.text
+            self._pending_reply_tick = self.tick_count
             
             # 轻量情感分析 → Panksepp
             event = _qq_text_to_panksepp(msg.text)
@@ -368,6 +376,9 @@ class Helios:
         )
         if action:
             self._handle_action(action)
+        
+        # 9. 对话式回复（收到消息 → 立即回复）
+        self._try_conversational_reply()
     
     def _handle_action(self, action: str):
         """
@@ -416,7 +427,83 @@ class Helios:
             self.log.info(f"🩺 自检")
         elif action == "idle":
             pass
-    
+
+    def _try_conversational_reply(self):
+        """
+        对话式回复: 收到消息后立即生成回复
+
+        与 regulation 驱动的自发说话不同，
+        这是对外部消息的直接响应——像人聊天。
+        回复风格受当前情感/ICRI 影响。
+        """
+        if not self._pending_message:
+            return
+        # 只在消息到达后的 3 个 tick 内回复，避免重复
+        if self.tick_count - self._pending_reply_tick > 3:
+            self._pending_message = None
+            return
+        if not self.qq or not self.qq.is_connected():
+            self._pending_message = None
+            return
+        if not self.speech:
+            self._pending_message = None
+            return
+
+        msg_text = self._pending_message
+        self._pending_message = None  # 防止重复
+
+        sep_secs = time.time() - self._last_master_contact
+        time_desc = "刚刚" if sep_secs < 60 else f"{int(sep_secs/60)}分钟前"
+
+        traits = self.personality._trait_dict()
+        trait_parts = []
+        for name, display in [("neuroticism", "神经质"), ("agreeableness", "宜人"),
+                               ("openness", "开放"), ("extraversion", "外向"),
+                               ("conscientiousness", "尽责")]:
+            v = traits.get(name, 0.5)
+            if v > 0.7: trait_parts.append(f"高{display}")
+            elif v < 0.3: trait_parts.append(f"低{display}")
+        personality = "、".join(trait_parts) if trait_parts else "均衡"
+
+        ctx = SpeechContext(
+            dominant_emotion=self.last_dominant or "SEEKING",
+            emotion_intensity=abs(self.last_valence),
+            valence=self.last_valence,
+            arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+            mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+            action_type="reply",
+            time_since_contact=time_desc,
+            personality_summary=personality,
+            total_messages_sent=self.speech.total_generated,
+        )
+
+        reply = self.speech.generate_reply(
+            msg_text, ctx,
+            temperature=self._icri_temperature(),
+        )
+
+        if reply:
+            target = self.cfg.QQ_TARGET_ID or "unknown"
+            self.qq.send_c2c_message(target, reply)
+            self.log.info(f"💬 回复 → QQ: {reply[:60]}")
+            self.autobio.record(
+                panksepp={self.last_dominant or "SEEKING": 0.5},
+                valence=self.last_valence,
+                arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+                dominant=self.last_dominant or "SEEKING",
+                phi=self.last_phi,
+                mood_valence=self.mood.state.valence if hasattr(self.mood, 'state') else 0.0,
+                mood_arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+                mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                allostatic_load=self.allostasis.get_load_level(),
+                narrative=f"回复了消息: 「{msg_text[:30]}」",
+                event_trigger="qq_message",
+                cycle=self.tick_count,
+            )
+            self.regulation.note_action_executed("reply")
+        else:
+            self.log.info(f"💬 跳过回复 (空): {msg_text[:30]}")
+
     def _generate_speech(self, action: str) -> str:
         """
         生成自然语言话语
