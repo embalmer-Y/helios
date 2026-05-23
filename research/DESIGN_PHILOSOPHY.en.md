@@ -121,6 +121,16 @@ The crucial design point is that `Helios` owns orchestration, not feature owners
 
 `Helios._tick_once()` is the authoritative runtime sequence. Each tick creates a fresh `HeliosState` and progressively populates it.
 
+The diagram below gives the refined closed-loop view for one tick. It intentionally follows the real implementation order: unified ingress first, then affect and cognition updates, then a split into passive replies and active behavior, and only then maintenance work.
+
+Standalone diagram: `research/diagrams/tick_runtime_flow.en.md`
+
+Three implementation constraints matter when reading this diagram:
+
+1. `HeliosState` is created fresh every tick; it is not a durable cross-tick state object.
+2. `_collect_events()` naturally splits into two flows: `merged_triggers` for affective processing and `pending_messages` for reply handling.
+3. Passive replies and active behaviors are separate decision paths, but both formally leave the system through `ChannelGateway.route_outbound()`.
+
 ### 5.1 Stage 0: state snapshot initialization
 
 At the start of the tick, `HeliosState` is seeded with:
@@ -245,6 +255,18 @@ The tail of the tick handles maintenance work:
 These tasks intentionally sit after the main affect-cognition-regulation path so they do not interfere with the core moment-to-moment loop.
 
 Theory anchor: sustained low-phi windows are treated as better opportunities for consolidation and later compression.
+
+### 5.12 Tick ingress and egress sequence
+
+The sequence diagram below pushes the same loop down to the object-flow level. It aligns with three code-level facts: ingress is standardized into `ChannelMessage`, gateway processing splits messages into trigger flow and message flow, and egress comes from both the passive reply path and the active behavior path.
+
+Standalone diagram: `research/diagrams/tick_ingress_egress_sequence.en.md`
+
+This sequence does not expand every implementation detail to the lowest layer. Instead it highlights three reading priorities:
+
+1. External input may arrive before the tick, but it only enters the main loop when `poll()` runs inside the tick.
+2. Passive replies run only when messages exist, while active behaviors are chosen by regulation; they are related but not the same control path.
+3. In the current code, the truly stable outbound primary path is still QQ. TTS is already registered as a capability surface, but it is not yet the default text-output sink for the main loop.
 
 ## 6. Core Object Model
 

@@ -16,6 +16,7 @@ Read these first when you need the current system definition.
 - `SOURCE_CATALOG.zh-CN.md`: 研究资料目录、引用条目与待收集清单（中文）
 - `SOURCE_CATALOG.en.md`: Source catalog, citation entries, and collection backlog (English)
 - `architecture_overview.html`: HTML 版整体架构图、tick 流程图与关键对象流
+- `diagrams/`: standalone Mermaid diagram files extracted from the main architecture and design docs for easier reading
 - `current_structure.md`: short-form structural reference after cleanup and migration
 
 ## Foundational Research

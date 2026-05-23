@@ -16,17 +16,11 @@ After the cleanup and migration work, the architectural goal is to keep three bo
 
 ## 2. Runtime View
 
-```mermaid
-flowchart LR
-    EXT[External Inputs\nQQ / STT / Vision / TTS] --> IO[helios_io]
-    IO --> CORE[core event plumbing]
-    CORE --> MAIN[helios_main loop]
-    MAIN --> SUB[Affective substrate\nallostasis / daisy / mood / personality / neurochem]
-    MAIN --> MEM[memory]
-    MAIN --> COG[cognition]
-    MAIN --> REG[regulation]
-    REG --> IO
-```
+Standalone diagram: `research/diagrams/runtime_loop_overview.en.md`
+
+This view emphasizes the continuous loop rather than a one-shot call chain. The system does not stop after producing one reply; external input, internal state change, behavior result, and later contact are all folded back into the next tick.
+
+To keep the document grounded in the code, the diagram stays intentionally conservative. It shows stable loop direction without overstating multimodal output behavior that is not yet the default runtime path. In the current implementation, QQ remains the primary outbound path, while TTS is an available capability rather than the default sink for main-loop output.
 
 Each tick of the main loop typically does the following:
 

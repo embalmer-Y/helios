@@ -118,6 +118,16 @@ flowchart LR
 
 `Helios._tick_once()` 是当前系统的权威运行时顺序定义。每个 tick 都创建一个新的 `HeliosState`，再沿着固定阶段逐步填充。
 
+下图先给出“一个 tick 内部的数据闭环细化版”。它刻意按当前实现的真实顺序组织：先统一入站，再做情感与认知更新，然后分叉到被动回复与主动行为，最后才进入维护性任务。
+
+单独查看图：`research/diagrams/tick_runtime_flow.zh-CN.md`
+
+读这张图时有三个实现约束需要明确：
+
+1. `HeliosState` 是每个 tick 新建的快照，不是跨 tick 共享的长期状态对象。
+2. `_collect_events()` 的结果天然分成两股流：给 DAISY 的 `merged_triggers`，以及给回复逻辑使用的 `pending_messages`。
+3. 被动回复和主动行为是两条不同的决策路径，但它们最终共用 `ChannelGateway.route_outbound()` 作为正式出站口。
+
 ### 5.1 阶段 0: 快照初始化
 
 tick 开始时先建立 `HeliosState`，预填入：
@@ -242,6 +252,18 @@ tick 尾部执行若干维护性流程：
 主循环中的维护逻辑被放在末尾，避免干扰每个 tick 的核心感知-认知-调节闭环。
 
 理论落点：低 Phi 区段触发 consolidation 与 compression，表示静息窗口被视作更适合记忆重组的阶段。
+
+### 5.12 Tick 入站与出站时序图
+
+下面这张时序图把前面的闭环再细化到“对象如何进入、怎样被变形、最终怎样出站”。它对齐当前实现中的三个关键事实：入站先被标准化为 `ChannelMessage`，消息在 gateway 内被拆成 trigger 流和 message 流，出站则分别来自被动回复路径和主动行为路径。
+
+单独查看图：`research/diagrams/tick_ingress_egress_sequence.zh-CN.md`
+
+这张时序图不把所有实现细节都展开到最底层，而是突出三个阅读重点：
+
+1. 外部输入在 tick 之前就可能异步到达，但真正进入主闭环是在 tick 内通过 `poll()` 完成。
+2. 被动回复在消息存在时才运行，主动行为则由调节层决定，两者并不是互相覆盖的同一路径。
+3. 当前代码里真正稳定的出站主路径仍是 QQ；TTS 通道已经注册为能力层，但并未成为主循环默认文本输出终点。
 
 ## 6. 关键对象模型
 
