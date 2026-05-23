@@ -4,7 +4,9 @@ Helios is not a one-shot chatbot demo. It is a continuously running affective an
 
 It is built as a long-lived process that keeps changing even when no one is talking to it.
 
-## Start Here
+✨ Think less "command bot" and more "ongoing inner weather system with memory, mood, theory, and architecture."
+
+## 🚀 Start Here
 
 If you only open one thing, open the research portal first:
 
@@ -16,7 +18,15 @@ If you want the visual version immediately:
 
 Those two HTML pages are the best entry points for understanding what Helios is, how the current architecture works, and where the theory-backed design documents live.
 
-## What Helios Is Trying To Be
+### Quick Mood Board
+
+- 🧠 cognition, drives, phi, endogenous thought
+- ❤️ affective substrate, mood, personality, allostasis
+- 🧾 autobiographical and episodic memory
+- 🌐 multimodal I/O, QQ integration, speech, channels
+- 🔬 research-backed architecture and theory mapping
+
+## 🌞 What Helios Is Trying To Be
 
 Helios combines several layers into one runtime loop:
 
@@ -28,7 +38,11 @@ Helios combines several layers into one runtime loop:
 
 The result is a codebase that mixes runtime engineering with research-driven ideas from affective neuroscience, predictive processing, consciousness models, memory systems, and appraisal theory.
 
-## Architecture At A Glance
+### In One Sentence
+
+Helios is an attempt to make an agent that does not merely respond, but continues to feel, remember, interpret, drift, regulate, and act inside an ongoing loop.
+
+## 🗺️ Architecture At A Glance
 
 ```mermaid
 flowchart LR
@@ -49,7 +63,7 @@ One practical rule defines most of the repository:
 - `core/` owns transport-agnostic runtime infrastructure
 - `memory/`, `cognition/`, and `regulation/` own the internal capability layers
 
-## Fast Tour
+## 🎢 Fast Tour
 
 | If you want to... | Open this |
 | --- | --- |
@@ -61,7 +75,15 @@ One practical rule defines most of the repository:
 | Inspect source provenance and citation backlog | [research/SOURCE_CATALOG.en.md](research/SOURCE_CATALOG.en.md) |
 | Jump into the runtime entry point | `helios_main.py` |
 
-## Repository Shape
+### Suggested Path
+
+1. 🌐 Open the HTML portal.
+2. 🗺️ Read the architecture overview.
+3. ⚙️ Read the detailed runtime design.
+4. 🔬 Trace modules back to theories and papers.
+5. 📚 Dive into the source catalog if you want provenance.
+
+## 🧩 Repository Shape
 
 - `helios_main.py`: primary runtime entry point and orchestration loop
 - `dashboard.py` and `dashboard.html`: runtime dashboard surface
@@ -74,7 +96,7 @@ One practical rule defines most of the repository:
 - `research/`: active architecture docs, implementation mapping, source catalog, and foundational research notes
 - `tests/`: regression and property-based tests
 
-## Runtime Feel
+## 🌊 Runtime Feel
 
 Each tick of the runtime typically does the following:
 
@@ -87,7 +109,11 @@ Each tick of the runtime typically does the following:
 
 The authoritative runtime orchestration lives in `helios_main.py`. If older notes and current code disagree, the codebase and the active `research/` documents win.
 
-## Running Helios
+### The Rhythm
+
+Sense → feel → remember → think → regulate → express.
+
+## ⚙️ Running Helios
 
 Common entry points:
 
@@ -97,7 +123,7 @@ Common entry points:
 
 Runtime behavior is environment-driven. `HeliosConfig` inside `helios_main.py` documents the main environment variables for timing, logging, LLM access, QQ integration, and multimodal channels.
 
-## Reading Order
+## 📍 Reading Order
 
 Use this path if you are new to the repository:
 
@@ -111,7 +137,13 @@ Use this path if you are new to the repository:
 
 Use the foundational research notes only after the active docs. The active docs describe the current implementation. The foundational notes explain why the system was designed this way.
 
-## Tests
+### Best First Click
+
+If a new reader lands on this repository and you want them to immediately understand what matters, send them here:
+
+- [research/research_home.html](research/research_home.html)
+
+## 🧪 Tests
 
 The repository includes a broad suite under `tests/`. A documented validated baseline in the active structure reference is:
 
@@ -119,7 +151,7 @@ The repository includes a broad suite under `tests/`. A documented validated bas
 
 If you are making changes, prefer validating the touched slice first and then rerunning the broader suite.
 
-## Guardrails
+## 🧱 Guardrails
 
 - do not add new protocol clients or transport implementations at the repository root
 - do not move transport-specific logic back into `core/`
@@ -127,7 +159,7 @@ If you are making changes, prefer validating the touched slice first and then re
 - add future model-backed outward generation under `helios_io/llm/`
 - keep `memory/`, `cognition/`, and `regulation/` focused on internal capability rather than transport details
 
-## Current Documentation System
+## 📚 Current Documentation System
 
 The `research/` directory now includes:
 
@@ -138,5 +170,22 @@ The `research/` directory now includes:
 - static HTML pages for architecture navigation and visual system maps
 
 If you want the shortest path to understanding the project, go here first:
+
+- [research/research_home.html](research/research_home.html)
+
+## 🌌 Why The Docs Matter
+
+Helios is the kind of repository where code alone tells only part of the story.
+
+The `research/` directory explains:
+
+- why some modules exist at all
+- which theories influenced them
+- which pieces are current implementation versus conceptual background
+- how to move from architecture, to runtime, to implementation, to sources without getting lost
+
+So the README is intentionally a launchpad.
+
+The actual guided experience starts in the HTML portal:
 
 - [research/research_home.html](research/research_home.html)
