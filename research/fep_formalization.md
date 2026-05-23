@@ -2,7 +2,7 @@
 
 > Status: Foundational Research
 > Role: Formal theoretical basis for free-energy style framing; not the source of truth for the active module layout
-> See also: `DESIGN_PHILOSOPHY.zh-CN.md`, `DESIGN_PHILOSOPHY.en.md`
+> See also: `../docs/DESIGN_PHILOSOPHY.zh-CN.md`, `../docs/DESIGN_PHILOSOPHY.en.md`
 
 > 来源：Karl Friston, "The Free-Energy Principle: A Unified Brain Theory?" (2010)
 >        "Active Inference: A Process Theory" (2017)

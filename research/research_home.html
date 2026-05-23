@@ -3,55 +3,40 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Helios Research Home</title>
+<title>Helios Research Archive</title>
 <style>
 :root{
-  --bg:#edf1ea;
-  --ink:#18211d;
-  --muted:#53605d;
-  --panel:#fcf9f1;
-  --line:#254538;
-  --accent:#aa4b2a;
-  --accent-2:#496f5d;
-  --accent-3:#cfad6d;
-  --shadow:0 20px 48px rgba(37,69,56,0.12);
+  --bg:#efe8dc;
+  --ink:#221a16;
+  --muted:#67564d;
+  --panel:#fffaf3;
+  --line:#7a5e46;
+  --accent:#9e3d2f;
+  --accent-2:#6c7b59;
+  --shadow:0 18px 42px rgba(34,26,22,0.12);
 }
 *{box-sizing:border-box}
-body{
-  margin:0;
-  font-family:"Microsoft YaHei UI","Segoe UI",sans-serif;
-  color:var(--ink);
-  background:
-    radial-gradient(circle at top right, rgba(170,75,42,0.10), transparent 25%),
-    radial-gradient(circle at top left, rgba(73,111,93,0.16), transparent 28%),
-    linear-gradient(180deg, #f7f3ea 0%, var(--bg) 55%, #e7ece4 100%);
-}
+body{margin:0;font-family:"Microsoft YaHei UI","Segoe UI",sans-serif;color:var(--ink);background:linear-gradient(180deg,#fbf6ee 0%,var(--bg) 60%,#e9dfd3 100%)}
 a{color:inherit}
-.shell{max-width:1320px;margin:0 auto;padding:32px 20px 56px}
-.hero,.section{background:rgba(252,249,241,0.88);border:1px solid rgba(37,69,56,0.12);border-radius:28px;box-shadow:var(--shadow)}
+.shell{max-width:1180px;margin:0 auto;padding:32px 20px 56px}
+.hero,.section{background:rgba(255,250,243,0.9);border:1px solid rgba(122,94,70,0.14);border-radius:26px;box-shadow:var(--shadow)}
 .hero{padding:28px}
 .topbar{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
 .eyebrow{letter-spacing:.14em;font-size:.78rem;text-transform:uppercase;color:var(--accent-2);margin-bottom:10px}
-h1{margin:0;font-size:clamp(2rem,4vw,3.3rem);line-height:1.05}
+h1{margin:0;font-size:clamp(2rem,4vw,3.1rem);line-height:1.05}
 .lead{margin:14px 0 0;max-width:920px;color:var(--muted);line-height:1.75}
 .toolbar{display:flex;gap:10px;flex-wrap:wrap}
-.toggle,.jump{font:inherit;padding:10px 16px;border-radius:999px;border:1px solid rgba(37,69,56,0.14);background:rgba(73,111,93,0.10);cursor:pointer;text-decoration:none}
+.toggle,.jump{font:inherit;padding:10px 16px;border-radius:999px;border:1px solid rgba(122,94,70,0.18);background:rgba(108,123,89,0.10);cursor:pointer;text-decoration:none}
 .toggle.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-.jump{background:rgba(207,173,109,0.22)}
-.chips,.grid,.reading{display:grid;gap:12px}
-.chips{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:18px}
-.chip{padding:10px 14px;border-radius:999px;border:1px solid rgba(37,69,56,0.12);background:rgba(73,111,93,0.08)}
+.jump{background:rgba(158,61,47,0.08)}
 .layout{display:grid;gap:18px;margin-top:22px}
 .section{padding:22px}
 .section h2{margin:0 0 10px;font-size:1.35rem}
 .section p{margin:0;color:var(--muted);line-height:1.7}
-.grid{grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin-top:16px}
-.card{background:var(--panel);border:1px solid rgba(37,69,56,0.10);border-radius:18px;padding:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:16px}
+.card{background:var(--panel);border:1px solid rgba(122,94,70,0.10);border-radius:18px;padding:16px}
 .card strong{display:block;margin-bottom:8px}
 .card a{display:inline-block;margin-top:8px;color:var(--accent-2);text-decoration:none}
-.reading{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:16px}
-.step{border-left:4px solid var(--accent);background:rgba(73,111,93,0.08);border-radius:14px;padding:14px}
-.step strong{display:block;margin-bottom:6px}
 .lang-block{display:none}
 html[data-lang="zh"] .lang-block[data-lang="zh"],
 html[data-lang="en"] .lang-block[data-lang="en"]{display:block}
@@ -62,121 +47,58 @@ html[data-lang="en"] .lang-block[data-lang="en"]{display:block}
   <section class="hero">
     <div class="topbar">
       <div>
-        <div class="eyebrow">Helios Research Portal</div>
+        <div class="eyebrow">Helios Research Archive</div>
         <div class="lang-block" data-lang="zh">
-          <h1>Helios 研究与设计文档首页</h1>
-          <p class="lead">这个页面把当前 Active 文档、HTML 架构图和理论研究材料收拢到一个统一入口。推荐先从 Active 文档理解当前实现，再进入 Foundational 材料追溯理论来源。</p>
+          <h1>Helios 基础研究归档</h1>
+          <p class="lead">当前架构、详细设计和实现映射已经迁入 `../docs/`。这个页面只保留理论背景、历史研究和原始资料的归档入口。</p>
         </div>
         <div class="lang-block" data-lang="en">
-          <h1>Helios Research and Design Home</h1>
-          <p class="lead">This page gathers the active architecture docs, the HTML system map, and the foundational research notes into one navigation surface. Start with the active docs to understand the current implementation, then move to the foundational notes for theory.</p>
+          <h1>Helios Foundational Research Archive</h1>
+          <p class="lead">The current architecture, detailed design, and implementation mapping have moved to `../docs/`. This page now exists only as the archive entry for theory notes, historical research, and source materials.</p>
         </div>
       </div>
       <div class="toolbar">
         <button class="toggle active" type="button" data-target-lang="zh">中文</button>
         <button class="toggle" type="button" data-target-lang="en">English</button>
-        <a class="jump" href="architecture_overview.html">Architecture HTML</a>
+        <a class="jump" href="../docs/docs_home.html">Active Docs</a>
       </div>
-    </div>
-    <div class="lang-block chips" data-lang="zh">
-      <div class="chip">Active 文档优先于旧研究笔记</div>
-      <div class="chip">架构图与流程图在 HTML 页面中</div>
-      <div class="chip">中英设计文档已对齐到同一粒度</div>
-      <div class="chip">current_structure.md 作为边界速查表</div>
-    </div>
-    <div class="lang-block chips" data-lang="en">
-      <div class="chip">Active docs override older research notes</div>
-      <div class="chip">Architecture map and flow live in the HTML view</div>
-      <div class="chip">Chinese and English design docs now match in depth</div>
-      <div class="chip">current_structure.md stays the quick boundary sheet</div>
     </div>
   </section>
 
   <div class="layout">
     <section class="section">
       <div class="lang-block" data-lang="zh">
-        <h2>Active 文档</h2>
-        <p>这些文件定义当前代码边界、运行时组织和详细设计。遇到旧研究文档与实现冲突时，以这里为准。</p>
+        <h2>先看这里</h2>
+        <p>如果你要了解 Helios 现在怎么实现，而不是研究它为什么会这样设计，请先进入 docs。</p>
       </div>
       <div class="lang-block" data-lang="en">
-        <h2>Active Documents</h2>
-        <p>These files define the current package boundaries, runtime organization, and detailed design. If older notes disagree with the code, start here.</p>
+        <h2>Start Here</h2>
+        <p>If you want to understand how Helios is implemented now rather than why it was designed this way, start in docs.</p>
       </div>
       <div class="grid">
-        <div class="card"><strong>ARCHITECTURE.zh-CN.md</strong><span>Chinese architecture overview</span><a href="ARCHITECTURE.zh-CN.md">Open</a></div>
-        <div class="card"><strong>ARCHITECTURE.en.md</strong><span>English architecture overview</span><a href="ARCHITECTURE.en.md">Open</a></div>
-        <div class="card"><strong>DESIGN_PHILOSOPHY.zh-CN.md</strong><span>Chinese detailed design and principles</span><a href="DESIGN_PHILOSOPHY.zh-CN.md">Open</a></div>
-        <div class="card"><strong>DESIGN_PHILOSOPHY.en.md</strong><span>English detailed design and principles</span><a href="DESIGN_PHILOSOPHY.en.md">Open</a></div>
-        <div class="card"><strong>IMPLEMENTATION_REFERENCE.zh-CN.md</strong><span>Chinese implementation-to-theory mapping</span><a href="IMPLEMENTATION_REFERENCE.zh-CN.md">Open</a></div>
-        <div class="card"><strong>IMPLEMENTATION_REFERENCE.en.md</strong><span>English implementation-to-theory mapping</span><a href="IMPLEMENTATION_REFERENCE.en.md">Open</a></div>
-        <div class="card"><strong>SOURCE_CATALOG.zh-CN.md</strong><span>Chinese source catalog and collection backlog</span><a href="SOURCE_CATALOG.zh-CN.md">Open</a></div>
-        <div class="card"><strong>SOURCE_CATALOG.en.md</strong><span>English source catalog and collection backlog</span><a href="SOURCE_CATALOG.en.md">Open</a></div>
-        <div class="card"><strong>architecture_overview.html</strong><span>HTML architecture map and tick flow</span><a href="architecture_overview.html">Open</a></div>
-        <div class="card"><strong>current_structure.md</strong><span>Short structural boundary reference</span><a href="current_structure.md">Open</a></div>
+        <div class="card"><strong>docs/docs_home.html</strong><span>Bilingual active documentation portal</span><a href="../docs/docs_home.html">Open</a></div>
+        <div class="card"><strong>docs/index.md</strong><span>Canonical active-doc index</span><a href="../docs/index.md">Open</a></div>
+        <div class="card"><strong>docs/architecture_overview.html</strong><span>Visual architecture entry page</span><a href="../docs/architecture_overview.html">Open</a></div>
       </div>
     </section>
 
     <section class="section">
       <div class="lang-block" data-lang="zh">
-        <h2>推荐阅读顺序</h2>
-        <p>如果你是第一次接手新版工程，按下面的顺序能最快建立正确的结构感。</p>
+        <h2>归档内容</h2>
+        <p>这些文件解释理论基础和历史研究，不直接定义当前代码边界。</p>
       </div>
       <div class="lang-block" data-lang="en">
-        <h2>Recommended Reading Order</h2>
-        <p>If you are approaching the restructured codebase for the first time, this order gives the fastest path to a correct mental model.</p>
-      </div>
-      <div class="lang-block reading" data-lang="zh">
-        <div class="step"><strong>1. 架构总览</strong>先读 `ARCHITECTURE.*`，明确当前分层和拥有权。</div>
-        <div class="step"><strong>2. 详细设计</strong>再读 `DESIGN_PHILOSOPHY.*`，理解 tick 生命周期、对象流和设计约束。</div>
-        <div class="step"><strong>3. 实现映射</strong>读 `IMPLEMENTATION_REFERENCE.*`，把模块、类与关键函数对应到理论和测试。</div>
-        <div class="step"><strong>4. 资料目录</strong>读 `SOURCE_CATALOG.*`，确认仓库内资料、引用条目和待收集清单。</div>
-        <div class="step"><strong>5. HTML 架构图</strong>打开 `architecture_overview.html`，把文本边界和可视化图对应起来。</div>
-        <div class="step"><strong>6. 边界速查</strong>用 `current_structure.md` 做快速回看。</div>
-        <div class="step"><strong>7. 理论研究</strong>最后再进入 DMN、neurochem、FEP 等 foundational 文档。</div>
-      </div>
-      <div class="lang-block reading" data-lang="en">
-        <div class="step"><strong>1. Architecture overview</strong>Read `ARCHITECTURE.*` first to understand the current layers and ownership.</div>
-        <div class="step"><strong>2. Detailed design</strong>Read `DESIGN_PHILOSOPHY.*` next for tick lifecycle, object flow, and design constraints.</div>
-        <div class="step"><strong>3. Implementation reference</strong>Read `IMPLEMENTATION_REFERENCE.*` to map modules, classes, and key methods back to theory and tests.</div>
-        <div class="step"><strong>4. Source catalog</strong>Read `SOURCE_CATALOG.*` to inspect in-repo materials, citation entries, and collection backlog.</div>
-        <div class="step"><strong>5. HTML system map</strong>Open `architecture_overview.html` to align the text model with the visual map.</div>
-        <div class="step"><strong>6. Boundary quick sheet</strong>Use `current_structure.md` as a fast refresher.</div>
-        <div class="step"><strong>7. Foundational notes</strong>Only then move into DMN, neurochem, FEP, and related theory notes.</div>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="lang-block" data-lang="zh">
-        <h2>Foundational 文档</h2>
-        <p>这些文件解释理论背景，不直接定义当前代码边界。它们适合回答“为什么这样设计”，不适合替代“代码现在怎么组织”。</p>
-      </div>
-      <div class="lang-block" data-lang="en">
-        <h2>Foundational Notes</h2>
-        <p>These files explain the theoretical basis and should not be treated as the implementation boundary map. They answer why the system was designed this way, not how the code is currently organized.</p>
+        <h2>Archive Contents</h2>
+        <p>These files explain the theoretical basis and historical research context. They do not define the current implementation boundary map.</p>
       </div>
       <div class="grid">
         <div class="card"><strong>dmn_thinking_model.md</strong><span>DMN, replay, endogenous thinking</span><a href="dmn_thinking_model.md">Open</a></div>
+        <div class="card"><strong>preconscious_path_research.md</strong><span>Bounded preconscious candidate path</span><a href="preconscious_path_research.md">Open</a></div>
+        <div class="card"><strong>personality_influence_research.md</strong><span>Trait-prior and projection-layer mapping</span><a href="personality_influence_research.md">Open</a></div>
         <div class="card"><strong>neurochem_model.md</strong><span>Neurochemical modulation model</span><a href="neurochem_model.md">Open</a></div>
         <div class="card"><strong>panksepp_helio_mapping.md</strong><span>Affective-system mapping</span><a href="panksepp_helio_mapping.md">Open</a></div>
         <div class="card"><strong>fep_formalization.md</strong><span>Free-energy framing</span><a href="fep_formalization.md">Open</a></div>
         <div class="card"><strong>friston_panksepp_synthesis.md</strong><span>Combined theoretical synthesis</span><a href="friston_panksepp_synthesis.md">Open</a></div>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="lang-block" data-lang="zh">
-        <h2>新增加的可追溯层</h2>
-        <p>新版入口不再只区分 Active 与 Foundational，还加入了“实现映射”和“资料目录”两层，分别解决“哪些模块对应哪些理论”和“这些理论材料从哪里来”。</p>
-      </div>
-      <div class="lang-block" data-lang="en">
-        <h2>New Traceability Layers</h2>
-        <p>The portal now adds two layers beyond active docs and foundational notes: an implementation reference layer and a source-catalog layer. Together they answer both “which modules map to which theories” and “where those sources come from.”</p>
-      </div>
-      <div class="grid">
-        <div class="card"><strong>Implementation Reference</strong><span>Module, class, and key-method mapping to theory, papers, and tests</span><a href="IMPLEMENTATION_REFERENCE.en.md">Open EN</a></div>
-        <div class="card"><strong>实现映射参考</strong><span>模块、类、关键函数到理论、论文和测试的对应表</span><a href="IMPLEMENTATION_REFERENCE.zh-CN.md">打开中文</a></div>
-        <div class="card"><strong>Source Catalog</strong><span>In-repo sources, citation entries, and collection backlog</span><a href="SOURCE_CATALOG.en.md">Open EN</a></div>
-        <div class="card"><strong>研究资料目录</strong><span>仓库资料、引用条目与待收集清单</span><a href="SOURCE_CATALOG.zh-CN.md">打开中文</a></div>
       </div>
     </section>
   </div>

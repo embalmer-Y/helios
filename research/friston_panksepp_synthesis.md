@@ -2,7 +2,7 @@
 
 > Status: Foundational Research
 > Role: Historical synthesis of major theoretical influences; retain as conceptual background rather than active architecture guidance
-> See also: `DESIGN_PHILOSOPHY.zh-CN.md`, `DESIGN_PHILOSOPHY.en.md`
+> See also: `../docs/DESIGN_PHILOSOPHY.zh-CN.md`, `../docs/DESIGN_PHILOSOPHY.en.md`
 
 # ========================
 # 日期: 2026-05-19

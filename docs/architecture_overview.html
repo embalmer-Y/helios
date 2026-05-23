@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helios Architecture Overview</title>
+<style>
+:root{
+  --bg:#f4efe5;
+  --ink:#1b1f1f;
+  --muted:#4b5857;
+  --line:#1f4037;
+  --panel:#fffdf8;
+  --accent:#b64926;
+  --accent-2:#3d6b59;
+  --accent-3:#c59b4d;
+  --shadow:0 18px 44px rgba(31,64,55,0.12);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:"Microsoft YaHei UI","Segoe UI",sans-serif;
+  color:var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(197,155,77,0.16), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(61,107,89,0.18), transparent 32%),
+    linear-gradient(180deg, #f7f1e8 0%, var(--bg) 52%, #efe7da 100%);
+}
+a{color:inherit}
+.shell{max-width:1380px;margin:0 auto;padding:32px 20px 56px}
+.hero,.panel{background:rgba(255,253,248,0.88);border:1px solid rgba(31,64,55,0.14);border-radius:28px;box-shadow:var(--shadow);backdrop-filter:blur(12px)}
+.hero{padding:28px}
+.topbar{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.eyebrow{letter-spacing:.14em;font-size:.78rem;text-transform:uppercase;color:var(--accent-2);margin-bottom:10px}
+h1{margin:0;font-size:clamp(2rem,4vw,3.4rem);line-height:1.05}
+.lead{margin:14px 0 0;max-width:920px;color:var(--muted);font-size:1rem;line-height:1.75}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.toggle{border:1px solid rgba(31,64,55,0.14);background:rgba(223,232,219,0.7);color:var(--ink);border-radius:999px;padding:10px 16px;cursor:pointer;font:inherit}
+.toggle.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.jump{text-decoration:none;border-radius:999px;padding:10px 16px;background:rgba(61,107,89,0.12);border:1px solid rgba(61,107,89,0.18)}
+.chips,.legend,.notes,.steps,.object-list,.card-grid,.matrix{display:grid;gap:12px}
+.chips{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:18px}
+.chip{padding:10px 14px;border-radius:999px;border:1px solid rgba(31,64,55,0.14);background:rgba(223,232,219,0.7);font-size:.9rem}
+.layout{display:grid;gap:18px;margin-top:22px}
+.panel{padding:22px}
+.panel h2{margin:0 0 10px;font-size:1.35rem}
+.panel p{margin:0;color:var(--muted);line-height:1.7}
+.legend,.matrix{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-top:16px}
+.legend-item,.object,.card,.matrix-item{background:var(--panel);border:1px solid rgba(31,64,55,0.1);border-radius:16px;padding:14px 16px}
+.legend-item strong,.object strong,.card strong,.matrix-item strong{display:block;margin-bottom:6px}
+.svg-wrap{margin-top:18px;overflow:auto}
+svg{width:100%;height:auto;min-width:980px}
+.notes{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:18px}
+.note{border-left:4px solid var(--accent-2);background:rgba(223,232,219,0.5);border-radius:12px;padding:12px 14px;line-height:1.65;color:var(--muted)}
+.steps{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:18px}
+.step{border:1px solid rgba(31,64,55,0.12);border-radius:18px;padding:16px;background:linear-gradient(180deg, rgba(255,255,255,0.8), rgba(223,232,219,0.42))}
+.step .num{display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;margin-bottom:10px}
+.grid-two{display:grid;grid-template-columns:1.05fr .95fr;gap:18px}
+.object-list,.card-grid{margin-top:16px}
+.card a{display:inline-block;margin-top:6px;text-decoration:none;color:var(--accent-2)}
+.footer{margin-top:20px;color:var(--muted);line-height:1.7}
+.lang-block{display:none}
+html[data-lang="zh"] .lang-block[data-lang="zh"],
+html[data-lang="en"] .lang-block[data-lang="en"]{display:block}
+@media (max-width: 960px){.grid-two{grid-template-columns:1fr}svg{min-width:760px}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <section class="hero">
+    <div class="topbar">
+      <div>
+        <div class="eyebrow">Helios Active Design Map</div>
+        <div class="lang-block" data-lang="zh">
+          <h1>Helios 架构、理论映射与运行流程</h1>
+          <p class="lead">本页对应当前代码实现，用静态 HTML 展示模块边界、tick 生命周期、理论到分层的映射，以及进入实现映射和资料目录的导航入口。</p>
+        </div>
+        <div class="lang-block" data-lang="en">
+          <h1>Helios Architecture, Theory Map, and Runtime Flow</h1>
+          <p class="lead">This page mirrors the current implementation through a static HTML view of ownership boundaries, tick lifecycle, theory-to-layer mapping, and navigation into the implementation reference and source catalog.</p>
+        </div>
+      </div>
+      <div class="toolbar">
+        <button class="toggle active" type="button" data-target-lang="zh">中文</button>
+        <button class="toggle" type="button" data-target-lang="en">English</button>
+        <a class="jump" href="docs_home.html">Docs Home</a>
+      </div>
+    </div>
+    <div class="lang-block chips" data-lang="zh">
+      <div class="chip">入口: helios_main.py</div>
+      <div class="chip">边界层: helios_io/</div>
+      <div class="chip">基础设施: core/</div>
+      <div class="chip">内部能力: memory / cognition / regulation</div>
+      <div class="chip">新文档层: implementation reference / source catalog</div>
+    </div>
+    <div class="lang-block chips" data-lang="en">
+      <div class="chip">Entry: helios_main.py</div>
+      <div class="chip">Boundary: helios_io/</div>
+      <div class="chip">Infrastructure: core/</div>
+      <div class="chip">Internal capability: memory / cognition / regulation</div>
+      <div class="chip">New layers: implementation reference / source catalog</div>
+    </div>
+  </section>
+
+  <div class="layout">
+    <section class="panel">
+      <div class="lang-block" data-lang="zh">
+        <h2>整体分层架构图</h2>
+        <p>当前结构遵循“编排在主循环、能力在子系统、接触世界的实现统一收口到 helios_io”这一原则。图中强调拥有实现的边界，而不是历史兼容导出位置。</p>
+      </div>
+      <div class="lang-block" data-lang="en">
+        <h2>Layer Ownership Map</h2>
+        <p>The current structure follows one rule above all: orchestration lives in the main loop, subsystem capability lives in dedicated packages, and all world-facing implementation is owned by helios_io.</p>
+      </div>
+      <div class="lang-block legend" data-lang="zh">
+        <div class="legend-item"><strong>外部接口层</strong>QQ、STT、TTS、Vision、Dashboard 等输入输出表面</div>
+        <div class="legend-item"><strong>I/O 边界层</strong>通道抽象、协议适配、SEC 评估、被动回复、行为执行</div>
+        <div class="legend-item"><strong>编排层</strong>Helios 主循环、TickGuard、HeliosState、EventSource</div>
+        <div class="legend-item"><strong>内部能力层</strong>情感底盘、记忆、认知、调节</div>
+      </div>
+      <div class="lang-block legend" data-lang="en">
+        <div class="legend-item"><strong>External Surface</strong>QQ, STT, TTS, Vision, Dashboard, and other external touchpoints</div>
+        <div class="legend-item"><strong>I/O Boundary</strong>Channel abstraction, protocol adapters, SEC evaluation, passive reply, behavior execution</div>
+        <div class="legend-item"><strong>Orchestration</strong>Main loop, TickGuard, HeliosState, EventSource, trigger merge</div>
+        <div class="legend-item"><strong>Internal Capability</strong>Affective substrate, memory, cognition, regulation</div>
+      </div>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 1280 820" role="img" aria-label="Helios architecture diagram">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#1f4037"></path></marker>
+            <linearGradient id="warm" x1="0" x2="1"><stop offset="0%" stop-color="#fffaf0"></stop><stop offset="100%" stop-color="#f4e8d3"></stop></linearGradient>
+            <linearGradient id="cool" x1="0" x2="1"><stop offset="0%" stop-color="#eef6f0"></stop><stop offset="100%" stop-color="#d8e7de"></stop></linearGradient>
+          </defs>
+          <rect x="30" y="28" width="1220" height="128" rx="26" fill="url(#warm)" stroke="#b64926" stroke-width="2"></rect>
+          <text x="60" y="66" font-size="28" font-weight="700" fill="#1b1f1f">External Inputs and Outputs</text>
+          <g font-size="20" fill="#1b1f1f">
+            <rect x="60" y="86" width="180" height="42" rx="14" fill="#fff" stroke="#b64926"></rect><text x="104" y="113">QQ Protocol</text>
+            <rect x="262" y="86" width="180" height="42" rx="14" fill="#fff" stroke="#b64926"></rect><text x="316" y="113">STT Input</text>
+            <rect x="464" y="86" width="180" height="42" rx="14" fill="#fff" stroke="#b64926"></rect><text x="520" y="113">Vision Input</text>
+            <rect x="666" y="86" width="180" height="42" rx="14" fill="#fff" stroke="#b64926"></rect><text x="726" y="113">TTS Output</text>
+            <rect x="868" y="86" width="180" height="42" rx="14" fill="#fff" stroke="#b64926"></rect><text x="912" y="113">Dashboard</text>
+            <rect x="1070" y="86" width="140" height="42" rx="14" fill="#fff" stroke="#b64926"></rect><text x="1108" y="113">Owner</text>
+          </g>
+          <rect x="30" y="192" width="1220" height="158" rx="26" fill="url(#cool)" stroke="#3d6b59" stroke-width="2"></rect>
+          <text x="60" y="230" font-size="28" font-weight="700" fill="#1b1f1f">helios_io: external boundary implementation</text>
+          <g font-size="18" fill="#1b1f1f">
+            <rect x="60" y="252" width="220" height="72" rx="18" fill="#fff" stroke="#3d6b59"></rect><text x="92" y="282">channel.py</text><text x="92" y="307" fill="#4b5857">ChannelMessage / InputChannel / OutputChannel</text>
+            <rect x="300" y="252" width="220" height="72" rx="18" fill="#fff" stroke="#3d6b59"></rect><text x="332" y="282">channel_gateway.py</text><text x="332" y="307" fill="#4b5857">poll / evaluate / route_outbound</text>
+            <rect x="540" y="252" width="220" height="72" rx="18" fill="#fff" stroke="#3d6b59"></rect><text x="573" y="282">response_pipeline.py</text><text x="573" y="307" fill="#4b5857">SEC + should_reply + history</text>
+            <rect x="780" y="252" width="220" height="72" rx="18" fill="#fff" stroke="#3d6b59"></rect><text x="827" y="282">limb.py</text><text x="827" y="307" fill="#4b5857">BehaviorExecutor</text>
+            <rect x="1020" y="252" width="190" height="72" rx="18" fill="#fff" stroke="#3d6b59"></rect><text x="1049" y="282">protocols / channels / llm</text><text x="1049" y="307" fill="#4b5857">QQ / STT / TTS / Vision</text>
+          </g>
+          <rect x="164" y="412" width="952" height="112" rx="24" fill="#fffdf8" stroke="#1f4037" stroke-width="2"></rect>
+          <text x="202" y="455" font-size="30" font-weight="700" fill="#1b1f1f">helios_main.py / Helios main loop</text>
+          <text x="202" y="488" font-size="20" fill="#4b5857">Owns runtime assembly, tick ordering, and cross-subsystem orchestration</text>
+          <rect x="80" y="588" width="320" height="160" rx="24" fill="#fff" stroke="#c59b4d" stroke-width="2"></rect>
+          <text x="112" y="628" font-size="28" font-weight="700">Affective substrate</text><text x="112" y="660" font-size="20" fill="#4b5857">DAISY / Allostasis / Mood /</text><text x="112" y="688" font-size="20" fill="#4b5857">Personality / Neurochem / Habituation</text>
+          <rect x="470" y="588" width="320" height="160" rx="24" fill="#fff" stroke="#c59b4d" stroke-width="2"></rect>
+          <text x="504" y="628" font-size="28" font-weight="700">Memory and cognition</text><text x="504" y="660" font-size="20" fill="#4b5857">MemorySystem / AutobiographicalStore /</text><text x="504" y="688" font-size="20" fill="#4b5857">MemoryCompressor / Phi / Drives / Thinking</text>
+          <rect x="860" y="588" width="320" height="160" rx="24" fill="#fff" stroke="#c59b4d" stroke-width="2"></rect>
+          <text x="896" y="628" font-size="28" font-weight="700">Regulation and feedback</text><text x="896" y="660" font-size="20" fill="#4b5857">RegulationEngine / LimbDecisionBridge /</text><text x="896" y="688" font-size="20" fill="#4b5857">BehaviorExecutor / on_behavior_result</text>
+          <path d="M640 156 L640 188" stroke="#1f4037" stroke-width="4" marker-end="url(#arrow)"></path><path d="M640 350 L640 406" stroke="#1f4037" stroke-width="4" marker-end="url(#arrow)"></path><path d="M318 524 L238 582" stroke="#1f4037" stroke-width="4" marker-end="url(#arrow)"></path><path d="M640 524 L640 582" stroke="#1f4037" stroke-width="4" marker-end="url(#arrow)"></path><path d="M962 524 L1024 582" stroke="#1f4037" stroke-width="4" marker-end="url(#arrow)"></path><path d="M1022 588 C1050 470, 1040 390, 888 336" stroke="#1f4037" stroke-width="4" fill="none" marker-end="url(#arrow)"></path>
+          <text x="1042" y="468" font-size="18" fill="#4b5857">execution result and outbound feedback</text>
+        </svg>
+      </div>
+      <div class="lang-block notes" data-lang="zh">
+        <div class="note">主循环是编排层，不是所有能力的实现归属层。它持有对象引用，但不吞并各子系统所有权。</div>
+        <div class="note">`helios_io` 是唯一外部边界层。新增协议、通道、内容外发组件都应优先进入该目录。</div>
+        <div class="note">`core` 只保留运行基础设施。兼容导出可以存在，但不改变实际拥有实现的位置。</div>
+      </div>
+      <div class="lang-block notes" data-lang="en">
+        <div class="note">The main loop is an orchestration layer, not the owner of every subsystem implementation.</div>
+        <div class="note">`helios_io` is the one external boundary layer. New protocols, channels, and outward generation should enter there first.</div>
+        <div class="note">`core` remains transport-agnostic runtime infrastructure. Compatibility exports do not change real ownership.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="lang-block" data-lang="zh">
+        <h2>理论到分层映射</h2>
+        <p>当前代码库已经形成稳定的理论簇到模块层的对应关系。这个区域用于从“概念”跳到“实现落点”。</p>
+      </div>
+      <div class="lang-block" data-lang="en">
+        <h2>Theory-To-Layer Map</h2>
+        <p>The codebase now has a stable mapping from theory clusters to implementation layers. This section is meant to bridge concepts and runtime ownership.</p>
+      </div>
+      <div class="lang-block matrix" data-lang="zh">
+        <div class="matrix-item"><strong>Panksepp / Affect Dynamics</strong>主要落在 `daisy_emotion.py`, `personality.py`, `regulation/regulation.py`。</div>
+        <div class="matrix-item"><strong>Allostasis</strong>主要落在 `allostasis.py`，并影响 drive 与 regulation 的解释。</div>
+        <div class="matrix-item"><strong>ALMA / Emotional Inertia</strong>主要落在 `mood_tracker.py` 与人格-情感时间尺度协作。</div>
+        <div class="matrix-item"><strong>IIT / GNW / Predictive Processing</strong>主要落在 `cognition/phi.py` 的统一聚合接口。</div>
+        <div class="matrix-item"><strong>FEP / Active Inference</strong>主要落在 `cognition/drives.py`，并在 `helios_main.py` 中参与整体闭环。</div>
+        <div class="matrix-item"><strong>DMN / Replay</strong>主要落在 `cognition/thinking_integration.py`，并反馈回 ICRI。</div>
+        <div class="matrix-item"><strong>Multi-store Memory</strong>主要落在 `memory/memory_system.py` 与 `memory/memory_compressor.py`。</div>
+        <div class="matrix-item"><strong>SEC / Appraisal</strong>主要落在 `cognition/appraisal.py`, `helios_io/llm_sec_evaluator.py`, `helios_io/response_pipeline.py`。</div>
+      </div>
+      <div class="lang-block matrix" data-lang="en">
+        <div class="matrix-item"><strong>Panksepp / affect dynamics</strong>Mainly realized in `daisy_emotion.py`, `personality.py`, and `regulation/regulation.py`.</div>
+        <div class="matrix-item"><strong>Allostasis</strong>Mainly realized in `allostasis.py` and then propagated into drive and regulation interpretation.</div>
+        <div class="matrix-item"><strong>ALMA / emotional inertia</strong>Mainly realized in `mood_tracker.py` and the personality-affect time-scale split.</div>
+        <div class="matrix-item"><strong>IIT / GNW / predictive processing</strong>Mainly realized through the unified aggregation surface in `cognition/phi.py`.</div>
+        <div class="matrix-item"><strong>FEP / active inference</strong>Mainly realized in `cognition/drives.py` and integrated into the wider loop in `helios_main.py`.</div>
+        <div class="matrix-item"><strong>DMN / replay</strong>Mainly realized in `cognition/thinking_integration.py` and fed back into ICRI.</div>
+        <div class="matrix-item"><strong>Multi-store memory</strong>Mainly realized in `memory/memory_system.py` and `memory/memory_compressor.py`.</div>
+        <div class="matrix-item"><strong>SEC / appraisal</strong>Mainly realized in `cognition/appraisal.py`, `helios_io/llm_sec_evaluator.py`, and `helios_io/response_pipeline.py`.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="lang-block" data-lang="zh"><h2>Tick 生命周期流程图</h2><p>下面的主流程对应 `Helios._tick_once()` 的当前真实顺序。它是新版系统行为的事实定义，也是文档和测试对齐的基准。</p></div>
+      <div class="lang-block" data-lang="en"><h2>Tick Lifecycle Flow</h2><p>This flow mirrors the current order inside `Helios._tick_once()`. It is the most concrete execution contract behind the active architecture docs.</p></div>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 1280 1180" role="img" aria-label="Helios tick lifecycle flowchart">
+          <defs><marker id="arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#b64926"></path></marker></defs>
+          <rect x="470" y="28" width="340" height="72" rx="20" fill="#fff" stroke="#b64926" stroke-width="2"></rect><text x="548" y="72" font-size="26" font-weight="700">Create HeliosState</text>
+          <g font-size="20">
+            <rect x="210" y="148" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="193">1. Poll EventSource and ChannelGateway, merge triggers, collect messages</text>
+            <rect x="210" y="264" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="309">2. Apply habituation novelty discount and register repeated exposures</text>
+            <rect x="210" y="380" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="425">3. Run DAISY affect cycle and refresh mood plus allostatic state</text>
+            <rect x="210" y="496" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="541">4. Aggregate message impact and emotion into ICRI, temperature, and style</text>
+            <rect x="210" y="612" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="657">5. Tick neurochemistry, adapt personality, update drive dominant and urgency</text>
+            <rect x="210" y="728" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="773">6. Generate endogenous thought and optionally feed it back into ICRI</text>
+            <rect x="210" y="844" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="889">7. Write autobiographical, episodic, and working memory traces</text>
+            <rect x="210" y="960" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="1005">8. Run passive reply: SEC, should_reply, generate_reply, route_outbound</text>
+            <rect x="210" y="1076" width="860" height="78" rx="20" fill="#fffdf8" stroke="#3d6b59" stroke-width="2"></rect><text x="244" y="1121">9. Regulation chooses action, limb bridge enqueues, executor runs and feeds back</text>
+          </g>
+          <path d="M640 100 L640 144" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 226 L640 260" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 342 L640 376" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 458 L640 492" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 574 L640 608" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 690 L640 724" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 806 L640 840" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 922 L640 956" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path><path d="M640 1038 L640 1072" stroke="#b64926" stroke-width="4" marker-end="url(#arrow-flow)"></path>
+          <rect x="48" y="924" width="134" height="118" rx="18" fill="#fff" stroke="#c59b4d" stroke-width="2"></rect><text x="78" y="966" font-size="18" font-weight="700">messages exist</text><text x="67" y="994" font-size="16" fill="#4b5857">required for</text><text x="59" y="1020" font-size="16" fill="#4b5857">passive reply path</text><path d="M182 982 L206 982" stroke="#c59b4d" stroke-width="4" marker-end="url(#arrow-flow)"></path>
+          <rect x="1098" y="1054" width="138" height="130" rx="18" fill="#fff" stroke="#c59b4d" stroke-width="2"></rect><text x="1131" y="1092" font-size="18" font-weight="700">tail work</text><text x="1120" y="1121" font-size="16" fill="#4b5857">RSS checks</text><text x="1108" y="1148" font-size="16" fill="#4b5857">consolidate / persist</text><path d="M1070 1115 L1092 1115" stroke="#c59b4d" stroke-width="4" marker-end="url(#arrow-flow)"></path>
+        </svg>
+      </div>
+      <div class="lang-block steps" data-lang="zh">
+        <div class="step"><div class="num">A</div><strong>统一状态起点</strong><div>所有共享运行态字段都先进入 `HeliosState`，避免跨模块读私有对象造成隐式耦合。</div></div>
+        <div class="step"><div class="num">B</div><strong>闭环中段</strong><div>Affect、ICRI、drives、thinking 和 memory 在同一 tick 内互相影响，构成内部闭环。</div></div>
+        <div class="step"><div class="num">C</div><strong>边界后段</strong><div>回复生成与行为执行都在内部状态已经稳定后才触发，确保输出是内部过程的结果，而不是入口条件的直接镜像。</div></div>
+      </div>
+      <div class="lang-block steps" data-lang="en">
+        <div class="step"><div class="num">A</div><strong>Shared state first</strong><div>Tick-scoped runtime facts enter `HeliosState` before subsystem work begins.</div></div>
+        <div class="step"><div class="num">B</div><strong>Closed internal loop</strong><div>Affect, ICRI, drives, thinking, and memory influence one another within the same tick.</div></div>
+        <div class="step"><div class="num">C</div><strong>Boundary work later</strong><div>Reply generation and behavior execution run after internal state has stabilized for the tick.</div></div>
+      </div>
+    </section>
+
+    <section class="panel grid-two">
+      <div>
+        <div class="lang-block" data-lang="zh"><h2>关键对象流</h2><p>新版结构的重点不只是模块名，还在于对象如何穿过模块。对象流决定了哪个层在产生事实，哪个层只是在消费事实。</p></div>
+        <div class="lang-block" data-lang="en"><h2>Key Object Flow</h2><p>The important part of the new structure is not only where modules live, but which objects move across them and who owns each fact.</p></div>
+        <div class="lang-block object-list" data-lang="zh">
+          <div class="object"><strong>HeliosState</strong>每个 tick 的单一事实源，聚合 affect、ICRI、drives、thinking、behavior、I/O availability 和稳定性指标。</div>
+          <div class="object"><strong>ChannelMessage</strong>由 `helios_io` 统一承载跨边界消息，主循环和调节层无需关心协议细节。</div>
+          <div class="object"><strong>CognitiveImpactProfile</strong>把多模态输入的影响投影到统一语义面，供 Phi 与上层认知复用。</div>
+          <div class="object"><strong>Behavior Command</strong>由 regulation 产出动作意图，再由 LimbDecisionBridge 映射为执行优先级与命令生命周期。</div>
+        </div>
+        <div class="lang-block object-list" data-lang="en">
+          <div class="object"><strong>HeliosState</strong>The single source of truth for each tick, aggregating affect, ICRI, drives, thinking, behavior, availability, and stability metrics.</div>
+          <div class="object"><strong>ChannelMessage</strong>The common external-boundary message type owned by `helios_io`, hiding protocol details from the main loop.</div>
+          <div class="object"><strong>CognitiveImpactProfile</strong>A normalized structure for sensory, cognitive, self-related, and novelty impact that can feed phi and higher reasoning.</div>
+          <div class="object"><strong>Behavior Command</strong>An execution-layer command derived from regulation output through priority mapping and queue lifecycle.</div>
+        </div>
+      </div>
+      <div>
+        <div class="lang-block" data-lang="zh"><h2>边界规则</h2><p>维护新版结构时，先判断职责归属，再判断实现位置。</p></div>
+        <div class="lang-block" data-lang="en"><h2>Boundary Rules</h2><p>When extending the system, decide ownership first and implementation placement second.</p></div>
+        <div class="lang-block object-list" data-lang="zh">
+          <div class="object"><strong>属于 helios_io 的内容</strong>协议、通道、路由、编码、外发文本生成、外部行为落地。</div>
+          <div class="object"><strong>属于 core 的内容</strong>EventSource、状态快照、触发合并、tick 保护等传输无关基础设施。</div>
+          <div class="object"><strong>属于内部能力层的内容</strong>记忆、认知、调节与情感模型，不直接拥有协议实现。</div>
+          <div class="object"><strong>属于 research 文档的内容</strong>解释实现边界与运行逻辑，而不是充当旧方案堆场。</div>
+        </div>
+        <div class="lang-block object-list" data-lang="en">
+          <div class="object"><strong>Belongs in helios_io</strong>Protocols, channels, routing, serialization, outward text generation, and external action execution.</div>
+          <div class="object"><strong>Belongs in core</strong>Event sources, state snapshots, trigger merging, and tick protection that remain transport-agnostic.</div>
+          <div class="object"><strong>Belongs in internal capability layers</strong>Memory, cognition, regulation, and affective models that do not directly own protocol code.</div>
+          <div class="object"><strong>Belongs in research docs</strong>Explanation of boundaries, runtime behavior, and evolution rules rather than a dump of obsolete ideas.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="lang-block" data-lang="zh"><h2>文档导航入口</h2><p>这张图现在不再只是配套图示页，而是进入 Active 文档、实现映射和资料目录的可视化入口。</p></div>
+      <div class="lang-block" data-lang="en"><h2>Documentation Entry Points</h2><p>This page now acts as a visual entry surface into the active docs, implementation reference, and source catalog instead of being only a diagram page.</p></div>
+      <div class="card-grid">
+        <div class="card"><strong>Docs Home</strong><a href="docs_home.html">Open the unified active documentation page</a></div>
+        <div class="card"><strong>Architecture Docs</strong><a href="ARCHITECTURE.zh-CN.md">Chinese architecture</a> / <a href="ARCHITECTURE.en.md">English architecture</a></div>
+        <div class="card"><strong>Detailed Design</strong><a href="DESIGN_PHILOSOPHY.zh-CN.md">Chinese detailed design</a> / <a href="DESIGN_PHILOSOPHY.en.md">English detailed design</a></div>
+        <div class="card"><strong>Implementation Reference</strong><a href="IMPLEMENTATION_REFERENCE.zh-CN.md">Chinese mapping</a> / <a href="IMPLEMENTATION_REFERENCE.en.md">English mapping</a></div>
+        <div class="card"><strong>Source Catalog</strong><a href="SOURCE_CATALOG.zh-CN.md">Chinese catalog</a> / <a href="SOURCE_CATALOG.en.md">English catalog</a></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="lang-block footer" data-lang="zh">本页对应当前代码实现，可与 `docs/ARCHITECTURE.*`、`docs/DESIGN_PHILOSOPHY.*`、`docs/IMPLEMENTATION_REFERENCE.*` 和 `docs/SOURCE_CATALOG.*` 配套阅读；若需要理论背景，请再进入 `research/` 归档区。若代码与图不一致，应以代码和当前活动文档为准。</div>
+  <div class="lang-block footer" data-lang="en">This page mirrors the current implementation and should be read alongside `docs/ARCHITECTURE.*`, `docs/DESIGN_PHILOSOPHY.*`, `docs/IMPLEMENTATION_REFERENCE.*`, and `docs/SOURCE_CATALOG.*`; use `research/` only for foundational background. If code and diagrams diverge, the codebase and active docs win.</div>
+</div>
+<script>
+const root = document.documentElement;
+const buttons = Array.from(document.querySelectorAll('[data-target-lang]'));
+function setLang(lang) {
+  root.setAttribute('data-lang', lang);
+  root.lang = lang === 'zh' ? 'zh-CN' : 'en';
+  buttons.forEach((button) => {
+    button.classList.toggle('active', button.dataset.targetLang === lang);
+  });
+}
+buttons.forEach((button) => {
+  button.addEventListener('click', () => setLang(button.dataset.targetLang));
+});
+setLang('zh');
+</script>
+</body>
+</html>
