@@ -23,7 +23,7 @@ X6: 异稳态调节器 (AllostaticRegulator)
 
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
-from helios_utils import clamp
+from utils import clamp
 import math
 
 
@@ -311,3 +311,4 @@ class AllostaticRegulator:
         self.total_cycles = 0
         self.fatigue_cycles = 0
         self.recovery_cycles = 0
+

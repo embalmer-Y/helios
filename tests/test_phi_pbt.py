@@ -24,7 +24,7 @@ from hypothesis.strategies import (
     integers,
 )
 
-from phi import UnifiedPhi
+from cognition import AdaptiveAlphaICRI, CognitiveImpactProfile, UnifiedPhi
 
 # All 7 Panksepp systems
 PANKSEPP_SYSTEMS = ["SEEKING", "PLAY", "CARE", "PANIC", "FEAR", "RAGE", "LUST"]
@@ -293,3 +293,106 @@ class TestPhiDynamicRange:
             f"_nonlinear_scale({raw:.4f}) = {result:.10f} "
             f"but expected tanh({raw:.4f} * 1.6) = {expected:.10f}"
         )
+
+
+class TestAdaptiveAlphaTierSelection:
+    """Property 28: Adaptive alpha tier selection follows the spec ranges."""
+
+    @given(intensity=floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False))
+    @settings(max_examples=200)
+    def test_select_alpha_uses_expected_tiers(self, intensity: float):
+        engine = AdaptiveAlphaICRI()
+
+        alpha = engine.select_alpha(intensity)
+
+        if intensity > 0.60:
+            expected = 0.55
+        elif intensity >= 0.30:
+            expected = 0.30
+        else:
+            expected = 0.10
+
+        assert alpha == expected, (
+            f"select_alpha({intensity:.4f}) returned {alpha}, expected {expected}"
+        )
+
+    def test_strong_event_raises_phi_by_at_least_point_one(self):
+        engine = AdaptiveAlphaICRI()
+
+        baseline = engine.aggregate(max_event_intensity=0.0)
+
+        engine.sensory_integration = 0.9
+        engine._sources_valid["sensory_integration"] = engine.source_ttl
+        engine.emotional_coherence = 0.8
+        engine._sources_valid["emotional_coherence"] = engine.source_ttl
+        engine.global_ignition = 1.0
+        engine._sources_valid["global_ignition"] = engine.source_ttl
+
+        elevated = engine.aggregate(max_event_intensity=1.0)
+
+        assert engine.last_selected_alpha == 0.55
+        assert elevated - baseline >= 0.10, (
+            f"Expected strong event to raise aggregate by at least 0.10, "
+            f"but got baseline={baseline:.4f}, elevated={elevated:.4f}"
+        )
+
+
+class TestCognitiveImpactProfileFeeding:
+    """Property 30: CognitiveImpactProfile feeds the expected ICRI sources."""
+
+    @given(
+        sensory=floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+        cognitive=floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+        self_refl=floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+        novelty=floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+    )
+    @settings(max_examples=200)
+    def test_feed_from_impact_maps_dimensions_to_sources(
+        self,
+        sensory: float,
+        cognitive: float,
+        self_refl: float,
+        novelty: float,
+    ):
+        engine = AdaptiveAlphaICRI()
+        impact = CognitiveImpactProfile(
+            sensory=sensory,
+            cognitive=cognitive,
+            self_=self_refl,
+            novelty=novelty,
+        )
+
+        engine.feed_from_impact(impact)
+
+        assert abs(engine.sensory_integration - sensory) < 1e-9
+        assert abs(engine.dmn_depth - cognitive) < 1e-9
+        assert abs(engine.self_reflection - self_refl) < 1e-9
+        assert abs(engine.global_ignition - novelty) < 1e-9
+        assert engine._sources_valid["sensory_integration"] == engine.source_ttl
+        assert engine._sources_valid["temporal_depth"] == engine.source_ttl
+        assert engine._sources_valid["self_reflection"] == engine.source_ttl
+        assert engine._sources_valid["global_ignition"] == engine.source_ttl
+
+    def test_feed_from_impact_none_preserves_existing_sources(self):
+        engine = AdaptiveAlphaICRI()
+        engine.sensory_integration = 0.4
+        engine.temporal_depth = 0.2
+        engine.self_reflection = 0.6
+        engine.global_ignition = 0.5
+
+        before = (
+            engine.sensory_integration,
+            engine.temporal_depth,
+            engine.self_reflection,
+            engine.global_ignition,
+        )
+
+        engine.feed_from_impact(None)
+
+        after = (
+            engine.sensory_integration,
+            engine.temporal_depth,
+            engine.self_reflection,
+            engine.global_ignition,
+        )
+        assert after == before

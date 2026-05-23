@@ -11,7 +11,7 @@ habituation.py — Helios 习惯化/敏感化双重过程模型
 
 import math
 from collections import defaultdict
-from helios_utils import clamp
+from utils import clamp
 
 
 class HabituationTracker:

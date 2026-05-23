@@ -21,7 +21,7 @@ from hypothesis.strategies import (
     just,
 )
 
-from memory_system import WorkingMemory, EpisodicMemory, MemoryItem
+from memory import WorkingMemory, EpisodicMemory, MemoryItem
 
 
 # ------------------------------------------------------------------

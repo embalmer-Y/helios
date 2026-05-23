@@ -22,7 +22,7 @@ Dynamic Allostatic Integrated System for emotionYnamics
 import math
 from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
-from helios_utils import clamp
+from utils import clamp
 
 # ═══════════════════════════════════════════════
 # 常量 & 配置
@@ -561,3 +561,4 @@ def get_activation_vector(engine: DaisySystemEngine) -> Dict[str, float]:
 def get_opponent_state(engine: DaisySystemEngine) -> Dict[str, float]:
     """获取 b-process 状态"""
     return {n: o.b_activation for n, o in engine.opponents.items()}
+

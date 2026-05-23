@@ -23,8 +23,17 @@ class HeliosState:
     dominant_system: str = ""
 
     # Consciousness (from Phi / ICRI)
-    phi: float = 0.0
+    icri: float = 0.0
     consciousness_label: str = "minimal"
+
+    # LLM modulation
+    llm_temperature: float = 0.85
+    speech_style: str = "neutral"
+
+    # Thinking
+    dmn_active: bool = False
+    last_thought_type: str = ""
+    thought_generated_this_tick: bool = False
 
     # Mood (from MoodTracker)
     mood_valence: float = 0.0
@@ -52,3 +61,25 @@ class HeliosState:
     # Drives
     drive_dominant: str = ""
     drive_urgency: float = 0.0
+
+    # Behavior execution
+    behavior_queue_depth: int = 0
+    current_behavior: str = ""
+
+    # Hardware IO status
+    tts_available: bool = False
+    stt_available: bool = False
+    vision_available: bool = False
+
+    # Stability
+    rss_mb: float = 0.0
+    uptime_hours: float = 0.0
+
+    @property
+    def phi(self) -> float:
+        """Deprecated compatibility alias for icri."""
+        return self.icri
+
+    @phi.setter
+    def phi(self, value: float):
+        self.icri = value

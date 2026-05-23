@@ -1,5 +1,9 @@
 # Friston 自由能原理 → Helios 熵减驱动 — 形式化推导
 
+> Status: Foundational Research
+> Role: Formal theoretical basis for free-energy style framing; not the source of truth for the active module layout
+> See also: `DESIGN_PHILOSOPHY.zh-CN.md`, `DESIGN_PHILOSOPHY.en.md`
+
 > 来源：Karl Friston, "The Free-Energy Principle: A Unified Brain Theory?" (2010)
 >        "Active Inference: A Process Theory" (2017)
 >        "A Free Energy Principle for Biological Systems" (2012)

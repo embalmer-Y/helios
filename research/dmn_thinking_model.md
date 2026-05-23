@@ -1,5 +1,9 @@
 # Helios 内生思考模型 — 基于默认模式网络
 
+> Status: Foundational Research
+> Role: Theoretical background for endogenous thinking and replay; not the source of truth for current package ownership
+> See also: `DESIGN_PHILOSOPHY.zh-CN.md`, `DESIGN_PHILOSOPHY.en.md`
+
 > 来源：Raichle et al., "A Default Mode of Brain Function" (2001)
 >        Buckner et al., "The Brain's Default Network" (2008)
 >        Andrews-Hanna, "The Brain's Default Network and Its Adaptive Role" (2012)

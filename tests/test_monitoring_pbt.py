@@ -27,7 +27,7 @@ from hypothesis.strategies import (
     composite,
 )
 
-from memory_system import MemorySystem, EpisodicMemory, WorkingMemory, MemoryItem
+from memory import MemorySystem, EpisodicMemory, WorkingMemory, MemoryItem
 
 
 # ------------------------------------------------------------------

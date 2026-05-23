@@ -5,25 +5,19 @@
 **Validates: Requirements 7.1**
 """
 
-import importlib.util
-import sys
 import os
+import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from hypothesis import given, settings, assume
 from hypothesis.strategies import floats, fixed_dictionaries, just
 
-# Load response_pipeline module directly to avoid 'io' name conflict with stdlib
-_spec = importlib.util.spec_from_file_location(
-    "helios_io_response_pipeline",
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "io", "response_pipeline.py"),
-)
-_mod = importlib.util.module_from_spec(_spec)
-sys.modules["helios_io_response_pipeline"] = _mod
-_spec.loader.exec_module(_mod)
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-ResponsePipeline = _mod.ResponsePipeline
+from helios_io.response_pipeline import ResponsePipeline
 
 
 # ------------------------------------------------------------------

@@ -11,6 +11,7 @@ Validates:
 
 import json
 import os
+import sys
 import time
 import logging
 from pathlib import Path
@@ -18,7 +19,11 @@ from unittest.mock import patch
 
 import pytest
 
-from autobiographical import AutobiographicalStore, AutobiographicalMoment, Chapter
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from memory import AutobiographicalStore, AutobiographicalMoment, Chapter
 
 
 # ---------------------------------------------------------------------------
@@ -463,3 +468,4 @@ class TestArchiveRotation:
         assert len(parts) == 2
         assert len(parts[0]) == 8  # YYYYMMDD
         assert len(parts[1]) == 6  # HHMMSS
+

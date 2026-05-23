@@ -15,7 +15,7 @@ from hypothesis import given, settings, assume
 from hypothesis.strategies import floats, integers, text, lists, tuples
 from unittest.mock import patch
 
-from memory_system import SemanticMemory
+from memory import SemanticMemory
 
 
 # ------------------------------------------------------------------

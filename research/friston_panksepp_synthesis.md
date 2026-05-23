@@ -1,4 +1,9 @@
 # Helios 2.0 理论基础研究
+
+> Status: Foundational Research
+> Role: Historical synthesis of major theoretical influences; retain as conceptual background rather than active architecture guidance
+> See also: `DESIGN_PHILOSOPHY.zh-CN.md`, `DESIGN_PHILOSOPHY.en.md`
+
 # ========================
 # 日期: 2026-05-19
 # 来源: Friston 自由能原理 + Panksepp 情感神经科学

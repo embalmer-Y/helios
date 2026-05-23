@@ -19,7 +19,7 @@ X5-1: 心境追踪器 (MoodTracker)
 
 from dataclasses import dataclass, field
 from typing import Optional
-from helios_utils import clamp
+from utils import clamp
 
 
 # ═══════════════════════════════════════════════
@@ -235,3 +235,4 @@ class MoodTracker:
         self.history.clear()
         self.total_cycles = 0
         self.cycles_since_update = 0
+

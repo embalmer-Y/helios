@@ -10,7 +10,7 @@ import inspect
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from drives import DriveOracle, HeliosSnapshot, DriveVector
+from cognition import DriveOracle, HeliosSnapshot, DriveVector
 
 
 def test_drive_oracle_produces_drive_vector():

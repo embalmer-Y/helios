@@ -36,7 +36,7 @@ body{background:#0a0a1a;color:#d0e0ff;font-family:'Segoe UI',system-ui,sans-seri
   <div class="card"><h3>🎯 Panksepp 7系统 雷达</h3><canvas id="radar"></canvas></div>
   <div class="card"><h3>📊 情感时序</h3><canvas id="timeline"></canvas></div>
   <div class="card">
-    <h3>💓 效价 / 唤醒 / Φ</h3>
+    <h3>💓 效价 / 唤醒 / ICRI</h3>
     <div id="mood-indicator"></div>
     <div class="valence-bar"><div class="valence-dot" id="v-dot" style="left:50%"></div></div>
     <canvas id="phi-chart" style="max-height:120px"></canvas>
@@ -88,7 +88,7 @@ function createCharts() {
   
   charts.phi = new Chart(document.getElementById('phi-chart'), {
     type:'line',data:{labels:[],datasets:[{
-      label:'Φ',data:[],borderColor:'#ffd040',borderWidth:1.5,pointRadius:0,tension:0.3
+      label:'ICRI',data:[],borderColor:'#ffd040',borderWidth:1.5,pointRadius:0,tension:0.3
     }]},
     options:{responsive:true,animation:false,
       scales:{x:{display:false},y:{min:0,max:1,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
@@ -164,13 +164,13 @@ function updateDashboard(data) {
   }
   charts.timeline.update('none');
   
-  // Φ
+  // ICRI
   charts.phi.data.labels.push(data.cycle);
   if (charts.phi.data.labels.length > 120) {
     charts.phi.data.labels.shift();
     charts.phi.data.datasets[0].data.shift();
   }
-  charts.phi.data.datasets[0].data.push(data.phi || 0);
+  charts.phi.data.datasets[0].data.push(data.icri ?? data.phi ?? 0);
   charts.phi.update('none');
   
   // 神经化学

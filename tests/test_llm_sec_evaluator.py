@@ -7,24 +7,17 @@ on LLM failure/timeout.
 Requirements: 6.1, 6.2, 6.3, 6.4
 """
 
-import importlib.util
 import sys
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Load module directly to avoid 'io' name conflict with stdlib
-_spec = importlib.util.spec_from_file_location(
-    "helios_io_llm_sec_evaluator",
-    "io/llm_sec_evaluator.py",
-)
-_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-LLMSECEvaluator = _mod.LLMSECEvaluator
-_keyword_fallback_sec = _mod._keyword_fallback_sec
-_SEC_KEYS = _mod._SEC_KEYS
+from helios_io.llm_sec_evaluator import LLMSECEvaluator, _SEC_KEYS, _keyword_fallback_sec
 
 
 class TestKeywordFallbackSEC:

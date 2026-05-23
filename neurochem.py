@@ -476,7 +476,7 @@ def modulate_affect_params(flare_inertia: float,
     )
 
 
-from helios_utils import clamp
+from utils import clamp
 
 
 # ═══════════════════════════════════════════════
@@ -518,3 +518,4 @@ if __name__ == "__main__":
     print(f"  recovery_tau: 8.0 → {tau:.1f}")
 
     print("\n✅ 自测通过")
+

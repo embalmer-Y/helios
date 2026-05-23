@@ -1,5 +1,15 @@
-"""Utils package — shared utilities for Helios."""
+"""Utility package compatibility surface for Phase 4 restructuring."""
 
-from utils.persistence import StatePersistence
+from .helios_utils import clamp, exp_decay, lerp, safe_div, sigmoid
+from .persistence import StatePersistence
+from .stability_monitor import StabilityMonitor
 
-__all__ = ["StatePersistence"]
+__all__ = [
+    "clamp",
+    "exp_decay",
+    "lerp",
+    "safe_div",
+    "sigmoid",
+    "StatePersistence",
+    "StabilityMonitor",
+]

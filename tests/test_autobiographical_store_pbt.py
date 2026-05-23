@@ -26,7 +26,7 @@ from hypothesis.strategies import (
 
 import pytest
 
-from autobiographical import AutobiographicalStore, AutobiographicalMoment, Chapter
+from memory import AutobiographicalStore, AutobiographicalMoment, Chapter
 
 
 # ------------------------------------------------------------------
@@ -559,3 +559,4 @@ class TestProperty24ArchiveThreshold:
             # They should all start with "narrative-" or "trigger"
             for narr in recent_narratives:
                 assert narr.startswith("narrative-") or narr == "trigger", f"Unexpected narrative: {narr}"
+

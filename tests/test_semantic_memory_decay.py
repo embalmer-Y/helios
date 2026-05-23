@@ -7,7 +7,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
-from memory_system import SemanticMemory
+from memory import SemanticMemory
 
 
 # ------------------------------------------------------------------
@@ -180,7 +180,7 @@ class TestIdleTimerReset:
 class TestConsolidationIntegration:
     def test_decay_called_during_consolidation(self):
         """Decay should be applied when consolidation runs."""
-        from memory_system import (
+        from memory import (
             EpisodicMemory, SemanticMemory,
             AutobiographicalMemory, MemoryConsolidator
         )
@@ -202,7 +202,7 @@ class TestConsolidationIntegration:
 
     def test_consolidation_skipped_when_phi_too_high(self):
         """Consolidation and decay should NOT run when phi > 0.3."""
-        from memory_system import (
+        from memory import (
             EpisodicMemory, SemanticMemory,
             AutobiographicalMemory, MemoryConsolidator
         )

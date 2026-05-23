@@ -6,25 +6,27 @@ Tests should_reply(), record_exchange(), and generate_reply() logic.
 Requirements: 7.1, 7.2, 7.3, 7.5
 """
 
-import importlib.util
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Load module directly to avoid 'io' name conflict with stdlib
-_spec = importlib.util.spec_from_file_location(
-    "helios_io_response_pipeline",
-    "io/response_pipeline.py",
-)
-_mod = importlib.util.module_from_spec(_spec)
-sys.modules["helios_io_response_pipeline"] = _mod
-_spec.loader.exec_module(_mod)
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-ResponsePipeline = _mod.ResponsePipeline
+from helios_io.conversation_history import ConversationExchange
+from helios_io.response_pipeline import ResponsePipeline
+
+
+@dataclass
+class FakeAutobioMoment:
+    narrative: str = ""
+    phi: float = 0.4
+    significance: float = 0.5
 
 
 # ── Mock HeliosState ──
@@ -38,6 +40,7 @@ class MockHeliosState:
     valence: float = 0.3
     arousal: float = 0.5
     dominant_system: str = "CARE"
+    icri: float = 0.4
     phi: float = 0.4
     mood_label: str = "content"
     personality_traits: Dict[str, float] = field(default_factory=lambda: {
@@ -263,9 +266,6 @@ class TestGenerateReply:
         """User prompt should include recent conversation history"""
         pipeline = ResponsePipeline()
 
-        # Load ConversationExchange from the module
-        ConversationExchange = _mod.ConversationExchange
-
         history = [
             ConversationExchange(
                 timestamp=time.time(),
@@ -307,6 +307,43 @@ class TestGenerateReply:
         mock_memory.get_llm_context.assert_called_once_with(valence=0.5, arousal=0.6)
         assert "相似经历" in ctx
 
+    def test_autobio_context_uses_related_memories(self):
+        """Autobiographical context should be selected by topic/user relevance and capped at 3."""
+        mock_autobio = MagicMock()
+        mock_autobio.query_related.return_value = [
+            FakeAutobioMoment("和 user1 一起看过海"),
+            FakeAutobioMoment("聊过散步和晚风"),
+            FakeAutobioMoment("记得 user1 说过喜欢海边"),
+            FakeAutobioMoment("这条不应被放进去"),
+        ]
+        pipeline = ResponsePipeline(autobio_store=mock_autobio)
+        history = [
+            ConversationExchange(timestamp=time.time(), user_message="之前聊过海边", reply="记得呀"),
+        ]
+
+        ctx = pipeline._get_autobio_context("我们再去海边散步吧", "user1", history)
+
+        mock_autobio.query_related.assert_called_once()
+        call = mock_autobio.query_related.call_args.kwargs
+        assert call["topic_text"] == "我们再去海边散步吧"
+        assert call["user_id"] == "user1"
+        assert call["limit"] == 3
+        assert "相关记忆:" in ctx
+        assert "和 user1 一起看过海" in ctx
+        assert "聊过散步和晚风" in ctx
+        assert "记得 user1 说过喜欢海边" in ctx
+        assert "这条不应被放进去" not in ctx
+
+    def test_autobio_context_empty_when_no_related_memories(self):
+        """No related autobiographical memories should degrade to empty context."""
+        mock_autobio = MagicMock()
+        mock_autobio.query_related.return_value = []
+        pipeline = ResponsePipeline(autobio_store=mock_autobio)
+
+        ctx = pipeline._get_autobio_context("普通消息", "user1", [])
+
+        assert ctx == ""
+
     def test_personality_description_from_traits(self):
         """Should build personality description from trait values"""
         pipeline = ResponsePipeline()
@@ -323,6 +360,23 @@ class TestGenerateReply:
         state = MockHeliosState(personality_traits={})
         desc = pipeline._build_personality_desc(state)
         assert "温柔" in desc
+
+    def test_generate_reply_uses_icri_temperature_mapping(self):
+        pipeline = ResponsePipeline(api_key="test-key")
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="你好呀"))]
+        )
+        pipeline._client = mock_client
+
+        state = MockHeliosState(icri=0.7, phi=0.7)
+        msg = {"text": "你好", "user_id": "user1"}
+        sec = {"goal_relevance": 0.5, "novelty": 0.3}
+
+        result = pipeline.generate_reply(msg, state, sec)
+
+        assert result == "你好呀"
+        assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 1.3
 
     def test_clean_reply_removes_quotes(self):
         """Should strip surrounding quotes from LLM output"""

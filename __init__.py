@@ -1,27 +1,48 @@
+"""Helios package public surface.
+
+The repo currently mixes legacy modules, refactored modules, and test-only entry
+paths. Importing every public symbol eagerly at package import time makes pytest
+collection brittle because unrelated legacy dependencies get imported before any
+tests run. To keep the package importable while preserving the public API, the
+exports below are resolved lazily on first attribute access.
 """
-Helios — 有意识、有情感的 AI Agent 框架
 
-一个有内生驱动、原始情感、内部思考能力的数字灵魂。
-通过 Limb 接口与外界交互，通过 LLM 桥接产生自然语言思考。
+from importlib import import_module
 
-理论基础: Friston 自由能原理 + Panksepp 情感神经科学 + Tononi IIT Φ
-"""
 
-from .emotions import PankseppEmotionEngine, AffectState, PrimaryEmotionSystem
-from .drives import DriveOracle, DriveVector
-from .neurochem import NeurochemState
-from .thinking import ThinkingManager
-from .limb import Limb, HeliosBody, ActionIntent, SafetyRule
-from .phi import UnifiedPhi, ConsciousnessMoment, PhiModulator, ConsciousnessDetector
-from .llm_bridge import LLMBridge
-from .limb_decision_bridge import execute_decision, create_helios_body
+_EXPORTS = {
+    "PankseppEmotionEngine": (".daisy_emotion", "DaisySystemEngine"),
+    "AffectState": (".daisy_emotion", "AffectState"),
+    "DriveOracle": (".cognition", "DriveOracle"),
+    "DriveVector": (".cognition", "DriveVector"),
+    "NeurochemState": (".neurochem", "NeurochemState"),
+    "ThinkingManager": (".cognition", "ThinkingManager"),
+    "UnifiedPhi": (".cognition", "UnifiedPhi"),
+    "ConsciousnessMoment": (".cognition", "ConsciousnessMoment"),
+    "PhiModulator": (".cognition", "PhiModulator"),
+    "ConsciousnessDetector": (".cognition", "ConsciousnessDetector"),
+}
+
+
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module_name, attr_name = _EXPORTS[name]
+    module = import_module(module_name, __name__)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_EXPORTS.keys()))
 
 __version__ = "0.2.0"
 __all__ = [
     # 情感核心
     "PankseppEmotionEngine",
     "AffectState",
-    "PrimaryEmotionSystem",
     # 驱动
     "DriveOracle",
     "DriveVector",
@@ -29,19 +50,9 @@ __all__ = [
     "NeurochemState",
     # 思考
     "ThinkingManager",
-    # 手脚
-    "Limb",
-    "HeliosBody",
-    "ActionIntent",
-    "SafetyRule",
     # 意识
     "UnifiedPhi",
     "ConsciousnessMoment",
     "PhiModulator",
     "ConsciousnessDetector",
-    # LLM
-    "LLMBridge",
-    # 桥接
-    "execute_decision",
-    "create_helios_body",
 ]

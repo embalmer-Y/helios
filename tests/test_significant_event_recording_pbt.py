@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from hypothesis import given, settings, assume
 from hypothesis.strategies import floats, text, dictionaries
 
-from memory_system import MemorySystem
+from memory import MemorySystem
 from helios_main import Helios
 
 

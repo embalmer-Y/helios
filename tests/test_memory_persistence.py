@@ -18,7 +18,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
-from memory_system import MemorySystem, SemanticMemory, EpisodicMemory, MemoryItem
+from memory import MemorySystem, SemanticMemory, EpisodicMemory, MemoryItem
 
 
 @pytest.fixture

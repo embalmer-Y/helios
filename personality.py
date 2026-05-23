@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import json
 import os
-from helios_utils import clamp
+from utils import clamp
 
 
 # ═══════════════════════════════════════════════
@@ -378,3 +378,4 @@ class PersonalityProfile:
             lines.append(f"  {name:>6}: {bar:<20} {val:.2f} ({label})")
         lines.append(f"  经历: {self.total_emotion_cycles} cycles")
         return "\n".join(lines)
+

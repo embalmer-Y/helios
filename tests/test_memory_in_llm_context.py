@@ -7,7 +7,6 @@ them as context.
 """
 
 import sys
-import importlib.util
 from dataclasses import dataclass, field
 from typing import Dict
 from unittest.mock import MagicMock
@@ -16,15 +15,9 @@ import pytest
 
 # Import SpeechContext and LLMSpeechGenerator directly
 sys.path.insert(0, ".")
-from llm_speech import SpeechContext, LLMSpeechGenerator
+from helios_io.llm.speech import SpeechContext, LLMSpeechGenerator
 
-# Import ResponsePipeline via importlib to avoid 'io' stdlib conflict
-_rp_path = "io/response_pipeline.py"
-_rp_spec = importlib.util.spec_from_file_location("helios_io_response_pipeline_test", _rp_path)
-_rp_mod = importlib.util.module_from_spec(_rp_spec)
-sys.modules["helios_io_response_pipeline_test"] = _rp_mod
-_rp_spec.loader.exec_module(_rp_mod)
-ResponsePipeline = _rp_mod.ResponsePipeline
+from helios_io.response_pipeline import ResponsePipeline
 
 
 @dataclass
@@ -33,6 +26,7 @@ class MockState:
     arousal: float = 0.5
     dominant_system: str = "SEEKING"
     mood_label: str = "neutral"
+    icri: float = 0.3
     personality_traits: Dict[str, float] = field(default_factory=dict)
 
 
@@ -73,6 +67,23 @@ class TestSpeechContextMemory:
         # Should not have memory-related context
         assert "[最近在想]" not in prompt
         assert "[相似经历]" not in prompt
+
+    def test_generate_uses_icri_temperature_mapping(self):
+        gen = LLMSpeechGenerator(api_key="fake")
+        gen._client = MagicMock()
+        gen._client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="你好"))]
+        )
+        ctx = SpeechContext(
+            dominant_emotion="CARE",
+            action_type="speak_care",
+            icri=0.7,
+        )
+
+        result = gen.generate(ctx)
+
+        assert result == "你好"
+        assert gen._client.chat.completions.create.call_args.kwargs["temperature"] == 1.3
 
 
 class TestResponsePipelineMemoryRetrieval:

@@ -1,0 +1,10 @@
+# Adjust the log path below to the deployment absolute path before installing.
+./logs/helios_*.log {
+    rotate 7
+    daily
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

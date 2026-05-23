@@ -14,7 +14,7 @@ import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from memory_system import (
+from memory import (
     MemorySystem,
     MemoryConsolidator,
     EpisodicMemory,

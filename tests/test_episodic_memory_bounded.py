@@ -18,7 +18,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
-from memory_system import (
+from memory import (
     EpisodicMemory,
     MemoryItem,
     MemorySystem,
@@ -26,7 +26,7 @@ from memory_system import (
     SemanticMemory,
     AutobiographicalMemory,
 )
-from autobiographical import AutobiographicalStore
+from memory import AutobiographicalStore
 
 
 class TestEpisodicCapacityEnforcement:
@@ -279,3 +279,4 @@ class TestSetAutobiographicalStore:
                 ms.remember(f"event_{i}", valence=0.9, arousal=0.9, phi=0.9)
 
             assert len(store.moments) > 0
+

@@ -26,7 +26,7 @@ from hypothesis.strategies import (
     sampled_from,
 )
 
-from memory_system import (
+from memory import (
     MemorySystem,
     MemoryConsolidator,
     EpisodicMemory,

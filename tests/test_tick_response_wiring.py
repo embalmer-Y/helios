@@ -14,6 +14,7 @@ import sys
 import time
 import queue
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock, patch, PropertyMock
 from pathlib import Path
@@ -51,7 +52,10 @@ def helios_instance(tmp_path, monkeypatch):
     config.LLM_SPEECH_ENABLED = False
 
     h = Helios(config)
-    return h
+    yield h
+    for handler in list(h.log.handlers):
+        handler.close()
+        h.log.removeHandler(handler)
 
 
 # ═══════════════════════════════════════════════════
@@ -60,6 +64,38 @@ def helios_instance(tmp_path, monkeypatch):
 
 class TestTickResponseWiring:
     """Test that ResponsePipeline is correctly wired into _tick()."""
+
+    def test_tick_enters_through_tick_guard(self, helios_instance):
+        """_tick should delegate execution to TickGuard."""
+        h = helios_instance
+        original_tick_once = h._tick_once
+        h._tick_once = MagicMock(side_effect=original_tick_once)
+        h.tick_guard.execute = MagicMock(side_effect=lambda fn: fn())
+
+        h._tick()
+
+        h.tick_guard.execute.assert_called_once_with(h._tick_once)
+        h._tick_once.assert_called_once()
+
+    def test_safe_mode_skips_reply_pipeline(self, helios_instance):
+        """When TickGuard is in safe mode, non-essential reply work should be skipped."""
+        h = helios_instance
+        h.tick_guard._safe_mode = True
+        h.sec_evaluator.evaluate = MagicMock(return_value={
+            "goal_relevance": 0.8,
+            "novelty": 0.5,
+        })
+        h.response_pipeline.should_reply = MagicMock(return_value=True)
+        h.response_pipeline.generate_reply = MagicMock(return_value="hi")
+        h.response_pipeline.record_exchange = MagicMock()
+
+        h._msg_queue.put({"text": "hello", "user_id": "user1"})
+
+        h._tick()
+
+        h.sec_evaluator.evaluate.assert_not_called()
+        h.response_pipeline.should_reply.assert_not_called()
+        h.response_pipeline.record_exchange.assert_not_called()
 
     def test_sec_evaluator_called_for_each_message(self, helios_instance):
         """SEC evaluator should be called once per incoming message."""
@@ -236,3 +272,106 @@ class TestTickResponseWiring:
         context_arg = call_kwargs.get("context")
         assert context_arg is not None
         assert "之前的消息" in context_arg
+
+    def test_active_expression_routes_through_channel_gateway(self, helios_instance):
+        """Regulation-driven speech should send through ChannelGateway, not direct QQ calls."""
+        h = helios_instance
+        h.cfg.QQ_TARGET_ID = "target_user"
+        h.regulation.tick = MagicMock(return_value="speak_care")
+        h._generate_speech = MagicMock(return_value="主动问候")
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
+        h.qq = MagicMock()
+
+        h._tick()
+
+        h._channel_gateway.route_outbound.assert_called_once()
+        outbound = h._channel_gateway.route_outbound.call_args[0][0]
+        assert outbound.channel_id == "qq"
+        assert outbound.user_id == "target_user"
+        assert outbound.text == "主动问候"
+        h.qq.send_c2c.assert_not_called()
+
+    def test_active_expression_uses_forwarded_state_for_speech_context(self, helios_instance):
+        """Speech generation should receive the current tick state rather than stale runtime fields."""
+        h = helios_instance
+        h.cfg.QQ_TARGET_ID = "target_user"
+        h.regulation.tick = MagicMock(return_value="speak_share")
+        h.daisy.cycle = MagicMock(return_value=SimpleNamespace(
+            panksepp_activation={"FEAR": 0.7},
+            valence=-0.4,
+            arousal=0.8,
+            dominant_system="FEAR",
+        ))
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
+        h.speech = MagicMock()
+        h.speech.total_generated = 3
+        h.speech.generate = MagicMock(return_value="主动表达")
+
+        h._tick()
+
+        speech_ctx = h.speech.generate.call_args[0][0]
+        assert speech_ctx.dominant_emotion == "FEAR"
+        assert speech_ctx.valence == -0.4
+        assert speech_ctx.arousal == 0.8
+        assert speech_ctx.mood_label == h.mood.state.label
+
+    def test_channel_message_cognitive_impact_feeds_phi_engine(self, helios_instance):
+        """Inbound channel metadata should flow into feed_from_impact before ICRI aggregation."""
+        h = helios_instance
+
+        class RecordingPhiEngine:
+            def __init__(self):
+                self.label = SimpleNamespace(value="focused")
+                self.impacts = []
+
+            def feed_sensory(self, *args, **kwargs):
+                pass
+
+            def feed_emotional(self, *args, **kwargs):
+                pass
+
+            def feed_ignition_from_panksepp(self, *args, **kwargs):
+                pass
+
+            def feed_self_model_from_personality(self, *args, **kwargs):
+                pass
+
+            def feed_dmn_from_thinking(self, *args, **kwargs):
+                pass
+
+            def feed_from_impact(self, impact):
+                self.impacts.append(impact)
+
+            def aggregate(self):
+                return 0.55
+
+        h.phi_engine = RecordingPhiEngine()
+        h._qq_channel._sec_evaluator = MagicMock()
+        h._qq_channel._sec_evaluator.evaluate.return_value = {
+            "novelty": 0.8,
+            "pleasantness": 0.6,
+            "goal_relevance": 0.7,
+            "goal_congruence": 0.4,
+            "coping_potential": 0.6,
+            "agency": 0.1,
+            "norm_compatibility": 0.5,
+        }
+        h.daisy.cycle = MagicMock(return_value=SimpleNamespace(
+            panksepp_activation={"CARE": 0.4},
+            valence=0.4,
+            arousal=0.5,
+            dominant_system="CARE",
+        ))
+        h.sec_evaluator.evaluate = MagicMock(return_value={"goal_relevance": 0.1, "novelty": 0.1})
+        h.response_pipeline.should_reply = MagicMock(return_value=False)
+
+        h._msg_queue.put({"text": "你好呀，我在想你", "user_id": "user1"})
+
+        h._tick()
+
+        assert len(h.phi_engine.impacts) == 1
+        impact = h.phi_engine.impacts[0]
+        assert impact.sensory > 0.0
+        assert impact.cognitive > 0.0
+        assert impact.self_ > 0.0
+        assert impact.novelty > 0.0

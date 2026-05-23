@@ -21,16 +21,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from memory_system import MemorySystem, MemoryItem
-
-# Import conversation history using full path
-import importlib.util as _ilu
-_conv_hist_path = str(PROJECT_ROOT / "io" / "conversation_history.py")
-_conv_hist_spec = _ilu.spec_from_file_location("conversation_history", _conv_hist_path)
-_conv_hist_mod = _ilu.module_from_spec(_conv_hist_spec)
-sys.modules["conversation_history"] = _conv_hist_mod
-_conv_hist_spec.loader.exec_module(_conv_hist_mod)
-ConversationHistoryManager = _conv_hist_mod.ConversationHistoryManager
+from helios_io.conversation_history import ConversationHistoryManager
+from memory import MemorySystem, MemoryItem
 
 
 class TestMemoryStatsLogging:

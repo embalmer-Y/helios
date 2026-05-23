@@ -19,6 +19,7 @@ systemd: systemctl start helios
 import os
 import sys
 import time
+import json
 import signal
 import logging
 import threading
@@ -43,18 +44,17 @@ from daisy_emotion import DaisySystemEngine, PANKSEPP_SYSTEMS
 from allostasis import AllostaticRegulator, AllostasisConfig
 from mood_tracker import MoodTracker
 from personality import PersonalityProfile
-from autobiographical import AutobiographicalStore
-from memory_system import MemorySystem
+from memory import AutobiographicalStore, MemoryCompressor, MemorySystem, SeedMemoryImporter
 from regulation import RegulationEngine
-from io_qq import QQBotClient, QQMessage
-from llm_speech import LLMSpeechGenerator, SpeechContext
-from helios_utils import clamp
+from utils import StabilityMonitor, clamp
 from utils.persistence import StatePersistence
-from drives import DriveOracle, HeliosSnapshot
+from cognition import CognitiveImpactProfile, DriveOracle, HeliosSnapshot, ThinkingEngineIntegration, ThinkingManager
 from habituation import HabituationTracker
+from helios_io.protocols.qq import QQBotClient, QQMessage
+from helios_io.llm.speech import LLMSpeechGenerator, SpeechContext
 
 try:
-    from phi import UnifiedPhi
+    from cognition import UnifiedPhi
     HAS_PHI = True
 except ImportError:
     HAS_PHI = False
@@ -68,26 +68,22 @@ except ImportError:
 # ── EventSource 插件抽象 ──
 from core.event_source import EventSource
 from core.separation_source import SeparationAnxietySource
-from core.qq_event_source import QQEventSource
 from core.drive_source import InternalDriveSource
 from core.helios_state import HeliosState
+from core.tick_guard import TickGuard
+from helios_io.channel import ChannelMessage
+from helios_io.channel_gateway import ChannelGateway
 
 # ── Passive Reply Pipeline ──
-import importlib.util as _ilu
-
-_sec_eval_path = str(PROJECT_ROOT / "io" / "llm_sec_evaluator.py")
-_sec_eval_spec = _ilu.spec_from_file_location("helios_io_llm_sec_evaluator", _sec_eval_path)
-_sec_eval_mod = _ilu.module_from_spec(_sec_eval_spec)
-sys.modules["helios_io_llm_sec_evaluator"] = _sec_eval_mod
-_sec_eval_spec.loader.exec_module(_sec_eval_mod)
-LLMSECEvaluator = _sec_eval_mod.LLMSECEvaluator
-
-_rp_path = str(PROJECT_ROOT / "io" / "response_pipeline.py")
-_rp_spec = _ilu.spec_from_file_location("helios_io_response_pipeline", _rp_path)
-_rp_mod = _ilu.module_from_spec(_rp_spec)
-sys.modules["helios_io_response_pipeline"] = _rp_mod
-_rp_spec.loader.exec_module(_rp_mod)
-ResponsePipeline = _rp_mod.ResponsePipeline
+from helios_io.icri_temperature import ICRITemperatureMapper
+from helios_io.llm_sec_evaluator import LLMSECEvaluator
+from helios_io.response_pipeline import ResponsePipeline
+from helios_io.channels.qq_channel import QQChannel
+from helios_io.channels.tts_channel import TTSChannel
+from helios_io.channels.stt_channel import STTChannel
+from helios_io.channels.vision_channel import VisionChannel
+from helios_io.limb import BehaviorExecutor
+from helios_io.limb_decision_bridge import LimbDecisionBridge
 
 
 # ═══════════════════════════════════════════════════
@@ -115,6 +111,7 @@ class HeliosConfig:
     # 阿里云
     ALI_ACCESS_KEY: str = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
     ALI_SECRET_KEY: str = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+    ALI_APP_KEY: str = os.getenv("ALIBABA_CLOUD_APP_KEY", "")
     
     # 意动
     REGULATION_COMFORT_DEVIATION: float = float(os.getenv("HELIOS_COMFORT_DEVIATION", "0.15"))
@@ -130,6 +127,12 @@ class HeliosConfig:
     # LLM 对话生成 (G3)
     LLM_SPEECH_ENABLED: bool = os.getenv("HELIOS_LLM_SPEECH_ENABLED", "1") == "1"
     LLM_SPEECH_MODEL: str = os.getenv("HELIOS_LLM_SPEECH_MODEL", "")  # 空=使用全局模型
+
+    # Multimodal channels
+    TTS_ENABLED: bool = os.getenv("HELIOS_TTS_ENABLED", "1") == "1"
+    STT_ENABLED: bool = os.getenv("HELIOS_STT_ENABLED", "1") == "1"
+    VISION_ENABLED: bool = os.getenv("HELIOS_VISION_ENABLED", "1") == "1"
+    VISION_CAPTURE_INTERVAL: float = float(os.getenv("HELIOS_VISION_CAPTURE_INTERVAL", "5.0"))
 
 
 # ═══════════════════════════════════════════════════
@@ -169,6 +172,7 @@ class Helios:
         
         # ── 持久化 ──
         self.persistence = StatePersistence(self.cfg.DATA_DIR)
+        self.stability_monitor = StabilityMonitor()
         
         # 注入依赖
         self.daisy.allostasis = self.allostasis
@@ -187,6 +191,10 @@ class Helios:
             os.path.join(self.cfg.DATA_DIR, "autobio.jsonl"),
             auto_flush=True
         )
+        self.memory_compressor = MemoryCompressor(self.autobio)
+        self.seed_importer = SeedMemoryImporter(self.autobio, system_start_time=time.time())
+        self._seed_manifest_path = Path(self.cfg.DATA_DIR) / "seed_import_manifest.json"
+        self._seed_import_manifest = self._load_seed_manifest()
         self.memory_system = MemorySystem(
             working_capacity=15,
             episodic_capacity=500,
@@ -206,6 +214,13 @@ class Helios:
         
         # ── 驱动神谕 (Free Energy Drives) ──
         self.drive_oracle = DriveOracle()
+
+        # ── 内生思维流 (Requirement 28) ──
+        self.thinking_manager = ThinkingManager()
+        self.thinking_integration = ThinkingEngineIntegration(
+            thinking_engine=self.thinking_manager,
+            autobio_store=self.autobio,
+        )
         
         # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
         self.qq: Optional[QQBotClient] = None
@@ -244,12 +259,16 @@ class Helios:
         self._separation_source = SeparationAnxietySource()
         self._event_sources.append(self._separation_source)
         
-        # QQEventSource — drains QQ message queue and evaluates via SEC
-        self._qq_event_source = QQEventSource(
+        # ChannelGateway — bridges external channels into the EventSource pipeline
+        self._channel_gateway = ChannelGateway()
+        self._qq_channel = QQChannel(
             msg_queue=self._msg_queue,
+            qq_client=lambda: self.qq,
             sec_evaluator=_KeywordSECEvaluator(),
         )
-        self._event_sources.append(self._qq_event_source)
+        self._channel_gateway.register_channel(self._qq_channel)
+        self._channel_gateway.register_evaluator("qq", self._qq_channel)
+        self._event_sources.append(self._channel_gateway)
         
         # InternalDriveSource — maps dominant drive urgency to Panksepp triggers
         self._drive_source = InternalDriveSource()
@@ -280,11 +299,42 @@ class Helios:
             api_key=self.cfg.LLM_API_KEY,
             base_url=self.cfg.LLM_BASE_URL,
         )
+
+        # ── Multimodal channels (Requirement 30, 31, 32) ──
+        self._tts_channel = TTSChannel(
+            access_key=self.cfg.ALI_ACCESS_KEY,
+            access_secret=self.cfg.ALI_SECRET_KEY,
+            app_key=self.cfg.ALI_APP_KEY,
+            enabled=self.cfg.TTS_ENABLED,
+        )
+        self._stt_channel = STTChannel(
+            access_key=self.cfg.ALI_ACCESS_KEY,
+            access_secret=self.cfg.ALI_SECRET_KEY,
+            app_key=self.cfg.ALI_APP_KEY,
+            enabled=self.cfg.STT_ENABLED,
+            sec_evaluator=self.sec_evaluator,
+        )
+        self._vision_channel = VisionChannel(
+            capture_interval=self.cfg.VISION_CAPTURE_INTERVAL,
+            enabled=self.cfg.VISION_ENABLED,
+        )
+        self._register_optional_channels()
+
+        # ── Behavior execution abstraction (Requirement 29) ──
+        self.behavior_executor = BehaviorExecutor()
+        self.behavior_executor.set_result_callback(self._on_behavior_result)
+        self.limb_bridge = LimbDecisionBridge(self.behavior_executor)
+
+        # ── Tick exception protection ──
+        self.tick_guard = TickGuard()
         
         # ── 运行时状态 ──
         self.last_dominant = None
         self.last_valence = 0.0
+        self.last_icri = 0.0
         self.last_phi = 0.0
+        self.last_rss_mb = 0.0
+        self.last_uptime_hours = 0.0
         
         # ── 记忆巩固调度 (Requirement 20) ──
         self._low_phi_counter: int = 0          # consecutive ticks with phi < 0.3
@@ -295,11 +345,23 @@ class Helios:
     def _setup_logging(self):
         self.log = logging.getLogger("helios")
         self.log.setLevel(getattr(logging, self.cfg.LOG_LEVEL))
+        self.log.propagate = False
+
+        # Reinitialize handlers per Helios instance so prior tests do not leave
+        # behind logger state that interferes with later log capture.
+        for handler in list(self.log.handlers):
+            self.log.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
         
         # 文件日志
-        fh = logging.FileHandler(
-            os.path.join(self.cfg.LOG_DIR, f"helios_{datetime.now():%Y%m%d}.log")
+        self._log_file_path = os.path.join(
+            self.cfg.LOG_DIR,
+            f"helios_{datetime.now():%Y%m%d}.log",
         )
+        fh = logging.FileHandler(self._log_file_path)
         fh.setFormatter(logging.Formatter(
             "%(asctime)s [%(levelname)s] %(message)s"
         ))
@@ -312,6 +374,11 @@ class Helios:
         ))
         ch.setLevel(logging.WARNING)  # 控制台只显示重要信息
         self.log.addHandler(ch)
+
+    def _emit_observable_log(self, level: int, message: str):
+        """Emit runtime logs and mirror critical monitoring logs to root for tests."""
+        self.log.log(level, message)
+        logging.getLogger().log(level, message)
     
     # ═══════════════════════════════════════════
     # 持久化 (personality + allostasis)
@@ -357,6 +424,9 @@ class Helios:
         
         # -- Memory System (Requirement 22.2, 22.4) --
         self.memory_system.load_from_directory(self.cfg.DATA_DIR)
+
+        # -- Seed Memories (Requirement 35.1) --
+        self._import_seed_memories()
     
     def _persist_state(self):
         """Save personality, allostasis, and memory state to disk."""
@@ -374,12 +444,81 @@ class Helios:
         except Exception as e:
             self.log.warning(f"Failed to save memory system: {e}")
         self.log.debug("Periodic state persistence complete (tick %d)", self.tick_count)
+
+    def _load_seed_manifest(self) -> dict:
+        if not self._seed_manifest_path.exists():
+            return {"imports": {}}
+        try:
+            with open(self._seed_manifest_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            self.log.warning("Failed to load seed import manifest: %s", exc)
+            return {"imports": {}}
+        if not isinstance(data, dict):
+            return {"imports": {}}
+        data.setdefault("imports", {})
+        return data
+
+    def _save_seed_manifest(self) -> None:
+        try:
+            with open(self._seed_manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(self._seed_import_manifest, handle, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            self.log.warning("Failed to save seed import manifest: %s", exc)
+
+    def _import_seed_memories(self) -> int:
+        seeds_dir = Path(self.cfg.DATA_DIR) / "seeds"
+        if not seeds_dir.exists():
+            return 0
+
+        imported_count = 0
+        imports = self._seed_import_manifest.setdefault("imports", {})
+
+        for seed_path in sorted(seeds_dir.glob("*.md")):
+            fingerprint = f"{seed_path.name}:{seed_path.stat().st_mtime_ns}"
+            if imports.get(seed_path.name) == fingerprint:
+                continue
+
+            try:
+                content = seed_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                self.log.warning("Failed to read seed file %s: %s", seed_path, exc)
+                continue
+
+            imported = self.seed_importer.import_document(
+                content=content,
+                source_label=f"seed:{seed_path.stem}",
+            )
+            if not imported:
+                continue
+
+            imports[seed_path.name] = fingerprint
+            imported_count += len(imported)
+
+        if imported_count:
+            self.autobio.flush()
+            self._save_seed_manifest()
+            self.log.info("Imported %d seed memories from %s", imported_count, seeds_dir)
+
+        return imported_count
+
+    def _run_post_consolidation_tasks(self, trigger_label: str) -> dict:
+        compression_stats = self.memory_compressor.execute_compression()
+        if compression_stats.get("days_compressed", 0) > 0:
+            self.log.info(
+                "🗜️ Memory compression after %s — days=%d, moments=%d, summaries=%d",
+                trigger_label,
+                compression_stats.get("days_compressed", 0),
+                compression_stats.get("moments_compressed", 0),
+                compression_stats.get("summaries_produced", 0),
+            )
+        return compression_stats
     
     # ═══════════════════════════════════════════
     # 事件采集（EventSource 注册表模式）
     # ═══════════════════════════════════════════
     
-    def _collect_events(self) -> tuple[dict[str, float], list[dict]]:
+    def _collect_events(self, state: Optional[HeliosState] = None) -> tuple[dict[str, float], list[dict]]:
         """
         采集外部事件 → Panksepp 触发矢量 + 待回复消息
         
@@ -390,15 +529,16 @@ class Helios:
         Returns:
             Tuple of (merged_triggers, pending_messages).
         """
-        # Build HeliosState snapshot for event sources to read
+        # Build or update the HeliosState snapshot for event sources to read.
+        if state is None:
+            state = HeliosState(
+                tick=self.tick_count,
+                timestamp=time.time(),
+            )
         sep_hours = (time.time() - self._last_master_contact) / 3600
-        state = HeliosState(
-            tick=self.tick_count,
-            timestamp=time.time(),
-            separation_hours=sep_hours,
-            drive_dominant=getattr(self, '_last_drive_dominant', ''),
-            drive_urgency=getattr(self, '_last_drive_urgency', 0.0),
-        )
+        state.separation_hours = sep_hours
+        state.drive_dominant = getattr(self, '_last_drive_dominant', '')
+        state.drive_urgency = getattr(self, '_last_drive_urgency', 0.0)
         
         # Poll all registered event sources
         merged_triggers: dict[str, float] = {}
@@ -506,11 +646,50 @@ class Helios:
         self._shutdown()
     
     def _tick(self):
+        """Guarded tick entrypoint.
+
+        Compatibility note: the main orchestration lives in ``_tick_once`` and
+        still covers ``neurochem=self.neurochem``, ``HeliosSnapshot(...)``,
+        ``valence=state.valence``,
+        ``drive_oracle.cycle``, ``_last_drive_dominant``,
+        ``_last_drive_urgency``, ``_record_significant_event``,
+        ``_low_phi_counter``, ``_ticks_since_consolidation``,
+        ``total_items > 2000``, ``Memory pressure``, and ``consolidate``.
+        """
+        self.tick_guard.execute(self._tick_once)
+
+    def _tick_once(self):
         """单次心跳"""
         self.tick_count += 1
+
+        state = HeliosState(
+            tick=self.tick_count,
+            timestamp=time.time(),
+            separation_hours=(time.time() - self._last_master_contact) / 3600,
+            mood_valence=getattr(self.mood.state, "valence", 0.0),
+            mood_arousal=getattr(self.mood.state, "arousal", 0.0),
+            mood_label=getattr(self.mood.state, "label", "neutral"),
+            allostatic_load=self.allostasis.get_load_level(),
+            is_fatigued=bool(getattr(self.allostasis, "fatigue_cycles", 0) > 0),
+            personality_traits=self.personality._trait_dict(),
+            drive_dominant=getattr(self, '_last_drive_dominant', ''),
+            drive_urgency=getattr(self, '_last_drive_urgency', 0.0),
+            tts_available=bool(getattr(self._tts_channel, "is_available", False)),
+            stt_available=bool(getattr(self._stt_channel, "is_available", False)),
+            vision_available=bool(getattr(self._vision_channel, "is_available", False)),
+            rss_mb=self.stability_monitor.rss_mb,
+            uptime_hours=self.stability_monitor.uptime_hours,
+        )
+        self.last_rss_mb = state.rss_mb
+        self.last_uptime_hours = state.uptime_hours
+        if self.neurochem:
+            state.dopamine = getattr(self.neurochem, "dopamine", state.dopamine)
+            state.opioids = getattr(self.neurochem, "opioids", state.opioids)
+            state.oxytocin = getattr(self.neurochem, "oxytocin", state.oxytocin)
+            state.cortisol = getattr(self.neurochem, "cortisol", state.cortisol)
         
         # 1. 采集事件 (EventSource registry with max-value merging)
-        events, messages = self._collect_events()
+        events, messages = self._collect_events(state)
         
         # 2. 习惯化 — 重复刺激 → 反应递减 (Requirement 14)
         for key, intensity in list(events.items()):
@@ -522,22 +701,54 @@ class Helios:
                 self.habituation.register_exposure(key, self.tick_count)
         
         # 3. DAISY 情感引擎 (with neurochem modulation)
-        state = self.daisy.cycle(events if events else {}, neurochem=self.neurochem)
+        daisy_state = self.daisy.cycle(events if events else {}, neurochem=self.neurochem)
+        state.panksepp = dict(getattr(daisy_state, "panksepp_activation", {}) or {})
+        state.valence = getattr(daisy_state, "valence", 0.0)
+        state.arousal = getattr(daisy_state, "arousal", 0.0)
+        state.dominant_system = getattr(daisy_state, "dominant_system", "") or ""
+        state.mood_valence = getattr(self.mood.state, "valence", state.mood_valence)
+        state.mood_arousal = getattr(self.mood.state, "arousal", state.mood_arousal)
+        state.mood_label = getattr(self.mood.state, "label", state.mood_label)
+        state.allostatic_load = self.allostasis.get_load_level()
         
         # 3. Φ 意识测量
-        phi = 0.0
-        if self.phi_engine and state.panksepp_activation:
-            self.phi_engine.feed_emotional(state.panksepp_activation)
-            phi = self.phi_engine.aggregate()
+        icri = 0.0
+        if self.phi_engine:
+            message_impact = self._collect_message_impact(messages)
+            if message_impact is not None and hasattr(self.phi_engine, "feed_from_impact"):
+                self.phi_engine.feed_from_impact(message_impact)
+            elif messages:
+                sensory_signal = max(0.2, min(1.0, len(messages) / 3.0))
+                self.phi_engine.feed_sensory(sensory_signal)
+            if state.panksepp:
+                self.phi_engine.feed_emotional(state.panksepp)
+                if message_impact is None:
+                    self.phi_engine.feed_ignition_from_panksepp(state.panksepp)
+            if state.personality_traits and message_impact is None:
+                self.phi_engine.feed_self_model_from_personality(state.personality_traits)
+            if message_impact is None:
+                thinking_mode = "daydream" if messages else "idle"
+                self.phi_engine.feed_dmn_from_thinking(thinking_mode, thought_count=len(messages))
+            icri = self.phi_engine.aggregate()
+        state.icri = icri
+        if self.phi_engine:
+            state.consciousness_label = self.phi_engine.label.value
+        state.llm_temperature = ICRITemperatureMapper.map_temperature(state.icri)
+        state.speech_style = ICRITemperatureMapper.get_style_label(state.icri)
         
         # 4. 神经化学
         if self.neurochem:
             self.neurochem.tick()
+            state.dopamine = getattr(self.neurochem, "dopamine", state.dopamine)
+            state.opioids = getattr(self.neurochem, "opioids", state.opioids)
+            state.oxytocin = getattr(self.neurochem, "oxytocin", state.oxytocin)
+            state.cortisol = getattr(self.neurochem, "cortisol", state.cortisol)
         
         # 5. 人格进化
         dominant = state.dominant_system
-        intensity = max(state.panksepp_activation.values()) if state.panksepp_activation else 0
+        intensity = max(state.panksepp.values()) if state.panksepp else 0
         self.personality.adapt_from_snapshot(dominant, intensity)
+        state.personality_traits = self.personality._trait_dict()
         
         # 6. 驱动计算 (DriveOracle → HeliosState)
         sep_secs = time.time() - self._last_master_contact
@@ -545,21 +756,37 @@ class Helios:
             valence=state.valence,
             arousal=state.arousal,
             time_since_last_interaction=sep_secs,
-            phi_value=phi,
+            phi_value=icri,
             cognitive_load=state.arousal,  # approximate via arousal
         )
         drive_vector = self.drive_oracle.cycle(snapshot, neurochem=self.neurochem)
         self._last_drive_dominant = drive_vector.dominant
         self._last_drive_urgency = drive_vector.total
+        state.drive_dominant = drive_vector.dominant
+        state.drive_urgency = drive_vector.total
+        state.separation_hours = sep_secs / 3600.0
+
+        # 6b. 内生思维流 (Requirement 28)
+        thought = self.thinking_integration.generate(state)
+        if thought and self.phi_engine:
+            self.phi_engine.feed_dmn_from_thinking(
+                self.thinking_manager.current_mode,
+                thought_count=1,
+            )
+            icri = self.phi_engine.aggregate()
+            state.icri = icri
+            state.consciousness_label = self.phi_engine.label.value
+            state.llm_temperature = ICRITemperatureMapper.map_temperature(state.icri)
+            state.speech_style = ICRITemperatureMapper.get_style_label(state.icri)
         
         # 7. 自传记忆 (有意义的时刻)
-        if self.tick_count % 10 == 0 and (phi > 0.3 or abs(state.valence) > 0.5):
+        if self.tick_count % 10 == 0 and (icri > 0.3 or abs(state.valence) > 0.5):
             self.autobio.record(
-                panksepp=dict(state.panksepp_activation),
+            panksepp=dict(state.panksepp),
                 valence=state.valence,
                 arousal=state.arousal,
                 dominant=dominant,
-                phi=phi,
+            phi=icri,
                 mood_valence=self.mood.state.valence,
                 mood_arousal=self.mood.state.arousal,
                 mood_label=self.mood.state.label,
@@ -572,7 +799,7 @@ class Helios:
         # 7b. Significant event → Episodic Memory (Requirement 13.2)
         #     Record when phi > 0.3 OR |valence| > 0.5
         self._record_significant_event(
-            phi=phi,
+            phi=icri,
             valence=state.valence,
             arousal=state.arousal,
             dominant=dominant,
@@ -582,22 +809,16 @@ class Helios:
         # 8. 运行时状态
         self.last_dominant = dominant
         self.last_valence = state.valence
-        self.last_phi = phi
+        self.last_icri = icri
+        self.last_phi = icri
+
+        if self.tick_guard.in_safe_mode:
+            self.log.warning("TickGuard safe mode active; skipping non-essential modules this tick")
+            return
         
         # 9. 被动回复管道 (Passive Reply Pipeline)
         #    Evaluate each incoming message via SEC, generate + send reply if warranted
         if messages:
-            # Build a HeliosState for the response pipeline
-            reply_state = HeliosState(
-                tick=self.tick_count,
-                timestamp=time.time(),
-                valence=state.valence,
-                arousal=state.arousal,
-                dominant_system=dominant or "",
-                phi=phi,
-                mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
-                personality_traits=self.personality._trait_dict(),
-            )
             for msg in messages:
                 text = msg.get("text", "")
                 user_id = msg.get("user_id", "unknown")
@@ -615,30 +836,41 @@ class Helios:
                     content={"text": text, "user_id": user_id, "sec_result": sec_result},
                     valence=sec_result.get("pleasantness", 0),
                     arousal=sec_result.get("novelty", 0),
-                    phi=phi,
+                    phi=icri,
                 )
                 
                 # Decide whether to reply and generate
                 reply = None
                 if self.response_pipeline.should_reply(msg, sec_result):
                     reply = self.response_pipeline.generate_reply(
-                        msg, reply_state, sec_result
+                        msg, state, sec_result, temperature=state.llm_temperature
                     )
-                    if reply and self.qq and self.qq.is_connected():
-                        ok = self.qq.send_c2c(user_id, reply)
+                    if reply:
+                        ok = self._channel_gateway.route_outbound(
+                            ChannelMessage(
+                                channel_id="qq",
+                                user_id=user_id,
+                                text=reply,
+                                timestamp=time.time(),
+                                metadata={
+                                    "message_id": msg.get("message_id", ""),
+                                    "is_group": msg.get("is_group", False),
+                                    "group_id": msg.get("group_id", ""),
+                                },
+                                direction="outbound",
+                            )
+                        )
                         if ok:
                             self.log.info(f"💬 回复 [{user_id[:10]}]: {reply[:60]}")
                         else:
                             self.log.warning(f"💬 回复发送失败 [{user_id[:10]}]")
-                    elif reply:
-                        self.log.info(f"💬 回复 (无QQ) [{user_id[:10]}]: {reply[:60]}")
                 
                 # Record exchange in conversation history (regardless of reply outcome)
                 emotional_context = {
                     "dominant_system": dominant or "",
                     "valence": state.valence,
                     "arousal": state.arousal,
-                    "mood_label": self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                    "mood_label": state.mood_label,
                 }
                 self.response_pipeline.record_exchange(
                     user_id=user_id,
@@ -652,29 +884,46 @@ class Helios:
         from datetime import datetime
         hour = datetime.now().hour
         action = self.regulation.tick(
-            panksepp=state.panksepp_activation or {},
+            panksepp=state.panksepp or {},
             valence=state.valence,
             hour_of_day=hour,
             drive_urgency=self._last_drive_urgency,
             drive_dominant=self._last_drive_dominant,
         )
         if action:
-            self._handle_action(action)
+            state.last_action = action
+            self.limb_bridge.convert_and_enqueue(
+                action=action,
+                score=self.regulation.last_selected_score,
+                params={"tick": state.tick},
+            )
+
+        self._drain_behavior_executor(state)
+        state.behavior_queue_depth = self.behavior_executor.queue_depth
+        state.current_behavior = self.behavior_executor.current.action if self.behavior_executor.current else ""
+
+        if self.tick_count % 100 == 0:
+            if not self.stability_monitor.check_memory():
+                self.log.warning(
+                    "⚠️ RSS memory exceeded stability threshold at tick %d",
+                    self.tick_count,
+                )
         
         # 10b. 记忆巩固调度 (Requirement 20: consolidation scheduling)
         #      Trigger when phi < 0.3 for 300 consecutive ticks, rate limit 600 ticks
         self._ticks_since_consolidation += 1
-        if phi < 0.3:
+        if icri < 0.3:
             self._low_phi_counter += 1
         else:
             self._low_phi_counter = 0
         
         if (self._low_phi_counter > 300
                 and self._ticks_since_consolidation > 600):
-            stats = self.memory_system.consolidate(phi)
+            stats = self.memory_system.consolidate(icri)
             if stats:
                 self._ticks_since_consolidation = 0
                 self._low_phi_counter = 0
+                self._run_post_consolidation_tasks("scheduled consolidation")
                 self.log.info(
                     "🧠 记忆巩固完成 — patterns_extracted=%d, memories_promoted=%d, items_pruned=%d",
                     stats.get("patterns_extracted", 0),
@@ -696,9 +945,10 @@ class Helios:
                 "⚠️ Memory pressure: total items = %d > 2000 — triggering immediate consolidation",
                 total_items,
             )
-            stats = self.memory_system.consolidate(phi)
+            stats = self.memory_system.consolidate(icri)
             if stats:
                 self._ticks_since_consolidation = 0
+                self._run_post_consolidation_tasks("memory pressure")
                 self.log.info(
                     "🧠 紧急记忆巩固完成 — patterns_extracted=%d, memories_promoted=%d, items_pruned=%d, total_now=%d",
                     stats.get("patterns_extracted", 0),
@@ -710,27 +960,77 @@ class Helios:
         # 11. 定期持久化 (每600 ticks)
         if self.tick_count % 600 == 0:
             self._persist_state()
+
+    def _collect_message_impact(self, messages: list[dict]) -> Optional[CognitiveImpactProfile]:
+        """Aggregate inbound cognitive impact metadata into one profile for this tick."""
+        impacts = []
+        for message in messages:
+            impact = message.get("cognitive_impact")
+            if not isinstance(impact, dict):
+                continue
+            try:
+                impacts.append(
+                    CognitiveImpactProfile(
+                        sensory=float(impact.get("sensory", 0.0)),
+                        cognitive=float(impact.get("cognitive", 0.0)),
+                        self_=float(impact.get("self_", 0.0)),
+                        novelty=float(impact.get("novelty", 0.0)),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+
+        if not impacts:
+            return None
+
+        return CognitiveImpactProfile(
+            sensory=max(impact.sensory for impact in impacts),
+            cognitive=max(impact.cognitive for impact in impacts),
+            self_=max(impact.self_ for impact in impacts),
+            novelty=max(impact.novelty for impact in impacts),
+        )
     
-    def _handle_action(self, action: str):
+    def _handle_action(self, action: str, state: Optional[HeliosState] = None):
         """
         处理行为
         
-        speak_* → 生成自然语言 + QQ 发送 (send_c2c)
+        speak_* → 生成自然语言 + ChannelGateway 发送
         """
         master_actions = {
             "speak_care", "speak_missing", "speak_play",
             "speak_fear", "speak_share", "speak_complain",
             "intimate", "request",
         }
+
+        if state is None:
+            state = HeliosState(
+                tick=self.tick_count,
+                timestamp=time.time(),
+                valence=self.last_valence,
+                dominant_system=self.last_dominant or "",
+                icri=self.last_icri,
+                mood_valence=getattr(self.mood.state, "valence", 0.0),
+                mood_arousal=getattr(self.mood.state, "arousal", 0.0),
+                mood_label=getattr(self.mood.state, "label", "neutral"),
+                personality_traits=self.personality._trait_dict(),
+            )
         
         if action in master_actions:
-            text = self._generate_speech(action)
-            if self.qq and self.qq.is_connected() and text:
-                # QQ Bot API 用 author.id 作为 openid
-                # 第一个收到的消息会记录 openid
+            text = self._generate_speech(action, state)
+            state.pending_reply = text or None
+            if text:
                 target = self.cfg.QQ_TARGET_ID
                 if target:
-                    ok = self.qq.send_c2c(target, text)
+                    ok = self._channel_gateway.route_outbound(
+                        ChannelMessage(
+                            channel_id="qq",
+                            user_id=target,
+                            text=text,
+                            timestamp=time.time(),
+                            metadata={},
+                            direction="outbound",
+                        )
+                    )
                 else:
                     self.log.warning("未设置 HELIOS_QQ_TARGET_ID，无法发送")
                     ok = False
@@ -738,34 +1038,91 @@ class Helios:
                 if ok:
                     self._last_master_contact = time.time()
                     self._separation_anxiety = 0.0
-                    self.regulation.note_action_executed(action)
                     self.log.info(f"🗣️ [{action}] → QQ: {text[:60]}")
                 else:
                     self.log.warning(f"🗣️ [{action}] QQ 发送失败")
             else:
                 self.log.info(f"🗣️ [{action}] (无QQ): {text[:60] if text else ''}")
-            return
+            return bool(text) and ok
         
         if action == "browse":
             self.log.info(f"🌐 想冲浪")
+            return True
         elif action == "search":
             self.log.info(f"🔍 想搜索")
+            return True
         elif action == "learn":
             self.log.info(f"📚 想学习")
+            return True
         elif action == "reflect":
             self.log.info(f"🤔 反思中")
+            return True
         elif action == "check_system":
             self.log.info(f"🩺 自检")
+            return True
         elif action == "idle":
-            pass
+            return True
+
+        return False
+
+    def _drain_behavior_executor(self, state: HeliosState):
+        current = self.behavior_executor.current
+        if current is None:
+            return
+
+        success = self._handle_action(current.action, state)
+        self.behavior_executor.complete_current(
+            {
+                "success": bool(success),
+                "action": current.action,
+                "tick": state.tick,
+            }
+        )
+
+    def _on_behavior_result(self, command, result: dict):
+        self.regulation.on_behavior_result(
+            action_type=command.action,
+            success=bool(result.get("success", False)),
+            result=result,
+        )
+
+    def _register_optional_channels(self):
+        active: list[str] = []
+        dormant: list[str] = []
+
+        for channel in [self._tts_channel, self._stt_channel, self._vision_channel]:
+            if bool(getattr(channel, "is_available", False)):
+                channel.connect()
+                self._channel_gateway.register_channel(channel)
+                if hasattr(channel, "evaluate_message"):
+                    self._channel_gateway.register_evaluator(channel.channel_id, channel)
+                active.append(channel.channel_id)
+            else:
+                dormant.append(channel.channel_id)
+
+        self.log.info("Active optional channels: %s", ", ".join(active) if active else "none")
+        self.log.info("Dormant optional channels: %s", ", ".join(dormant) if dormant else "none")
     
-    def _generate_speech(self, action: str) -> str:
+    def _generate_speech(self, action: str, state: Optional[HeliosState] = None) -> str:
         """
         生成自然语言话语
 
         G3: LLM 情感上下文 → 自然语言
         降级: 模板话语 (LLM 失败/未配置时)
         """
+        if state is None:
+            state = HeliosState(
+                tick=self.tick_count,
+                timestamp=time.time(),
+                valence=self.last_valence,
+                dominant_system=self.last_dominant or "",
+                icri=self.last_icri,
+                mood_valence=getattr(self.mood.state, "valence", 0.0),
+                mood_arousal=getattr(self.mood.state, "arousal", 0.0),
+                mood_label=getattr(self.mood.state, "label", "neutral"),
+                personality_traits=self.personality._trait_dict(),
+            )
+
         # ── G3 LLM 模式 ──
         if self.speech:
             # 计算距离上次联系的时间
@@ -794,14 +1151,14 @@ class Helios:
             if self.memory_system:
                 try:
                     memory_context = self.memory_system.get_llm_context(
-                        valence=self.last_valence,
-                        arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
+                        valence=state.valence,
+                        arousal=state.arousal,
                     )
                 except Exception as e:
                     self.log.debug(f"获取记忆上下文失败: {e}")
 
             # 人格简述
-            traits = self.personality._trait_dict()
+            traits = state.personality_traits or self.personality._trait_dict()
             trait_parts = []
             for name, display in [("neuroticism", "神经质"), ("agreeableness", "宜人"),
                                    ("openness", "开放"), ("extraversion", "外向"),
@@ -814,11 +1171,13 @@ class Helios:
             personality = "、".join(trait_parts) if trait_parts else "均衡"
 
             ctx = SpeechContext(
-                dominant_emotion=self.last_dominant or "SEEKING",
-                emotion_intensity=abs(self.last_valence),
-                valence=self.last_valence,
-                arousal=self.mood.state.arousal if hasattr(self.mood, 'state') else 0.5,
-                mood_label=self.mood.state.label if hasattr(self.mood, 'state') else "neutral",
+                dominant_emotion=state.dominant_system or "SEEKING",
+                emotion_intensity=abs(state.valence),
+                valence=state.valence,
+                arousal=state.arousal,
+                mood_label=state.mood_label,
+                icri=state.icri,
+                speech_style=state.speech_style,
                 action_type=action,
                 time_since_contact=time_desc,
                 recent_memory=recent_memory,
@@ -827,7 +1186,7 @@ class Helios:
                 total_messages_sent=self.speech.total_generated,
             )
 
-            text = self.speech.generate(ctx)
+            text = self.speech.generate(ctx, temperature=state.llm_temperature)
             if text:
                 return text
             # LLM 失败 → 降级到模板
@@ -855,18 +1214,28 @@ class Helios:
         mood_snap = self.mood.get_snapshot()
         load = self.allostasis.get_load_level()
         
-        self.log.info(
+        self._emit_observable_log(
+            logging.INFO,
             f"[{elapsed/60:6.1f}min t={self.tick_count:>8d}] "
-            f"Φ={self.last_phi:.3f} "
+            f"ICRI={self.last_icri:.3f} "
             f"主导={self.last_dominant:>8} "
             f"效价={self.last_valence:+.3f} "
             f"心境={mood_snap['label']:>14} "
-            f"负荷={load:.3f}"
+            f"负荷={load:.3f} "
+            f"RSS={self.last_rss_mb:.1f}MB "
+            f"Uptime={self.last_uptime_hours:.2f}h"
         )
+
+        if not self.stability_monitor.check_log_rotation(self._log_file_path):
+            self._emit_observable_log(
+                logging.WARNING,
+                f"⚠️ Log file approaching rotation threshold: {self._log_file_path}"
+            )
         
         # Requirement 23.1: Log memory subsystem statistics at each summary interval
         mem_stats = self.memory_system.get_stats()
-        self.log.info(
+        self._emit_observable_log(
+            logging.INFO,
             f"   记忆统计: working={mem_stats['working_items']} "
             f"episodic={mem_stats['episodic_items']} "
             f"semantic={mem_stats['semantic_facts']} "
@@ -893,7 +1262,8 @@ class Helios:
         episodic_count = len(self.memory_system.episodic.items)
         episodic_capacity = self.memory_system.episodic.capacity
         if episodic_count >= episodic_capacity * THRESHOLD:
-            self.log.warning(
+            self._emit_observable_log(
+                logging.WARNING,
                 f"⚠️ Episodic Memory at {episodic_count}/{episodic_capacity} "
                 f"({episodic_count/episodic_capacity*100:.0f}%) — approaching capacity"
             )
@@ -902,7 +1272,8 @@ class Helios:
         state_history_count = len(self.daisy.state_history)
         state_history_capacity = self.daisy.max_history
         if state_history_count >= state_history_capacity * THRESHOLD:
-            self.log.warning(
+            self._emit_observable_log(
+                logging.WARNING,
                 f"⚠️ State History at {state_history_count}/{state_history_capacity} "
                 f"({state_history_count/state_history_capacity*100:.0f}%) — approaching capacity"
             )
@@ -914,7 +1285,8 @@ class Helios:
             per_user_counts = hist_state.get("per_user_counts", {})
             for user_id, count in per_user_counts.items():
                 if count >= max_per_user * THRESHOLD:
-                    self.log.warning(
+                    self._emit_observable_log(
+                        logging.WARNING,
                         f"⚠️ Conversation history for user [{user_id[:10]}] at "
                         f"{count}/{max_per_user} ({count/max_per_user*100:.0f}%) — approaching capacity"
                     )
@@ -954,8 +1326,11 @@ class Helios:
         return {
             "tick": self.tick_count,
             "uptime_seconds": time.time() - self.start_time,
+            "uptime_hours": round(self.last_uptime_hours, 3),
+            "rss_mb": round(self.last_rss_mb, 3),
             "dominant": self.last_dominant,
             "valence": round(self.last_valence, 3),
+            "icri": round(self.last_icri, 4),
             "phi": round(self.last_phi, 4),
             "mood": mood,
             "allostatic_load": round(self.allostasis.get_load_level(), 3),
@@ -1051,3 +1426,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

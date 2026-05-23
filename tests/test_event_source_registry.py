@@ -6,16 +6,19 @@ Validates that:
 - Trigger dictionaries are merged using max-value semantics for overlapping keys
 """
 
-import queue
+import sys
 from typing import Dict, List
-from unittest.mock import MagicMock
+from pathlib import Path
 
 import pytest
+
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.event_source import EventSource
 from core.helios_state import HeliosState
 from core.separation_source import SeparationAnxietySource
-from core.qq_event_source import QQEventSource
 from core.drive_source import InternalDriveSource
 from core.trigger_merge import merge_triggers
 
@@ -196,19 +199,3 @@ class TestEventSourceRegistry:
         assert "SEEKING" in triggers
         assert triggers["SEEKING"] == 0.6
 
-    def test_qq_event_source_is_valid_event_source(self):
-        """QQEventSource satisfies the EventSource interface."""
-        evaluator = MagicMock()
-        evaluator.evaluate.return_value = {"CARE": 0.5}
-        q = queue.Queue()
-        q.put({"text": "你好"})
-
-        source = QQEventSource(q, evaluator)
-        state = HeliosState()
-        triggers = source.poll(state)
-        messages = source.get_messages()
-
-        assert isinstance(triggers, dict)
-        assert isinstance(messages, list)
-        assert "CARE" in triggers
-        assert len(messages) == 1

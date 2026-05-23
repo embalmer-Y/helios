@@ -7,24 +7,20 @@ including FIFO eviction, message/reply append, and bounded buffer behavior.
 Requirements: 7.4, 8.1, 8.2, 8.3, 8.4
 """
 
-import importlib.util
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
-# Load module directly to avoid 'io' name conflict with stdlib
-_spec = importlib.util.spec_from_file_location(
-    "helios_io_conversation_history",
-    "io/conversation_history.py",
-)
-_mod = importlib.util.module_from_spec(_spec)
-import sys
-sys.modules["helios_io_conversation_history"] = _mod
-_spec.loader.exec_module(_mod)
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-ConversationExchange = _mod.ConversationExchange
-ConversationHistoryManager = _mod.ConversationHistoryManager
-DEFAULT_MAX_HISTORY = _mod.DEFAULT_MAX_HISTORY
+from helios_io.conversation_history import (
+    DEFAULT_MAX_HISTORY,
+    ConversationExchange,
+    ConversationHistoryManager,
+)
 
 
 # ═══════════════════════════════════════════════════

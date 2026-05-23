@@ -25,8 +25,8 @@ from hypothesis.strategies import (
     composite,
 )
 
-from memory_system import EpisodicMemory, MemoryItem
-from autobiographical import AutobiographicalStore
+from memory import EpisodicMemory, MemoryItem
+from memory import AutobiographicalStore
 
 
 # ------------------------------------------------------------------
@@ -449,3 +449,4 @@ class TestSelectiveEpisodicSerialization:
             assert expected_ids == saved_ids, (
                 f"Expected {len(expected_ids)} items, got {len(saved_ids)}"
             )
+

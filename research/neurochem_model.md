@@ -1,5 +1,9 @@
 # Helios 神经化学定量模型
 
+> Status: Foundational Research
+> Role: Theoretical background for neuromodulatory modeling; not the source of truth for current runtime wiring
+> See also: `DESIGN_PHILOSOPHY.zh-CN.md`, `DESIGN_PHILOSOPHY.en.md`
+
 > 来源：Panksepp 情感神经科学中的神经化学基础
 >        Kringelbach & Berridge, "The Neuroscience of Happiness" (2010)
 >        Schultz, "Dopamine reward prediction error" (1997)

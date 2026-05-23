@@ -3,12 +3,12 @@ N2: Helios 情感可视化面板 (Dashboard)
 =====================================
 
 功能:
-  · 实时情感仪表盘 — Panksepp 7系统 + Φ + 神经化学 + 心境 + 异稳态
+  · 实时情感仪表盘 — Panksepp 7系统 + ICRI + 神经化学 + 心境 + 异稳态
   · HTTP 服务器 + SSE 推送
   · 纯 Chart.js 前端，无外部依赖
 
 使用:
-  python3 dashboard.py [--port 8765] [--demo] [--engine helios_runner.py]
+  python3 dashboard.py [--port 8765]
 
 架构:
   DashboardServer (HTTP + SSE)
@@ -38,7 +38,8 @@ from daisy_emotion import (
 from allostasis import AllostaticRegulator, AllostasisConfig
 from mood_tracker import MoodTracker
 from personality import PersonalityProfile
-from autobiographical import AutobiographicalStore, create_autobiographical_store
+from memory.autobiographical import create_autobiographical_store
+from memory import AutobiographicalStore
 
 # 可选模块
 try:
@@ -48,7 +49,7 @@ except ImportError:
     HAS_NEUROCHEM = False
 
 try:
-    from phi import UnifiedPhi
+    from cognition import UnifiedPhi
     # Quick check if UnifiedPhi is functional
     p = UnifiedPhi()
     p.feed_emotional({"SEEKING": 0.1})
@@ -121,6 +122,7 @@ class DashboardState:
                 "arousal": round(self.arousal, 3),
                 "dominant": self.dominant,
                 "label": self.label,
+              "icri": round(self.phi, 4),
                 "phi": round(self.phi, 4),
                 "panksepp": {k: round(v, 3) for k, v in self.panksepp.items()},
                 "neurochem": dict(self.neurochem),
@@ -166,6 +168,7 @@ class DashboardState:
                 "arousal": round(self.arousal, 3),
                 "dominant": self.dominant,
                 "label": self.label,
+                "icri": round(self.phi, 4),
                 "phi": round(self.phi, 4),
                 "neurochem": dict(self.neurochem),
                 "mood": {
@@ -475,7 +478,7 @@ body{background:#0a0a1a;color:#d0e0ff;font-family:'Segoe UI',system-ui,sans-seri
   <div class="card"><h3>🎯 Panksepp 7系统 雷达</h3><canvas id="radar"></canvas></div>
   <div class="card"><h3>📊 情感时序</h3><canvas id="timeline"></canvas></div>
   <div class="card">
-    <h3>💓 效价 / 唤醒 / Φ</h3>
+    <h3>💓 效价 / 唤醒 / ICRI</h3>
     <div id="mood-indicator"></div>
     <div class="valence-bar"><div class="valence-dot" id="v-dot" style="left:50%"></div></div>
     <canvas id="phi-chart" style="max-height:120px"></canvas>
@@ -527,7 +530,7 @@ function createCharts() {
   
   charts.phi = new Chart(document.getElementById('phi-chart'), {
     type:'line',data:{labels:[],datasets:[{
-      label:'Φ',data:[],borderColor:'#ffd040',borderWidth:1.5,pointRadius:0,tension:0.3
+      label:'ICRI',data:[],borderColor:'#ffd040',borderWidth:1.5,pointRadius:0,tension:0.3
     }]},
     options:{responsive:true,animation:false,
       scales:{x:{display:false},y:{min:0,max:1,ticks:{color:'#406080'},grid:{color:'#1a1a30'}}},
@@ -603,13 +606,13 @@ function updateDashboard(data) {
   }
   charts.timeline.update('none');
   
-  // Φ
+  // ICRI
   charts.phi.data.labels.push(data.cycle);
   if (charts.phi.data.labels.length > 120) {
     charts.phi.data.labels.shift();
     charts.phi.data.datasets[0].data.shift();
   }
-  charts.phi.data.datasets[0].data.push(data.phi || 0);
+  charts.phi.data.datasets[0].data.push(data.icri ?? data.phi ?? 0);
   charts.phi.update('none');
   
   // 神经化学
@@ -699,37 +702,6 @@ es.onerror = function() { setTimeout(() => location.reload(), 3000); };
 
 
 # ═══════════════════════════════════════════════
-# 事件源: 演示用
-# ═══════════════════════════════════════════════
-
-class DemoEventSource:
-    """演示事件源 — 模拟情感事件序列"""
-    
-    DEMO_EVENTS = [
-        # (开始周期, 事件触发)
-        (0,   {"FEAR": 0.6, "PANIC": 0.3}),
-        (12,  {"CARE": 0.5, "PLAY": 0.2}),
-        (25,  {"SEEKING": 0.7, "LUST": 0.3}),
-        (40,  {"FEAR": 0.8, "RAGE": 0.4}),
-        (55,  {"PLAY": 0.6, "SEEKING": 0.2}),
-        (70,  {"PANIC": 0.7, "FEAR": 0.3}),
-        (85,  {"CARE": 0.6, "SEEKING": 0.1}),
-        (100, {"RAGE": 0.6, "PANIC": 0.2}),
-        (115, {"PLAY": 0.7, "LUST": 0.4}),
-        (130, {"SEEKING": 0.8, "CARE": 0.3}),
-        (150, {"FEAR": 0.5, "SEEKING": 0.2}),
-        (165, {"PLAY": 0.5, "CARE": 0.5}),
-        (180, {"PANIC": 0.6, "RAGE": 0.3}),
-    ]
-    
-    def get_event(self, cycle: int) -> dict:
-        for start_cycle, triggers in self.DEMO_EVENTS:
-            if cycle == start_cycle:
-                return dict(triggers)
-        return {}
-
-
-# ═══════════════════════════════════════════════
 # 主入口
 # ═══════════════════════════════════════════════
 
@@ -737,7 +709,6 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Helios 情感可视化面板")
     parser.add_argument("--port", type=int, default=8765, help="HTTP 端口 (默认 8765)")
-    parser.add_argument("--demo", action="store_true", default=True, help="使用演示事件源")
     parser.add_argument("--interval", type=float, default=0.15, help="引擎周期间隔/秒 (默认 0.15)")
     args = parser.parse_args()
     
@@ -745,12 +716,9 @@ def main():
     state = DashboardState()
     DashboardHandler.state = state
     
-    # 事件源
-    event_source = DemoEventSource() if args.demo else None
-    
     # Helios 运行器
     autobio = create_autobiographical_store()
-    runner = HeliosRunner(state, event_source, autobio_store=autobio)
+    runner = HeliosRunner(state, autobio_store=autobio)
     runner.cycle_interval = args.interval
     runner.start()
     
@@ -770,3 +738,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
