@@ -193,7 +193,7 @@ When new research-linked modules are added or rewritten, prefer this minimum sta
 
 1. module docstring states theory origin and implementation boundary
 2. classes or key methods that directly embody a theory component say so explicitly
-3. code should point to curated `research/` notes rather than embedding long paper excerpts
+3. code should point to curated `docs/foundations/` notes rather than embedding long paper excerpts
 4. if a module is only inspired by a theory rather than implementing it directly, say that clearly
 
 ## 7. Relationship To Other Docs

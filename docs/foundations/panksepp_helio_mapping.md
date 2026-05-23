@@ -2,7 +2,7 @@
 
 > Status: Foundational Research
 > Role: Conceptual mapping between affective neuroscience and Helios emotion modeling; not a current architecture map
-> See also: `../docs/DESIGN_PHILOSOPHY.zh-CN.md`, `../docs/DESIGN_PHILOSOPHY.en.md`
+> See also: `../DESIGN_PHILOSOPHY.zh-CN.md`, `../DESIGN_PHILOSOPHY.en.md`
 
 > 来源：Jaak Panksepp, "Affective Neuroscience" (1998)
 >        "The Archaeology of Mind" (Panksepp & Biven, 2012)

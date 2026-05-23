@@ -2,7 +2,7 @@
 
 > Status: Foundational Research
 > Role: Theoretical background for endogenous thinking and replay; not the source of truth for current package ownership
-> See also: `../docs/DESIGN_PHILOSOPHY.zh-CN.md`, `../docs/DESIGN_PHILOSOPHY.en.md`
+> See also: `../DESIGN_PHILOSOPHY.zh-CN.md`, `../DESIGN_PHILOSOPHY.en.md`
 
 > 来源：Raichle et al., "A Default Mode of Brain Function" (2001)
 >        Buckner et al., "The Brain's Default Network" (2008)

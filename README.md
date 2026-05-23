@@ -94,7 +94,7 @@ One practical rule defines most of the repository:
 - `cognition/`: appraisal, drives, phi, thinking, and integration layers
 - `regulation/`: action selection, conation, and behavior regulation
 - `docs/`: active architecture, detailed design, implementation mapping, visual overviews, and bilingual entry pages
-- `research/`: foundational research archive, theory notes, and source materials
+- `docs/foundations/`: foundational research archive, theory notes, and source materials
 - `tests/`: regression and property-based tests
 
 ## Runtime Feel
@@ -136,7 +136,7 @@ Use this path if you are new to the repository:
 6. [docs/architecture_overview.html](docs/architecture_overview.html)
 7. [docs/current_structure.md](docs/current_structure.md)
 
-Use the foundational research notes in `research/` only after the active docs. The active docs in `docs/` describe the current implementation. The foundational notes explain why the system was designed this way.
+Use the foundational research notes in `docs/foundations/` only after the active docs. The active docs in `docs/` describe the current implementation. The foundational notes explain why the system was designed this way.
 
 ### Best First Click
 
@@ -170,7 +170,7 @@ The `docs/` directory now includes:
 - source catalog and collection-backlog docs in Chinese and English
 - static HTML pages for architecture navigation and visual system maps
 
-The `research/` directory now serves as the foundational archive for theory notes, historical synthesis, and raw source materials.
+The `docs/foundations/` directory now serves as the foundational archive for theory notes, historical synthesis, and raw source materials.
 
 If you want the shortest path to understanding the project, go here first:
 
@@ -183,7 +183,7 @@ Helios is the kind of repository where code alone tells only part of the story.
 The documentation system now splits responsibilities:
 
 - `docs/` explains the current architecture, runtime design, implementation mapping, and source traceability
-- `research/` explains the theoretical background and preserved research basis
+- `docs/foundations/` explains the theoretical background and preserved research basis
 - together they show why modules exist, which theories influenced them, and how to move from architecture to sources without getting lost
 
 So the README is intentionally a launchpad.

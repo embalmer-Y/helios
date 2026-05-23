@@ -8,7 +8,7 @@
 
 This file answers three questions:
 
-1. which original or near-original materials already exist under `research/`
+1. which original or near-original materials already exist under `docs/foundations/`
 2. which modules or design decisions those materials support
 3. which papers, books, or reviews still need to be added to the citation backlog
 
@@ -29,21 +29,21 @@ The goal is traceability and collection status, not unchecked repository growth 
 
 | File | Type | Topic | Supports | Status |
 | --- | --- | --- | --- | --- |
-| `anthropic_emotion_paper.pdf` | PDF | external emotion research paper | `helios_io/llm_sec_evaluator.py`, `helios_io/response_pipeline.py` | present |
-| `anthropic_emotion_paper.txt` | extracted text | searchable text version of the paper | same modules, plus searchable excerpts | present |
-| `anthropic_emotion_concepts.txt` | concept extract | emotion, appraisal, and SEC-related concepts | `cognition/appraisal.py`, `helios_io/llm_sec_evaluator.py` | present |
+| `foundations/sources/anthropic_emotion_paper.pdf` | PDF | external emotion research paper | `helios_io/llm_sec_evaluator.py`, `helios_io/response_pipeline.py` | present |
+| `foundations/sources/anthropic_emotion_paper.txt` | extracted text | searchable text version of the paper | same modules, plus searchable excerpts | present |
+| `foundations/sources/anthropic_emotion_concepts.txt` | concept extract | emotion, appraisal, and SEC-related concepts | `cognition/appraisal.py`, `helios_io/llm_sec_evaluator.py` | present |
 
 ### 3.2 Curated Research Notes
 
 | File | Topic | Main supported modules |
 | --- | --- | --- |
-| `panksepp_helio_mapping.md` | Panksepp seven-system mapping to Helios affect surfaces | `daisy_emotion.py`, `personality.py`, `regulation/regulation.py` |
-| `neurochem_model.md` | neuromodulator model | `neurochem.py`, `cognition/drives.py`, `cognition/phi.py` |
-| `fep_formalization.md` | free energy formalization | `cognition/drives.py`, `allostasis.py`, `helios_main.py` |
-| `friston_panksepp_synthesis.md` | bridge between FEP and primary affect systems | `helios_main.py`, `regulation/regulation.py`, `cognition/drives.py` |
-| `dmn_thinking_model.md` | DMN, replay, and endogenous thought | `cognition/thinking_integration.py`, `cognition/phi.py` |
-| `preconscious_path_research.md` | bounded preconscious candidate-path research | `cognition/thinking_integration.py`, `helios_main.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
-| `personality_influence_research.md` | trait-prior and personality projection research | `personality.py`, `personality_projection.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
+| `foundations/panksepp_helio_mapping.md` | Panksepp seven-system mapping to Helios affect surfaces | `daisy_emotion.py`, `personality.py`, `regulation/regulation.py` |
+| `foundations/neurochem_model.md` | neuromodulator model | `neurochem.py`, `cognition/drives.py`, `cognition/phi.py` |
+| `foundations/fep_formalization.md` | free energy formalization | `cognition/drives.py`, `allostasis.py`, `helios_main.py` |
+| `foundations/friston_panksepp_synthesis.md` | bridge between FEP and primary affect systems | `helios_main.py`, `regulation/regulation.py`, `cognition/drives.py` |
+| `foundations/dmn_thinking_model.md` | DMN, replay, and endogenous thought | `cognition/thinking_integration.py`, `cognition/phi.py` |
+| `foundations/preconscious_path_research.md` | bounded preconscious candidate-path research | `cognition/thinking_integration.py`, `helios_main.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
+| `foundations/personality_influence_research.md` | trait-prior and personality projection research | `personality.py`, `personality_projection.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
 
 ## 4. Citation Entries
 

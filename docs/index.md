@@ -2,7 +2,7 @@
 
 This directory is now the canonical home for Helios active documentation.
 
-Read the files here when you need the current system definition, runtime wiring, implementation mapping, or the primary bilingual documentation entry points. Use `../research/` only for foundational theory and archived background notes.
+Read the files here when you need the current system definition, runtime wiring, implementation mapping, or the primary bilingual documentation entry points. Use `foundations/` only for foundational theory and archived background notes.
 
 ## Active Documentation
 
@@ -19,9 +19,9 @@ Read the files here when you need the current system definition, runtime wiring,
 - `diagrams/`: standalone Mermaid diagram files extracted from the active architecture and design docs
 - `current_structure.md`: short-form structural reference after cleanup and migration
 
-## Relationship To `research/`
+## Relationship To `foundations/`
 
-The `../research/` directory now acts as the foundational archive. It keeps theory notes, historical synthesis, and source materials that explain why Helios was designed this way, but it no longer defines current package ownership or runtime structure.
+The `foundations/` directory now acts as the foundational archive. It keeps theory notes, historical synthesis, and source materials that explain why Helios was designed this way, but it no longer defines current package ownership or runtime structure.
 
 Start there only when you need conceptual background such as DMN, neurochemistry, Panksepp mapping, free-energy framing, or the preconscious and personality research notes.
 
@@ -34,8 +34,8 @@ Start there only when you need conceptual background such as DMN, neurochemistry
 5. Read `SOURCE_CATALOG.zh-CN.md` or `SOURCE_CATALOG.en.md` when you need source provenance, citations, or collection status.
 6. Open `architecture_overview.html` when you need a visual map of the current architecture.
 7. Use `current_structure.md` as the quick boundary sheet.
-8. Consult `../research/index.md` only when tracing the theoretical basis behind the active design.
+8. Consult `foundations/index.md` only when tracing the theoretical basis behind the active design.
 
 ## Interpretation Rule
 
-If an older research note conflicts with the codebase, the codebase wins first, the active docs in this directory win second, and the foundational archive under `../research/` is background only.
+If an older research note conflicts with the codebase, the codebase wins first, the active docs in this directory win second, and the foundational archive under `foundations/` is background only.

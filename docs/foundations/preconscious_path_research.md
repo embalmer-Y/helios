@@ -5,7 +5,7 @@
 > Scope: preconscious / non-conscious candidate generation before full reflective planning
 > Related runtime surfaces: `cognition/thinking_integration.py`, `cognition/phi.py`, `helios_main.py`, `helios_io/interaction_policy.py`, `regulation/policy.py`
 
-> Archive note: the current implementation view now lives under `../docs/`. Use `../docs/DESIGN_PHILOSOPHY.en.md` and `../docs/IMPLEMENTATION_REFERENCE.en.md` when you need the active runtime definition.
+> Archive note: the current implementation view now lives one level up under `docs/`. Use `../DESIGN_PHILOSOPHY.en.md` and `../IMPLEMENTATION_REFERENCE.en.md` when you need the active runtime definition.
 
 ## 1. Research Goal
 

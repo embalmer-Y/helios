@@ -8,7 +8,7 @@
 
 本文件用于回答三个问题：
 
-1. 当前 `research/` 中已经有哪些原始资料或整理资料。
+1. 当前 `docs/foundations/` 中已经有哪些原始资料或整理资料。
 2. 这些资料分别支撑哪些代码模块或设计决策。
 3. 还缺哪些关键论文、书籍或综述需要补入引用清单。
 
@@ -29,21 +29,21 @@
 
 | 文件 | 类型 | 主题 | 支撑模块/文档 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `anthropic_emotion_paper.pdf` | PDF | 外部情绪研究论文原始文件 | `helios_io/llm_sec_evaluator.py`, `helios_io/response_pipeline.py` | 已入库 |
-| `anthropic_emotion_paper.txt` | 文本提取 | 情绪研究论文文本版 | 同上，便于全文检索与摘录 | 已入库 |
-| `anthropic_emotion_concepts.txt` | 概念摘录 | emotion / SEC / 评价相关概念 | `cognition/appraisal.py`, `helios_io/llm_sec_evaluator.py` | 已入库 |
+| `foundations/sources/anthropic_emotion_paper.pdf` | PDF | 外部情绪研究论文原始文件 | `helios_io/llm_sec_evaluator.py`, `helios_io/response_pipeline.py` | 已入库 |
+| `foundations/sources/anthropic_emotion_paper.txt` | 文本提取 | 情绪研究论文文本版 | 同上，便于全文检索与摘录 | 已入库 |
+| `foundations/sources/anthropic_emotion_concepts.txt` | 概念摘录 | emotion / SEC / 评价相关概念 | `cognition/appraisal.py`, `helios_io/llm_sec_evaluator.py` | 已入库 |
 
 ### 3.2 Curated Research Notes
 
 | 文件 | 主题 | 主要支撑模块 |
 | --- | --- | --- |
-| `panksepp_helio_mapping.md` | Panksepp 7 系统与 Helios 情感映射 | `daisy_emotion.py`, `personality.py`, `regulation/regulation.py` |
-| `neurochem_model.md` | 神经调质模型 | `neurochem.py`, `cognition/drives.py`, `cognition/phi.py` |
-| `fep_formalization.md` | 自由能原理形式化 | `cognition/drives.py`, `allostasis.py`, `helios_main.py` |
-| `friston_panksepp_synthesis.md` | FEP 与原始情感系统综合 | `helios_main.py`, `regulation/regulation.py`, `cognition/drives.py` |
-| `dmn_thinking_model.md` | DMN / replay / 内生思维 | `cognition/thinking_integration.py`, `cognition/phi.py` |
-| `preconscious_path_research.md` | 前意识候选动作边界与研究映射 | `cognition/thinking_integration.py`, `helios_main.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
-| `personality_influence_research.md` | 人格影响与 trait-prior 投影层 | `personality.py`, `personality_projection.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
+| `foundations/panksepp_helio_mapping.md` | Panksepp 7 系统与 Helios 情感映射 | `daisy_emotion.py`, `personality.py`, `regulation/regulation.py` |
+| `foundations/neurochem_model.md` | 神经调质模型 | `neurochem.py`, `cognition/drives.py`, `cognition/phi.py` |
+| `foundations/fep_formalization.md` | 自由能原理形式化 | `cognition/drives.py`, `allostasis.py`, `helios_main.py` |
+| `foundations/friston_panksepp_synthesis.md` | FEP 与原始情感系统综合 | `helios_main.py`, `regulation/regulation.py`, `cognition/drives.py` |
+| `foundations/dmn_thinking_model.md` | DMN / replay / 内生思维 | `cognition/thinking_integration.py`, `cognition/phi.py` |
+| `foundations/preconscious_path_research.md` | 前意识候选动作边界与研究映射 | `cognition/thinking_integration.py`, `helios_main.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
+| `foundations/personality_influence_research.md` | 人格影响与 trait-prior 投影层 | `personality.py`, `personality_projection.py`, `helios_io/interaction_policy.py`, `regulation/policy.py` |
 
 ## 4. 引用条目
 

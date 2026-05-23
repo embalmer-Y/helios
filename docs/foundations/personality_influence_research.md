@@ -5,7 +5,7 @@
 > Scope: how long-horizon personality traits should bias interaction, regulation, and planning without fragmenting into ad hoc constants
 > Related runtime surfaces: `personality.py`, `personality_projection.py`, `helios_io/interaction_policy.py`, `regulation/policy.py`, `helios_main.py`
 
-> Archive note: the current implementation view now lives under `../docs/`. Use `../docs/DESIGN_PHILOSOPHY.en.md` and `../docs/IMPLEMENTATION_REFERENCE.en.md` when you need the active runtime definition.
+> Archive note: the current implementation view now lives one level up under `docs/`. Use `../DESIGN_PHILOSOPHY.en.md` and `../IMPLEMENTATION_REFERENCE.en.md` when you need the active runtime definition.
 
 ## 1. Research Goal
 
