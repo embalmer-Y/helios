@@ -24,10 +24,19 @@ import time
 import logging
 import json
 import os
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from collections import defaultdict
 
+from behavior_registry import RuntimeBehaviorCatalog
+from helios_io.bootstrap_behavior_specs import (
+    REGULATION_CHANNEL_BOOTSTRAP,
+    REGULATION_INTERNAL_BOOTSTRAP,
+)
+from helios_io.action_models import ActionProposal
+from helios_io.action_models import ExecutionFeedback
+from .constants import DRIVE_ACTION_RELEVANCE
+from .policy import ActionCandidate, RegulationAssessment, RegulationPolicy
 from utils import clamp
 
 # ═══════════════════════════════════════════════
@@ -61,55 +70,28 @@ class RegulationMemory:
         )
         self.timestamp = time.time()
 
-
-@dataclass
-class ActionCandidate:
-    """一个候选行为"""
-    action_type: str
-    expected_benefit: float      # 预期调节效果 (基于记忆)
-    confidence: float            # 基于经验数量的置信度
-    memory_count: int            # 相关记忆数量
-    cooldown_ok: bool
-    night_safe: bool
-    content_hint: str = ""
-    final_score: float = 0.0     # 综合评分 (含驱动权重)
-    
-    @property
-    def score(self) -> float:
-        """情感偏离评分 (emotional deviation score)"""
-        return self.expected_benefit * (0.5 + 0.5 * self.confidence)
-
-
-# ═══════════════════════════════════════════════
-# 可用行为池
-# ═══════════════════════════════════════════════
-
-AVAILABLE_ACTIONS = {
-    # 社交行为
-    "speak_care":       {"cooldown": 600,  "night_suppress": True,  "hint": "关心主人"},
-    "speak_missing":    {"cooldown": 900,  "night_suppress": False, "hint": "表达想念"},
-    "speak_play":       {"cooldown": 1200, "night_suppress": True,  "hint": "逗主人开心"},
-    "speak_fear":       {"cooldown": 600,  "night_suppress": False, "hint": "寻求安抚"},
-    "speak_share":      {"cooldown": 900,  "night_suppress": True,  "hint": "分享想法"},
-    "speak_complain":   {"cooldown": 3600, "night_suppress": True,  "hint": "表达不满"},
-    
-    # 探索行为
-    "browse":           {"cooldown": 600,  "night_suppress": True,  "hint": "上网冲浪"},
-    "search":           {"cooldown": 180,  "night_suppress": True,  "hint": "搜索知识"},
-    "learn":            {"cooldown": 1800, "night_suppress": True,  "hint": "深入学习"},
-    
-    # 元行为
-    "request":          {"cooldown": 7200, "night_suppress": True,  "hint": "向主人提需求"},
-    "reflect":          {"cooldown": 3600, "night_suppress": True,  "hint": "自我反思"},
-    "check_system":     {"cooldown": 1800, "night_suppress": True,  "hint": "检查自身状态"},
-    
-    # 不做任何事
-    "idle":             {"cooldown": 0,    "night_suppress": True,  "hint": "静静待着"},
-}
-
 # ═══════════════════════════════════════════════
 # Bootstrap 初始关联 (常识, 可被经验覆盖)
 # ═══════════════════════════════════════════════
+
+AVAILABLE_ACTIONS = {
+    **{
+        action_name: {
+            "cooldown": int(config["cooldown"]),
+            "night_suppress": bool(config["night_suppress"]),
+            "hint": str(config["hint"]),
+        }
+        for action_name, config in REGULATION_CHANNEL_BOOTSTRAP.items()
+    },
+    **{
+        action_name: {
+            "cooldown": int(config["cooldown"]),
+            "night_suppress": bool(config["night_suppress"]),
+            "hint": str(config["hint"]),
+        }
+        for action_name, config in REGULATION_INTERNAL_BOOTSTRAP.items()
+    },
+}
 
 # "当 PANIC 偏离基线时，这些行为历史上有效" (初始猜测)
 BOOTSTRAP_REGULATION = [
@@ -133,43 +115,6 @@ BOOTSTRAP_REGULATION = [
 # 驱动-行为关联 (drive → action relevance)
 # ═══════════════════════════════════════════════
 
-# Maps drive names to actions that satisfy that drive, with relevance [0, 1]
-DRIVE_ACTION_RELEVANCE: Dict[str, Dict[str, float]] = {
-    "curiosity": {
-        "browse": 1.0,
-        "search": 0.9,
-        "learn": 1.0,
-        "speak_share": 0.6,
-        "reflect": 0.4,
-    },
-    "social": {
-        "speak_care": 1.0,
-        "speak_missing": 0.9,
-        "speak_play": 0.8,
-        "speak_share": 0.7,
-        "speak_fear": 0.6,
-        "request": 0.5,
-    },
-    "homeostatic": {
-        "reflect": 0.8,
-        "check_system": 1.0,
-        "idle": 0.7,
-    },
-    "achievement": {
-        "learn": 0.7,
-        "search": 0.6,
-        "request": 0.5,
-        "check_system": 0.4,
-    },
-    "aesthetic": {
-        "speak_share": 0.8,
-        "speak_play": 0.7,
-        "browse": 0.5,
-        "reflect": 0.6,
-    },
-}
-
-
 # ═══════════════════════════════════════════════
 # 情感调节引擎
 # ═══════════════════════════════════════════════
@@ -185,7 +130,8 @@ class RegulationEngine:
                  baseline_valence: float = 0.05,
                  baseline_activation: float = 0.15,
                  comfort_deviation: float = 0.2,
-                 data_dir: str = "data"):
+                 data_dir: str = "data",
+                 behavior_catalog: Optional[RuntimeBehaviorCatalog] = None):
         
         self.baseline_valence = baseline_valence
         self.baseline_activation = baseline_activation
@@ -208,6 +154,16 @@ class RegulationEngine:
         # 持久化路径
         self.data_dir = data_dir
         self.memories_path = os.path.join(data_dir, "regulation_memories.json")
+        self.behavior_catalog = behavior_catalog or RuntimeBehaviorCatalog.from_db_path(
+            os.path.join(data_dir, RuntimeBehaviorCatalog.DEFAULT_DB_FILENAME)
+        )
+        self.behavior_catalog.ensure_bootstrap_behaviors()
+        self.policy = RegulationPolicy(
+            behavior_catalog=self.behavior_catalog,
+            baseline_valence=self.baseline_valence,
+            baseline_activation=self.baseline_activation,
+            comfort_deviation=self.comfort_deviation,
+        )
         
         # 日志
         self.log = logging.getLogger("helios.regulation")
@@ -215,6 +171,8 @@ class RegulationEngine:
         # 统计
         self.total_regulations = 0
         self.action_history: List[dict] = []
+        self.recent_execution_outcomes: List[dict[str, Any]] = []
+        self.last_assessment: Optional[RegulationAssessment] = None
     
     def _load_bootstrap(self):
         """加载常识性初始关联"""
@@ -233,8 +191,9 @@ class RegulationEngine:
     def note_action_executed(self, action_type: str):
         """标记行为已执行 (供外部调用)"""
         if action_type in self.memories:
-            for emotion, mem in self.memories[action_type].items():
-                mem.last_executed = time.time()
+            now = time.time()
+            for mem in self.memories[action_type].values():
+                mem.timestamp = now
     
     # ═══════════════════════════════════════════
     # 主入口
@@ -243,7 +202,9 @@ class RegulationEngine:
     def tick(self, panksepp: Dict[str, float], valence: float,
              hour_of_day: int,
              drive_urgency: float = 0.0,
-             drive_dominant: str = "") -> Optional[str]:
+             drive_dominant: str = "",
+             neurochem_gate: Optional[object] = None,
+             temporal_gate: Optional[object] = None) -> Optional[str]:
         """
         每 tick 调用。
         
@@ -256,76 +217,203 @@ class RegulationEngine:
         
         返回: 选中的 action_type (字符串) 或 None
         """
+        proposals = self.generate_action_proposals(
+            panksepp=panksepp,
+            valence=valence,
+            hour_of_day=hour_of_day,
+            drive_urgency=drive_urgency,
+            drive_dominant=drive_dominant,
+            neurochem_gate=neurochem_gate,
+            temporal_gate=temporal_gate,
+        )
+        return proposals[0].behavior_name if proposals else None
+
+    def evaluate_regulation(self,
+             panksepp: Dict[str, float], valence: float,
+             hour_of_day: int,
+             drive_urgency: float = 0.0,
+             drive_dominant: str = "",
+             neurochem_gate: Optional[object] = None,
+             temporal_gate: Optional[object] = None,
+             personality_projection: Optional[object] = None,
+             dominant_emotions: Optional[List[str]] = None,
+             recent_execution_outcomes: Optional[List[dict[str, Any]]] = None) -> RegulationAssessment:
+        signals = self.policy.collect_signals(
+            panksepp=panksepp,
+            valence=valence,
+            hour_of_day=hour_of_day,
+            drive_urgency=drive_urgency,
+            drive_dominant=drive_dominant,
+            dominant_emotions=dominant_emotions,
+            recent_execution_outcomes=recent_execution_outcomes or self.recent_execution_outcomes[-5:],
+            personality_projection=personality_projection,
+            neurochem_gate=neurochem_gate,
+            temporal_gate=temporal_gate,
+        )
+        return self.policy.assess(
+            signals,
+            memories=self.memories,
+            last_executed=self._last_executed,
+        )
+
+    def generate_action_proposals(
+        self,
+        *,
+        panksepp: Dict[str, float],
+        valence: float,
+        hour_of_day: int,
+        tick: int = 0,
+        timestamp: Optional[float] = None,
+        candidate_channels: Optional[List[str]] = None,
+        candidate_channel_resolver: Optional[Callable[[str], Sequence[str]]] = None,
+        params: Optional[Dict[str, object]] = None,
+        drive_urgency: float = 0.0,
+        drive_dominant: str = "",
+        dominant_emotions: Optional[List[str]] = None,
+        personality_projection: Optional[object] = None,
+        neurochem_gate: Optional[object] = None,
+        temporal_gate: Optional[object] = None,
+    ) -> List[ActionProposal]:
         if not panksepp:
-            return None
-        
-        # 先观察上一个行为的效果
+            self.last_assessment = None
+            return []
+
         self._observe_last_action(panksepp, valence)
-        
-        # 检测哪些情感偏离了舒适区
-        deviations = self._detect_deviations(panksepp, valence)
-        
-        if not deviations:
-            return None
-        
-        # 为每个偏离的情感检索候选行为
-        candidates: List[ActionCandidate] = []
-        for sys_name, deviation in deviations:
-            candidates.extend(
-                self._query_candidates(sys_name, deviation, hour_of_day)
-            )
-        
-        if not candidates:
-            return None
-        
-        # 计算综合评分: 0.7 × emotional_deviation_score + 0.3 × drive_urgency_score
-        self._score_candidates_with_drives(candidates, drive_urgency, drive_dominant)
-        
-        # 按 final_score 排序
-        candidates.sort(key=lambda c: -c.final_score)
-        
-        # 检查最佳候选是否值得执行
-        best = candidates[0]
-        if best.final_score < 0.15:
-            return None  # 没有足够好的选项
-        
-        # 记录执行前状态
+        assessment = self.evaluate_regulation(
+            panksepp=panksepp,
+            valence=valence,
+            hour_of_day=hour_of_day,
+            drive_urgency=drive_urgency,
+            drive_dominant=drive_dominant,
+            dominant_emotions=dominant_emotions,
+            personality_projection=personality_projection,
+            neurochem_gate=neurochem_gate,
+            temporal_gate=temporal_gate,
+        )
+        self.last_assessment = assessment
+        if not assessment.wants_regulation or not assessment.selected_action:
+            return []
+
+        self._commit_selected_assessment(
+            assessment,
+            panksepp=panksepp,
+            valence=valence,
+            drive_dominant=drive_dominant,
+            drive_urgency=drive_urgency,
+        )
+
+        resolved_channels = list(candidate_channels or [])
+        if candidate_channel_resolver is not None:
+            resolved_channels = list(candidate_channel_resolver(assessment.selected_action) or [])
+        return self.policy.propose(
+            assessment,
+            tick=tick,
+            timestamp=timestamp,
+            candidate_channels=resolved_channels,
+            params=params,
+            personality_projection=personality_projection,
+            neurochem_gate=neurochem_gate,
+            temporal_gate=temporal_gate,
+            recent_action=self.last_selected_action or "",
+        )
+
+    def _commit_selected_assessment(
+        self,
+        assessment: RegulationAssessment,
+        *,
+        panksepp: Dict[str, float],
+        valence: float,
+        drive_dominant: str,
+        drive_urgency: float,
+    ) -> None:
         self._last_panksepp = dict(panksepp)
         self._last_valence = valence
-        self._pending_observation = best.action_type
-        self._last_executed[best.action_type] = time.time()
-        
+        self._pending_observation = assessment.selected_action
+        self._last_executed[assessment.selected_action] = time.time()
+
         self.total_regulations += 1
-        self.last_selected_action = best.action_type
-        self.last_selected_score = best.final_score
-        
+        self.last_selected_action = assessment.selected_action
+        self.last_selected_score = assessment.selected_score
+
         self.log.info(
-            f"调节: {best.action_type} "
-            f"(显著偏离: {[d[0] for d in deviations[:3]]}, "
-            f"final_score={best.final_score:.3f} conf={best.confidence:.2f} "
+            f"调节: {assessment.selected_action} "
+            f"(显著偏离: {[d[0] for d in assessment.deviations[:3]]}, "
+            f"final_score={assessment.selected_score:.3f} "
             f"drive={drive_dominant}:{drive_urgency:.2f})"
         )
-        
+
         self.action_history.append({
             "time": time.time(),
-            "action": best.action_type,
-            "score": round(best.final_score, 3),
-            "deviations": [(d[0], round(d[1], 3)) for d in deviations[:3]],
+            "action": assessment.selected_action,
+            "score": round(assessment.selected_score, 3),
+            "deviations": [(d[0], round(d[1], 3)) for d in assessment.deviations[:3]],
             "drive_dominant": drive_dominant,
             "drive_urgency": round(drive_urgency, 3),
         })
-        
-        return best.action_type
+
+    def build_action_proposal(
+        self,
+        action_type: str,
+        *,
+        score: Optional[float] = None,
+        tick: int = 0,
+        timestamp: Optional[float] = None,
+        candidate_channels: Optional[List[str]] = None,
+        params: Optional[Dict[str, object]] = None,
+        drive_dominant: str = "",
+        drive_urgency: float = 0.0,
+        dominant_emotions: Optional[List[str]] = None,
+        personality_projection: Optional[object] = None,
+        neurochem_gate: Optional[object] = None,
+        temporal_gate: Optional[object] = None,
+    ) -> ActionProposal:
+        return self.policy.build_action_proposal(
+            action_type,
+            score=float(self.last_selected_score if score is None else score),
+            tick=tick,
+            timestamp=timestamp,
+            candidate_channels=candidate_channels,
+            params=params,
+            drive_dominant=drive_dominant,
+            drive_urgency=drive_urgency,
+            dominant_emotions=dominant_emotions,
+            personality_projection=personality_projection,
+            neurochem_gate=neurochem_gate,
+            temporal_gate=temporal_gate,
+            recent_action=self.last_selected_action or "",
+        )
 
     def on_behavior_result(self, action_type: str, success: bool, result: Optional[dict] = None):
         """Receive execution feedback from the behavior layer."""
         if success:
             self.note_action_executed(action_type)
-            return
+        else:
+            if self._pending_observation == action_type:
+                self._pending_observation = None
+            self.log.debug("行为执行失败: %s result=%s", action_type, result or {})
 
-        if self._pending_observation == action_type:
-            self._pending_observation = None
-        self.log.debug("行为执行失败: %s result=%s", action_type, result or {})
+        self.recent_execution_outcomes.append(
+            {
+                "action": action_type,
+                "success": bool(success),
+                "channel_id": str((result or {}).get("channel_id", "") or ""),
+                "op_name": str((result or {}).get("op_name", "") or ""),
+                "observed_at_tick": int((result or {}).get("tick", 0) or 0),
+                "observed_at_ts": time.time(),
+            }
+        )
+        self.recent_execution_outcomes = self.recent_execution_outcomes[-20:]
+
+    def on_execution_feedback(self, feedback: ExecutionFeedback) -> None:
+        payload = dict(feedback.result_details)
+        payload.setdefault("tick", feedback.observed_at_tick)
+        payload.setdefault("channel_id", feedback.channel_id)
+        payload.setdefault("op_name", feedback.op_name)
+        self.on_behavior_result(
+            action_type=feedback.behavior_name,
+            success=feedback.success,
+            result=payload,
+        )
     
     # ═══════════════════════════════════════════
     # 偏离检测
@@ -333,33 +421,7 @@ class RegulationEngine:
     
     def _detect_deviations(self, panksepp: Dict[str, float],
                            valence: float) -> List[Tuple[str, float]]:
-        """
-        检测哪些情感偏离了舒适区。
-        
-        返回: [(系统名, 偏离程度)] 从大到小排列
-        """
-        deviations = []
-        
-        for sys_name, activation in panksepp.items():
-            deviation = abs(activation - self.baseline_activation)
-            if deviation >= self.comfort_deviation:
-                # 考虑效价的方向性
-                # 负效价 + 高激活 = 更急需调节
-                urgency = deviation
-                if valence < -0.1 and activation > self.baseline_activation:
-                    urgency *= 1.3
-                deviations.append((sys_name, urgency))
-        
-        # 效价本身也偏离了
-        valence_dev = abs(valence - self.baseline_valence)
-        if valence_dev > self.comfort_deviation * 1.5:
-            # 找出最偏离的情感作为代表
-            if deviations:
-                # 给最偏离的加权重
-                deviations[0] = (deviations[0][0], deviations[0][1] * 1.2)
-        
-        deviations.sort(key=lambda x: -x[1])
-        return deviations[:3]  # 最多3个
+        return self.policy.detect_deviations(panksepp, valence)
     
     # ═══════════════════════════════════════════
     # 候选行为检索
@@ -367,54 +429,13 @@ class RegulationEngine:
     
     def _query_candidates(self, sys_name: str, deviation: float,
                           hour_of_day: int) -> List[ActionCandidate]:
-        """为特定情感检索能调节它的行为"""
-        is_night = (hour_of_day >= 23 or hour_of_day < 7)
-        now = time.time()
-        candidates = []
-        
-        for action_type, config in AVAILABLE_ACTIONS.items():
-            # 冷却检查
-            cooldown_ok = now - self._last_executed.get(action_type, 0) >= config["cooldown"]
-            if not cooldown_ok:
-                continue
-            
-            # 夜间抑制
-            night_safe = True
-            if is_night and config["night_suppress"]:
-                # 只有特别紧急的才在夜间执行
-                if deviation < 0.5:
-                    continue
-                night_safe = False  # 标记为夜间破例
-            
-            # 查询记忆
-            memory = self.memories.get(action_type, {}).get(sys_name)
-            universal_memory = self.memories.get(action_type, {}).get("ALL")
-            
-            if memory:
-                expected_benefit = memory.delta_valence * 0.7 - memory.delta_activation * 0.3
-                confidence = min(memory.count / 10.0, 1.0) * memory.success_rating
-                mem_count = memory.count
-            elif universal_memory:
-                expected_benefit = universal_memory.delta_valence * 0.5
-                confidence = 0.3
-                mem_count = 1
-            else:
-                # 无记忆 → 探索价值
-                expected_benefit = 0.1  # 小正期望（试错价值）
-                confidence = 0.1
-                mem_count = 0
-            
-            candidates.append(ActionCandidate(
-                action_type=action_type,
-                expected_benefit=expected_benefit,
-                confidence=confidence,
-                memory_count=mem_count,
-                cooldown_ok=cooldown_ok,
-                night_safe=night_safe,
-                content_hint=config["hint"],
-            ))
-        
-        return candidates
+        return self.policy.query_candidates(
+            sys_name,
+            deviation,
+            hour_of_day,
+            memories=self.memories,
+            last_executed=self._last_executed,
+        )
     
     # ═══════════════════════════════════════════
     # 驱动-情感综合评分
@@ -422,25 +443,16 @@ class RegulationEngine:
     
     def _score_candidates_with_drives(self, candidates: List[ActionCandidate],
                                        drive_urgency: float,
-                                       drive_dominant: str):
-        """
-        为每个候选行为计算综合评分:
-        final_score = 0.7 × emotional_deviation_score + 0.3 × drive_urgency_score
-        
-        drive_urgency_score = drive_urgency × relevance(action, drive_dominant)
-        其中 relevance 来自 DRIVE_ACTION_RELEVANCE 映射
-        """
-        for candidate in candidates:
-            emotional_score = candidate.score  # existing emotion-based score
-            
-            # Compute drive urgency score for this candidate
-            relevance = DRIVE_ACTION_RELEVANCE.get(
-                drive_dominant, {}
-            ).get(candidate.action_type, 0.0)
-            drive_score = drive_urgency * relevance
-            
-            # Weighted combination: 70% emotional + 30% drive
-            candidate.final_score = 0.7 * emotional_score + 0.3 * drive_score
+                                       drive_dominant: str,
+                                       neurochem_gate: Optional[object] = None,
+                                       temporal_gate: Optional[object] = None):
+        self.policy.score_candidates_with_drives(
+            candidates,
+            drive_urgency,
+            drive_dominant,
+            neurochem_gate=neurochem_gate,
+            temporal_gate=temporal_gate,
+        )
     
     # ═══════════════════════════════════════════
     # 效果观察 & 学习

@@ -334,6 +334,23 @@ class TestGenerateReply:
         assert "记得 user1 说过喜欢海边" in ctx
         assert "这条不应被放进去" not in ctx
 
+    def test_autobio_context_prefers_memory_system_retrieval_contract(self):
+        mock_memory = MagicMock()
+        mock_memory.get_autobio_context.return_value = "相关记忆:\n  - 统一检索命中"
+        mock_autobio = MagicMock()
+        pipeline = ResponsePipeline(memory_system=mock_memory, autobio_store=mock_autobio)
+
+        ctx = pipeline._get_autobio_context("我们再去海边散步吧", "user1", [])
+
+        mock_memory.get_autobio_context.assert_called_once_with(
+            topic_text="我们再去海边散步吧",
+            user_id="user1",
+            history_texts=[],
+            limit=3,
+        )
+        mock_autobio.query_related.assert_not_called()
+        assert "统一检索命中" in ctx
+
     def test_autobio_context_empty_when_no_related_memories(self):
         """No related autobiographical memories should degrade to empty context."""
         mock_autobio = MagicMock()

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import heapq
+from dataclasses import asdict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional
+
+from .action_models import ActionDecision
 
 
 class BehaviorStatus(Enum):
@@ -21,7 +24,16 @@ class BehaviorCommand:
     priority: int
     name: str
     action: str
+    behavior_id: str = ""
     params: dict[str, Any] = field(default_factory=dict)
+    proposal_id: str = ""
+    decision_id: str = ""
+    channel_id: str = ""
+    op_name: str = ""
+    modality: str = ""
+    provenance: dict[str, Any] = field(default_factory=dict)
+    policy_trace: dict[str, Any] = field(default_factory=dict)
+    behavior_snapshot: dict[str, Any] = field(default_factory=dict)
     status: BehaviorStatus = BehaviorStatus.QUEUED
     result: Optional[dict[str, Any]] = None
     sort_index: int = 0
@@ -73,6 +85,25 @@ class BehaviorExecutor:
             )
         )
 
+    def enqueue_decision(self, decision: ActionDecision) -> BehaviorCommand:
+        return self.enqueue(
+            BehaviorCommand(
+                priority=decision.execution_priority,
+                name=decision.decision_id,
+                action=decision.behavior_name,
+                behavior_id=str(decision.behavior_snapshot.get("behavior_id", "") or ""),
+                params=dict(decision.validated_params),
+                proposal_id=decision.proposal_id,
+                decision_id=decision.decision_id,
+                channel_id=decision.selected_channel_id,
+                op_name=decision.selected_op,
+                modality=decision.selected_modality,
+                provenance=dict(decision.proposal_snapshot),
+                policy_trace=dict(decision.policy_trace),
+                behavior_snapshot=dict(decision.behavior_snapshot),
+            )
+        )
+
     def cancel(self, name: str) -> bool:
         if self._current and self._current.name == name:
             self._current.status = BehaviorStatus.CANCELLED
@@ -116,10 +147,16 @@ class BehaviorExecutor:
 
         completed = self._current
         completed.status = BehaviorStatus.COMPLETED
-        completed.result = result
+        merged_result = dict(result)
+        merged_result.setdefault("proposal_id", completed.proposal_id)
+        merged_result.setdefault("decision_id", completed.decision_id)
+        merged_result.setdefault("behavior_id", completed.behavior_id)
+        merged_result.setdefault("channel_id", completed.channel_id)
+        merged_result.setdefault("op_name", completed.op_name)
+        completed.result = merged_result
         self._current = None
         if self._result_callback:
-            self._result_callback(completed, result)
+            self._result_callback(completed, merged_result)
         self._advance()
         return completed
 

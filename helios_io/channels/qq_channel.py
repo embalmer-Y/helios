@@ -7,7 +7,7 @@ import queue
 import time
 from typing import Dict, List, Optional
 
-from ..channel import BidirectionalChannel, ChannelMessage, ChannelStatus
+from ..channel import BidirectionalChannel, ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, ChannelStatus
 
 try:
     from ..protocols.qq import RECONNECT_DELAYS as _QQ_RECONNECT_DELAYS
@@ -95,6 +95,41 @@ class QQChannel(BidirectionalChannel):
     @property
     def channel_id(self) -> str:
         return self.CHANNEL_ID
+
+    def get_descriptor(self) -> ChannelDescriptor:
+        return ChannelDescriptor(
+            channel_id=self.CHANNEL_ID,
+            display_name="QQ Channel",
+            input_types=["text_message"],
+            output_types=["text_message"],
+            input_formats=["qq:c2c", "qq:group"],
+            output_formats=["qq:c2c", "qq:group"],
+            capabilities=["poll", "send", "text_output", "text_input", "sec_annotation", "direct_message", "group_message"],
+            supported_ops=[
+                ChannelOpDescriptor(
+                    name="poll",
+                    direction="input",
+                    description="Poll inbound QQ messages and normalize them into ChannelMessage objects.",
+                    output_schema={"messages": "list[ChannelMessage]"},
+                ),
+                ChannelOpDescriptor(
+                    name="send",
+                    direction="output",
+                    description="Send a QQ C2C or group text message.",
+                    input_schema={"message": "ChannelMessage(text, user_id, metadata[message_id|group_id|is_group])"},
+                    output_schema={"success": "bool"},
+                ),
+            ],
+            management_ops=[
+                ChannelOpDescriptor("connect", "management", "Connect the QQ websocket client."),
+                ChannelOpDescriptor("disconnect", "management", "Disconnect the QQ websocket client."),
+            ],
+            startup_requirements=["qq_client available"],
+            shutdown_requirements=["qq client stop when present"],
+            health_signals=["is_connected", "get_status", "reconnect_attempts"],
+            ack_schema={"success": "bool", "delivery": "best_effort"},
+            limitations=["Current output support is text-only."],
+        )
 
     def get_status(self) -> ChannelStatus:
         self._refresh_connection_state()

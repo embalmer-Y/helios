@@ -89,6 +89,9 @@ def test_reply_stage_receives_forward_propagated_state(valence, arousal, phi_val
         assert forwarded_state.consciousness_label == "focused"
         assert forwarded_state.panksepp[dominant] == max(arousal, 0.2)
         assert forwarded_state.personality_traits == helios.personality._trait_dict()
+        assert forwarded_state.temporal_state is not None
+        assert 0.0 <= forwarded_state.boredom <= 1.0
+        assert 0.0 <= forwarded_state.restoration_level <= 1.0
 
         for handler in list(helios.log.handlers):
             handler.close()

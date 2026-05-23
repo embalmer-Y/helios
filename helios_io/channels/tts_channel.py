@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Callable, Optional
 
-from ..channel import ChannelMessage, OutputChannel
+from ..channel import ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, OutputChannel
 
 log = logging.getLogger("helios.helios_io.channels.tts_channel")
 
@@ -44,7 +44,7 @@ class TTSChannel(OutputChannel):
         if not enabled:
             return
         if not all([self._access_key, self._access_secret, self._app_key]):
-            log.warning("TTS credentials missing — remaining dormant")
+            log.debug("TTS credentials missing — remaining dormant")
             return
         try:
             import nls  # type: ignore
@@ -52,7 +52,7 @@ class TTSChannel(OutputChannel):
             self._nls = nls
             self._available = True
         except ImportError:
-            log.warning("nls SDK not installed — TTS channel dormant")
+            log.debug("nls SDK not installed — TTS channel dormant")
 
     @property
     def channel_id(self) -> str:
@@ -61,6 +61,35 @@ class TTSChannel(OutputChannel):
     @property
     def is_available(self) -> bool:
         return self._available and self._enabled
+
+    def get_descriptor(self) -> ChannelDescriptor:
+        return ChannelDescriptor(
+            channel_id=self.CHANNEL_ID,
+            display_name="TTS Channel",
+            input_types=[],
+            output_types=["speech_audio"],
+            input_formats=[],
+            output_formats=["audio/playback", "speech"],
+            capabilities=["send", "speech_output", "audio_playback"],
+            supported_ops=[
+                ChannelOpDescriptor(
+                    name="send",
+                    direction="output",
+                    description="Synthesize outbound text and optionally play it through the speaker.",
+                    input_schema={"message": "ChannelMessage(text)"},
+                    output_schema={"success": "bool"},
+                )
+            ],
+            management_ops=[
+                ChannelOpDescriptor("connect", "management", "Enable TTS playback when available."),
+                ChannelOpDescriptor("disconnect", "management", "Disable TTS playback."),
+            ],
+            startup_requirements=["Alibaba Cloud TTS credentials", "nls SDK or injected synthesize function"],
+            shutdown_requirements=["disconnect playback channel"],
+            health_signals=["is_available", "is_connected"],
+            ack_schema={"success": "bool", "playback": "best_effort"},
+            limitations=["Current implementation only consumes text and returns bool success."],
+        )
 
     def send(self, message: ChannelMessage) -> bool:
         if not self.is_connected():

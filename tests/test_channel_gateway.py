@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.helios_state import HeliosState
-from helios_io.channel import BidirectionalChannel, ChannelMessage, ChannelStatus
+from helios_io.channel import BidirectionalChannel, ChannelDescriptor, ChannelMessage, ChannelStatus
 from helios_io.channel_gateway import ChannelGateway
 
 
@@ -47,6 +47,16 @@ class StubChannel(BidirectionalChannel):
     def disconnect(self) -> None:
         self.disconnect_calls += 1
         self.connected = False
+
+    def get_descriptor(self) -> ChannelDescriptor:
+        return ChannelDescriptor(
+            channel_id=self._channel_id,
+            display_name=f"Stub {self._channel_id}",
+            input_types=["text_message"],
+            output_types=["text_message"],
+            input_formats=["text/plain"],
+            output_formats=["text/plain"],
+        )
 
 
 def make_message(channel_id: str, user_id: str, text: str, timestamp: float = 1.0) -> ChannelMessage:
@@ -145,6 +155,18 @@ class TestChannelGatewayRegistrationAndRouting:
 
         assert qq.connect_calls == 1
         assert qq.disconnect_calls == 1
+
+    def test_get_channel_descriptors_returns_registered_descriptors(self):
+        gateway = ChannelGateway()
+        qq = StubChannel("qq")
+        tts = StubChannel("tts")
+        gateway.register_channel(qq)
+        gateway.register_channel(tts)
+
+        descriptors = gateway.get_channel_descriptors()
+
+        assert descriptors["qq"].display_name == "Stub qq"
+        assert descriptors["tts"].output_types == ["text_message"]
 
 
 class TestChannelGatewayEventSourceAdapter:

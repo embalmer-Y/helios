@@ -34,6 +34,8 @@ class HeliosState:
     dmn_active: bool = False
     last_thought_type: str = ""
     thought_generated_this_tick: bool = False
+    last_thought_personality_trace: Dict[str, object] = field(default_factory=dict)
+    last_preconscious_trace: Dict[str, object] = field(default_factory=dict)
 
     # Mood (from MoodTracker)
     mood_valence: float = 0.0
@@ -52,11 +54,23 @@ class HeliosState:
 
     # Personality
     personality_traits: Dict[str, float] = field(default_factory=dict)
+    personality_projection: object | None = None
+    temporal_state: object | None = None
+    temporal_gate: object | None = None
+    neurochem_gate: object | None = None
 
     # Context
     separation_hours: float = 0.0
     last_action: str = ""
     pending_reply: Optional[str] = None
+    boredom: float = 0.0
+    fatigue_pressure: float = 0.0
+    restoration_level: float = 0.5
+    novelty_hunger: float = 0.0
+    emotional_decay_factor: float = 1.0
+    circadian_phase: float = 0.0
+    inactivity_duration: float = 0.0
+    recent_excitation_tail: float = 0.0
 
     # Drives
     drive_dominant: str = ""

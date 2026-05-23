@@ -7,7 +7,7 @@ import os
 import time
 from typing import Callable, Dict, List, Optional
 
-from ..channel import ChannelMessage, InputChannel
+from ..channel import ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, InputChannel
 from .qq_channel import QQChannel
 
 log = logging.getLogger("helios.helios_io.channels.stt_channel")
@@ -44,7 +44,7 @@ class STTChannel(InputChannel):
         if not enabled:
             return
         if not all([self._access_key, self._access_secret, self._app_key]):
-            log.warning("STT credentials missing — remaining dormant")
+            log.debug("STT credentials missing — remaining dormant")
             return
 
         try:
@@ -54,9 +54,9 @@ class STTChannel(InputChannel):
             if self._probe_microphone(pyaudio):
                 self._available = True
             else:
-                log.warning("STT microphone unavailable — remaining dormant")
+                log.debug("STT microphone unavailable — remaining dormant")
         except ImportError:
-            log.warning("STT dependencies missing (nls/pyaudio) — remaining dormant")
+            log.debug("STT dependencies missing (nls/pyaudio) — remaining dormant")
 
     @property
     def channel_id(self) -> str:
@@ -65,6 +65,34 @@ class STTChannel(InputChannel):
     @property
     def is_available(self) -> bool:
         return self._available and self._enabled
+
+    def get_descriptor(self) -> ChannelDescriptor:
+        return ChannelDescriptor(
+            channel_id=self.CHANNEL_ID,
+            display_name="STT Channel",
+            input_types=["speech_audio"],
+            output_types=["text_message", "event_triggers"],
+            input_formats=["microphone", "audio_stream"],
+            output_formats=["text/plain", "trigger_dict"],
+            capabilities=["poll", "speech_input", "text_output", "sec_annotation"],
+            supported_ops=[
+                ChannelOpDescriptor(
+                    name="poll",
+                    direction="input",
+                    description="Poll completed speech utterances normalized as ChannelMessage objects.",
+                    output_schema={"messages": "list[ChannelMessage]"},
+                )
+            ],
+            management_ops=[
+                ChannelOpDescriptor("connect", "management", "Enable microphone-backed STT when available."),
+                ChannelOpDescriptor("disconnect", "management", "Disable microphone-backed STT."),
+            ],
+            startup_requirements=["Alibaba Cloud STT credentials", "nls SDK", "microphone availability"],
+            shutdown_requirements=["disconnect STT capture"],
+            health_signals=["is_available", "is_connected"],
+            ack_schema={"messages": "list[ChannelMessage]"},
+            limitations=["Current implementation buffers completed utterances only."],
+        )
 
     def poll(self) -> List[ChannelMessage]:
         if not self.is_connected() or not self._pending_utterances:

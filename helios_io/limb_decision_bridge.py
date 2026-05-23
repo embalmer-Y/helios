@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any, Optional
 
+from .action_models import ActionDecision
+
 
 class LimbDecisionBridge:
     PRIORITY_THRESHOLDS = [
@@ -26,6 +28,9 @@ class LimbDecisionBridge:
             priority=priority,
             params=params or {},
         )
+
+    def enqueue_decision(self, decision: ActionDecision):
+        return self._executor.enqueue_decision(decision)
 
     def _score_to_priority(self, score: float) -> int:
         for threshold, priority in self.PRIORITY_THRESHOLDS:

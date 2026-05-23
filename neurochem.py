@@ -291,11 +291,79 @@ class NeurochemState:
 
     def tick(self, dt: float = 1.0):
         """所有系统同时衰减"""
+        self._apply_homeostatic_drift(dt)
+        self.timestamp = time.time()
+
+    def _apply_homeostatic_drift(self, dt: float) -> None:
         self.dopamine.tick(dt)
         self.opioids.tick(dt)
         self.oxytocin.tick(dt)
         self.cortisol.tick(dt)
+
+    def advance(self, update: "NeurochemUpdate"):
+        """Structured neurochemical update coordinated with temporal dynamics."""
+        dt = max(update.dt, 0.001)
+        self._apply_homeostatic_drift(dt)
+
+        stimulation_drive = _coerce_scalar(update.temporal_signal, "stimulation_drive")
+        novelty_drive = _coerce_scalar(update.temporal_signal, "novelty_drive")
+        social_drive = _coerce_scalar(update.temporal_signal, "social_drive")
+        stress_load = _coerce_scalar(update.temporal_signal, "stress_load", update.allostatic_load)
+        recovery_bias = _coerce_scalar(update.temporal_signal, "recovery_bias")
+        isolation_pressure = _coerce_scalar(update.temporal_signal, "isolation_pressure")
+        safety_signal = _coerce_scalar(update.temporal_signal, "safety_signal", max(update.valence, 0.0))
+
+        boredom = _coerce_scalar(update.temporal_state, "boredom")
+        restoration_level = _coerce_scalar(update.temporal_state, "restoration_level")
+        separation_pressure = clamp(update.separation_hours / 12.0, 0.0, 1.0)
+        social_homeostasis = clamp(social_drive + max(update.valence, 0.0) * 0.08, 0.0, 1.0)
+
+        dopamine_delta = (
+            stimulation_drive * 0.08
+            + novelty_drive * 0.07
+            + (0.03 if update.active_behavior else 0.0)
+            + (0.015 if update.generated_thought else 0.0)
+            - isolation_pressure * 0.05
+            - boredom * 0.03
+            - stress_load * 0.02
+        )
+        opioids_delta = (
+            social_homeostasis * 0.08
+            + recovery_bias * 0.02
+            + restoration_level * 0.01
+            - isolation_pressure * 0.07
+            - separation_pressure * 0.05
+            - stress_load * 0.03
+        )
+        oxytocin_delta = (
+            social_drive * 0.10
+            + max(update.valence, 0.0) * 0.03
+            + (0.04 if update.dominant_system.upper() == "CARE" else 0.0)
+            - stress_load * 0.03
+            - separation_pressure * 0.02
+        )
+        cortisol_delta = (
+            stress_load * 0.12
+            + max(update.arousal - 0.45, 0.0) * 0.05
+            + (0.05 if update.dominant_system.upper() in {"FEAR", "PANIC", "RAGE"} else 0.0)
+            + (0.03 if update.allostatic_load > 0.75 else 0.0)
+            - recovery_bias * 0.07
+            - safety_signal * 0.06
+            - social_drive * 0.03
+        )
+
+        self._apply_delta(self.dopamine, dopamine_delta, "temporal_dynamics")
+        self._apply_delta(self.opioids, opioids_delta, "temporal_dynamics")
+        self._apply_delta(self.oxytocin, oxytocin_delta, "temporal_dynamics")
+        self._apply_delta(self.cortisol, cortisol_delta, "temporal_dynamics")
         self.timestamp = time.time()
+
+    @staticmethod
+    def _apply_delta(system: NeurotransmitterSystem, delta: float, event: str) -> None:
+        if delta > 0:
+            system.secrete(min(delta, 0.25), event)
+        elif delta < 0:
+            system.suppress(min(-delta, 0.25), event)
 
     def modulate_parameter(self, param_name: str, base_value: float) -> float:
         """
@@ -330,6 +398,36 @@ class NeurochemState:
             "attachment": round(self.oxytocin.attachment_score, 3),
             "description": self.describe(),
         }
+
+
+@dataclass(frozen=True)
+class NeurochemUpdate:
+    dt: float = 1.0
+    temporal_state: Any | None = None
+    temporal_signal: Any | None = None
+    valence: float = 0.0
+    arousal: float = 0.0
+    dominant_system: str = ""
+    allostatic_load: float = 0.0
+    separation_hours: float = 0.0
+    drive_urgency: float = 0.0
+    event_count: int = 0
+    message_count: int = 0
+    external_input_strength: float = 0.0
+    active_behavior: bool = False
+    generated_thought: bool = False
+
+
+def _coerce_scalar(source: Any | None, field_name: str, default: float = 0.0) -> float:
+    if source is None:
+        return float(default)
+    value = getattr(source, field_name, default)
+    if hasattr(value, "current"):
+        value = getattr(value, "current", default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 # ═══════════════════════════════════════════════

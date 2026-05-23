@@ -1,6 +1,7 @@
 """Regulation package compatibility surface for Phase 4 restructuring."""
 
 from .conation import ConationEngine, Intent, IntentType
+from .policy import RegulationAssessment, RegulationPolicy, RegulationSignals
 from .regulation import (
     ActionCandidate,
     AVAILABLE_ACTIONS,
@@ -18,6 +19,9 @@ __all__ = [
     "DRIVE_ACTION_RELEVANCE",
     "Intent",
     "IntentType",
+    "RegulationAssessment",
     "RegulationEngine",
     "RegulationMemory",
+    "RegulationPolicy",
+    "RegulationSignals",
 ]

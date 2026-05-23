@@ -26,6 +26,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from helios_main import Helios, HeliosConfig
+from helios_io.action_models import ActionProposal
 
 
 # ═══════════════════════════════════════════════════
@@ -131,6 +132,7 @@ class TestTickResponseWiring:
         h.response_pipeline.should_reply = MagicMock(return_value=True)
         h.response_pipeline.generate_reply = MagicMock(return_value="你好呀~")
         h.response_pipeline.record_exchange = MagicMock()
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
         h._msg_queue.put({"text": "你好", "user_id": "user1"})
 
@@ -152,6 +154,7 @@ class TestTickResponseWiring:
         h.response_pipeline.should_reply = MagicMock(return_value=False)
         h.response_pipeline.generate_reply = MagicMock()
         h.response_pipeline.record_exchange = MagicMock()
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
         h._msg_queue.put({"text": "...", "user_id": "user1"})
 
@@ -174,6 +177,7 @@ class TestTickResponseWiring:
         h.response_pipeline.should_reply = MagicMock(return_value=True)
         h.response_pipeline.generate_reply = MagicMock(return_value="回复内容")
         h.response_pipeline.record_exchange = MagicMock()
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
         h._msg_queue.put({"text": "你好", "user_id": "target_user"})
 
@@ -189,6 +193,7 @@ class TestTickResponseWiring:
         h.response_pipeline.should_reply = MagicMock(return_value=True)
         h.response_pipeline.generate_reply = MagicMock(return_value="hi!")
         h.response_pipeline.record_exchange = MagicMock()
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
         h._msg_queue.put({"text": "hey", "user_id": "user1"})
 
@@ -210,6 +215,7 @@ class TestTickResponseWiring:
         h.sec_evaluator.evaluate = MagicMock(return_value=sec_result)
         h.response_pipeline.should_reply = MagicMock(return_value=False)
         h.response_pipeline.record_exchange = MagicMock()
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
         h._msg_queue.put({"text": "ok", "user_id": "user1"})
 
@@ -239,6 +245,7 @@ class TestTickResponseWiring:
     def test_conversation_context_passed_to_sec(self, helios_instance):
         """SEC evaluator should receive recent conversation context."""
         h = helios_instance
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
         # Pre-populate conversation history using the real method
         h.response_pipeline.record_exchange(
@@ -277,7 +284,18 @@ class TestTickResponseWiring:
         """Regulation-driven speech should send through ChannelGateway, not direct QQ calls."""
         h = helios_instance
         h.cfg.QQ_TARGET_ID = "target_user"
-        h.regulation.tick = MagicMock(return_value="speak_care")
+        h.regulation.generate_action_proposals = MagicMock(return_value=[
+            ActionProposal(
+                proposal_id="proposal::active::1",
+                source_type="regulation",
+                source_module="regulation_policy",
+                intent_type="self_regulation",
+                behavior_name="speak_care",
+                score_bundle={"final": 0.72},
+                candidate_channels=["qq"],
+                parameters={"tick": 1, "target_user_id": "target_user"},
+            )
+        ])
         h._generate_speech = MagicMock(return_value="主动问候")
         h._channel_gateway.route_outbound = MagicMock(return_value=True)
         h.qq = MagicMock()
@@ -295,7 +313,18 @@ class TestTickResponseWiring:
         """Speech generation should receive the current tick state rather than stale runtime fields."""
         h = helios_instance
         h.cfg.QQ_TARGET_ID = "target_user"
-        h.regulation.tick = MagicMock(return_value="speak_share")
+        h.regulation.generate_action_proposals = MagicMock(return_value=[
+            ActionProposal(
+                proposal_id="proposal::active::2",
+                source_type="regulation",
+                source_module="regulation_policy",
+                intent_type="self_regulation",
+                behavior_name="speak_share",
+                score_bundle={"final": 0.74},
+                candidate_channels=["qq"],
+                parameters={"tick": 1, "target_user_id": "target_user"},
+            )
+        ])
         h.daisy.cycle = MagicMock(return_value=SimpleNamespace(
             panksepp_activation={"FEAR": 0.7},
             valence=-0.4,
@@ -314,6 +343,29 @@ class TestTickResponseWiring:
         assert speech_ctx.valence == -0.4
         assert speech_ctx.arousal == 0.8
         assert speech_ctx.mood_label == h.mood.state.label
+
+    def test_preconscious_proposals_can_drive_internal_behavior_before_regulation(self, helios_instance):
+        h = helios_instance
+        h.preconscious_policy.propose = MagicMock(return_value=[
+            ActionProposal(
+                proposal_id="proposal::preconscious::1",
+                source_type="preconscious",
+                source_module="preconscious_policy",
+                intent_type="internal_bias",
+                behavior_name="reflect",
+                score_bundle={"final": 0.46},
+                suggested_modalities=["internal"],
+                parameters={"tick": 1},
+            )
+        ])
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
+        h._handle_action = MagicMock(return_value=True)
+
+        h._tick()
+
+        h._handle_action.assert_called_once()
+        assert h._handle_action.call_args[0][0] == "reflect"
+        h.regulation.generate_action_proposals.assert_called_once()
 
     def test_channel_message_cognitive_impact_feeds_phi_engine(self, helios_instance):
         """Inbound channel metadata should flow into feed_from_impact before ICRI aggregation."""
@@ -364,6 +416,7 @@ class TestTickResponseWiring:
         ))
         h.sec_evaluator.evaluate = MagicMock(return_value={"goal_relevance": 0.1, "novelty": 0.1})
         h.response_pipeline.should_reply = MagicMock(return_value=False)
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
         h._msg_queue.put({"text": "你好呀，我在想你", "user_id": "user1"})
 

@@ -4,6 +4,7 @@ from .appraisal import AppraisalEngine, SECFeatures, appraise_event
 from .cognitive_impact import CognitiveImpactProfile
 from .drives import Action, ActionSelector, DriveOracle, DriveVector, HeliosSnapshot
 from .phi import AdaptiveAlphaICRI, ConsciousnessDetector, ConsciousnessLabel, ConsciousnessMoment, PhiModulator, UnifiedPhi
+from .preconscious import PreconsciousAssessment, PreconsciousPolicy, PreconsciousSignals
 from .thinking import (
     CounterfactualSimulator,
     DaydreamEngine,
@@ -32,6 +33,9 @@ __all__ = [
     "ConsciousnessMoment",
     "PhiModulator",
     "UnifiedPhi",
+    "PreconsciousAssessment",
+    "PreconsciousPolicy",
+    "PreconsciousSignals",
     "CounterfactualSimulator",
     "DaydreamEngine",
     "EmotionalEpisode",

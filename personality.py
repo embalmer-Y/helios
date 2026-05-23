@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import json
 import os
+from personality_projection import PersonalityProjection, build_personality_projection
 from utils import clamp
 
 
@@ -327,6 +328,13 @@ class PersonalityProfile:
             "neuroticism": round(self.neuroticism, 3),
             "conscientiousness": round(self.conscientiousness, 3),
         }
+
+    def get_projection(self) -> PersonalityProjection:
+        """Project stable traits into structured biases for downstream policies."""
+        return build_personality_projection(
+            traits=self._trait_dict(),
+            neuro_gains=self.neuro_gains,
+        )
     
     def get_evolution(self) -> list[dict]:
         """获取人格进化时间线"""

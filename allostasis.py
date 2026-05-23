@@ -311,4 +311,3 @@ class AllostaticRegulator:
         self.total_cycles = 0
         self.fatigue_cycles = 0
         self.recovery_cycles = 0
-

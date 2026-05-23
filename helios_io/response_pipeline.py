@@ -9,14 +9,18 @@ Requirements: 7.1, 7.2, 7.3, 7.5
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 import os
 import re
 import time
 from typing import Dict, List, Optional
+from uuid import uuid4
 
+from .action_models import ActionDecision, ActionProposal
 from .conversation_history import ConversationExchange, ConversationHistoryManager
 from .icri_temperature import ICRITemperatureMapper
+from .interaction_policy import InteractionPolicy
 
 log = logging.getLogger("helios.helios_io.response_pipeline")
 
@@ -50,6 +54,7 @@ class ResponsePipeline:
         model: str = "",
         api_key: str = "",
         base_url: str = "",
+        interaction_policy: Optional[InteractionPolicy] = None,
     ):
         """
         Args:
@@ -66,6 +71,7 @@ class ResponsePipeline:
         self._memory = memory_system
         self._autobio = autobio_store
         self._max_history = max_history
+        self._interaction_policy = interaction_policy or InteractionPolicy()
 
         # 对话历史: 使用外部提供的或自建
         self._history_manager = conversation_history or ConversationHistoryManager(
@@ -126,6 +132,117 @@ class ResponsePipeline:
                 f"novelty={novelty:.2f} = {urgency:.2f} <= 0.3"
             )
         return should
+
+    def build_reply_proposal(
+        self,
+        message: dict,
+        sec_result: dict,
+        state,
+        available_channels: Optional[List[str]] = None,
+    ) -> Optional[ActionProposal]:
+        for proposal in self.build_interaction_proposals(
+            message,
+            sec_result,
+            state,
+            available_channels=available_channels,
+        ):
+            if proposal.behavior_name == "reply_message":
+                return proposal
+        return None
+
+    def build_interaction_proposals(
+        self,
+        message: dict,
+        sec_result: dict,
+        state,
+        available_channels: Optional[List[str]] = None,
+    ) -> List[ActionProposal]:
+        recent_history = self.get_history(message.get("user_id", "unknown"))
+        proposals = self._interaction_policy.propose(
+            message,
+            sec_result,
+            state,
+            available_channels=available_channels,
+            recent_history=recent_history,
+        )
+        if proposals:
+            return proposals
+
+        if not self.should_reply(message, sec_result):
+            return []
+
+        message_channel = str(message.get("channel_id", "qq") or "qq")
+        candidate_channels = [channel_id for channel_id in (available_channels or [message_channel]) if channel_id]
+        if message_channel not in candidate_channels:
+            candidate_channels.insert(0, message_channel)
+        goal_relevance = float(sec_result.get("goal_relevance", 0.0))
+        novelty = float(sec_result.get("novelty", 0.0))
+        urgency = goal_relevance + novelty
+        return [
+            ActionProposal(
+                proposal_id=f"proposal::reply::{uuid4().hex}",
+                source_type="interaction",
+                source_module="response_pipeline_legacy",
+                intent_type="reply",
+                behavior_name="reply_message",
+                reason_summary=(
+                    f"Legacy reply fallback accepted: goal_relevance={goal_relevance:.2f}, novelty={novelty:.2f}."
+                ),
+                score_bundle={
+                    "goal_relevance": goal_relevance,
+                    "novelty": novelty,
+                    "final": urgency,
+                },
+                constraints={
+                    "reply_required": True,
+                    "source_channel_id": message_channel,
+                    "message_id": message.get("message_id", ""),
+                    "required_capabilities": ["send"],
+                },
+                suggested_modalities=["text"],
+                candidate_channels=candidate_channels,
+                parameters={
+                    "target_user_id": message.get("user_id", "unknown"),
+                    "outbound_metadata": {
+                        "message_id": message.get("message_id", ""),
+                        "is_group": message.get("is_group", False),
+                        "group_id": message.get("group_id", ""),
+                    },
+                    "source_message_text": message.get("text", ""),
+                },
+                provenance={
+                    "message_text": message.get("text", ""),
+                    "user_id": message.get("user_id", "unknown"),
+                    "sec_result": dict(sec_result),
+                    "fallback": "legacy_should_reply",
+                },
+                created_at_tick=int(getattr(state, "tick", 0)),
+                created_at_ts=float(getattr(state, "timestamp", time.time())),
+            )
+        ]
+
+    def populate_reply_decision(
+        self,
+        decision: ActionDecision,
+        message: dict,
+        state,
+        sec_result: dict,
+        temperature: Optional[float] = None,
+    ) -> Optional[ActionDecision]:
+        reply = self.generate_reply(message, state, sec_result, temperature=temperature)
+        if not reply:
+            return None
+
+        updated_params = dict(decision.validated_params)
+        updated_params.setdefault("target_user_id", message.get("user_id", "unknown"))
+        updated_params["outbound_text"] = reply
+        updated_params["outbound_metadata"] = {
+            **dict(updated_params.get("outbound_metadata", {}) or {}),
+            "message_id": message.get("message_id", ""),
+            "is_group": message.get("is_group", False),
+            "group_id": message.get("group_id", ""),
+        }
+        return replace(decision, validated_params=updated_params)
 
     # ── 回复生成 ──
 
@@ -323,6 +440,14 @@ class ResponsePipeline:
                     history_texts.append(ex.user_message)
                 if getattr(ex, "reply", ""):
                     history_texts.append(ex.reply)
+
+            if self._memory is not None and hasattr(self._memory, "get_autobio_context"):
+                return self._memory.get_autobio_context(
+                    topic_text=message_text,
+                    user_id=user_id,
+                    history_texts=history_texts,
+                    limit=3,
+                )
 
             if hasattr(self._autobio, "query_related"):
                 memories = self._autobio.query_related(

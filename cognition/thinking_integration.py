@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from core.helios_state import HeliosState
+from personality_projection import resolve_personality_projection
 
 from .thinking import ThinkingManager, ThoughtFragment
 
@@ -44,9 +45,15 @@ class ThinkingEngineIntegration:
     COOLDOWN_PER_TYPE = 30.0
     ICRI_THRESHOLD = 0.10
 
-    def __init__(self, thinking_engine: Optional[ThinkingManager], autobio_store):
+    def __init__(
+        self,
+        thinking_engine: Optional[ThinkingManager],
+        autobio_store,
+        on_thought_recorded: Optional[Callable[[Thought, HeliosState, object], None]] = None,
+    ):
         self._engine = thinking_engine or ThinkingManager()
         self._autobio = autobio_store
+        self._on_thought_recorded = on_thought_recorded
         self._last_generation = 0.0
         self._type_cooldowns: dict[str, float] = {}
 
@@ -60,8 +67,42 @@ class ThinkingEngineIntegration:
         return True
 
     def get_biased_types(self, dominant_system: str) -> list[str]:
+        return self.get_ranked_types(dominant_system)
+
+    def explain_ranked_types(self, dominant_system: str, personality_projection: object | None = None) -> tuple[list[str], dict[str, object]]:
         preferred = list(EMOTION_THOUGHT_BIAS.get(dominant_system, []))
-        return preferred + [thought_type for thought_type in THOUGHT_TYPES if thought_type not in preferred]
+        if personality_projection is None:
+            novelty_bias = 0.0
+            persistence_bias = 0.0
+        else:
+            projection = resolve_personality_projection(projection=personality_projection)
+            novelty_bias = projection.novelty_bias
+            persistence_bias = projection.persistence_bias
+
+        thought_scores: dict[str, float] = {thought_type: 0.0 for thought_type in THOUGHT_TYPES}
+        for index, thought_type in enumerate(preferred):
+            thought_scores[thought_type] += 1.0 - index * 0.08
+
+        for thought_type in ("self_question", "free_association", "future_projection"):
+            thought_scores[thought_type] += novelty_bias * 0.35
+        for thought_type in ("rumination", "counterfactual", "episodic_fragment"):
+            thought_scores[thought_type] += persistence_bias * 0.42
+        thought_scores["future_projection"] += novelty_bias * 0.06 + persistence_bias * 0.02
+
+        ranked = sorted(THOUGHT_TYPES, key=lambda thought_type: (-thought_scores[thought_type], THOUGHT_TYPES.index(thought_type)))
+        trace = {
+            "dominant_system": dominant_system,
+            "preferred_types": list(preferred),
+            "novelty_bias": novelty_bias,
+            "persistence_bias": persistence_bias,
+            "scores": {thought_type: round(score, 4) for thought_type, score in thought_scores.items()},
+            "ranked_types": list(ranked),
+        }
+        return ranked, trace
+
+    def get_ranked_types(self, dominant_system: str, personality_projection: object | None = None) -> list[str]:
+        ranked, _trace = self.explain_ranked_types(dominant_system, personality_projection)
+        return ranked
 
     def is_type_on_cooldown(self, thought_type: str, now: float) -> bool:
         last = self._type_cooldowns.get(thought_type, 0.0)
@@ -74,14 +115,20 @@ class ThinkingEngineIntegration:
         state.thought_generated_this_tick = False
 
         if not self.should_generate(state.icri, dmn_active, now):
+            state.last_thought_personality_trace = {}
             return None
 
+        ranked_types, personality_trace = self.explain_ranked_types(
+            state.dominant_system,
+            getattr(state, "personality_projection", None),
+        )
         available_types = [
             thought_type
-            for thought_type in self.get_biased_types(state.dominant_system)
+            for thought_type in ranked_types
             if not self.is_type_on_cooldown(thought_type, now)
         ]
         if not available_types:
+            state.last_thought_personality_trace = personality_trace
             return None
 
         fragments = self._engine.generate_thoughts(
@@ -104,6 +151,10 @@ class ThinkingEngineIntegration:
         self._type_cooldowns[thought_type] = now
         state.last_thought_type = thought_type
         state.thought_generated_this_tick = True
+        state.last_thought_personality_trace = {
+            **personality_trace,
+            "selected_type": thought_type,
+        }
         self._record_thought(thought, state)
         return thought
 
@@ -163,7 +214,7 @@ class ThinkingEngineIntegration:
         return "脑海里有一段尚未成形的念头"
 
     def _record_thought(self, thought: Thought, state: HeliosState) -> None:
-        self._autobio.record(
+        moment = self._autobio.record(
             panksepp=dict(state.panksepp),
             valence=state.valence,
             arousal=state.arousal,
@@ -177,3 +228,5 @@ class ThinkingEngineIntegration:
             event_trigger=f"thought:{thought.type}",
             cycle=state.tick,
         )
+        if self._on_thought_recorded is not None:
+            self._on_thought_recorded(thought, state, moment)

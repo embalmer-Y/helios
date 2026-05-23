@@ -6,13 +6,15 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from ..channel import ChannelMessage, InputChannel
+from ..channel import ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, InputChannel
 
 log = logging.getLogger("helios.helios_io.channels.vision_channel")
 
 
 class VisionChannel(InputChannel):
     CHANNEL_ID = "vision"
+    _cached_available: Optional[bool] = None
+    _cached_cv2: Any = None
 
     def __init__(
         self,
@@ -37,6 +39,10 @@ class VisionChannel(InputChannel):
 
         if not enabled:
             return
+        if self._capture_func is None and VisionChannel._cached_available is not None:
+            self._available = bool(VisionChannel._cached_available)
+            self._cv2 = VisionChannel._cached_cv2
+            return
         try:
             import cv2  # type: ignore
 
@@ -46,12 +52,19 @@ class VisionChannel(InputChannel):
             finally:
                 cap.release()
             self._cv2 = cv2
+            if self._capture_func is None:
+                VisionChannel._cached_available = self._available
+                VisionChannel._cached_cv2 = cv2
             if not self._available:
-                log.warning("Vision camera unavailable — remaining dormant")
+                log.debug("Vision camera unavailable — remaining dormant")
         except ImportError:
-            log.warning("OpenCV not installed — vision channel dormant")
+            if self._capture_func is None:
+                VisionChannel._cached_available = False
+            log.debug("OpenCV not installed — vision channel dormant")
         except Exception as exc:
-            log.warning("Vision availability check failed: %s", exc)
+            if self._capture_func is None:
+                VisionChannel._cached_available = False
+            log.debug("Vision availability check failed: %s", exc)
 
     @property
     def channel_id(self) -> str:
@@ -60,6 +73,34 @@ class VisionChannel(InputChannel):
     @property
     def is_available(self) -> bool:
         return self._available and self._enabled
+
+    def get_descriptor(self) -> ChannelDescriptor:
+        return ChannelDescriptor(
+            channel_id=self.CHANNEL_ID,
+            display_name="Vision Channel",
+            input_types=["image_frame"],
+            output_types=["scene_description", "event_triggers"],
+            input_formats=["camera"],
+            output_formats=["text/plain", "trigger_dict"],
+            capabilities=["poll", "vision_input", "scene_description", "trigger_extraction"],
+            supported_ops=[
+                ChannelOpDescriptor(
+                    name="poll",
+                    direction="input",
+                    description="Capture and describe a frame, then emit a ChannelMessage.",
+                    output_schema={"messages": "list[ChannelMessage]"},
+                )
+            ],
+            management_ops=[
+                ChannelOpDescriptor("connect", "management", "Enable periodic vision capture when available."),
+                ChannelOpDescriptor("disconnect", "management", "Disable periodic vision capture."),
+            ],
+            startup_requirements=["camera availability or injected capture function"],
+            shutdown_requirements=["disconnect capture loop"],
+            health_signals=["is_available", "is_connected"],
+            ack_schema={"messages": "list[ChannelMessage]"},
+            limitations=["Current implementation uses one-shot capture and heuristic trigger extraction."],
+        )
 
     def poll(self) -> List[ChannelMessage]:
         if not self.is_connected():

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Dict, List, Optional
 
-from .channel import ChannelMessage, ChannelStatus, InputChannel, OutputChannel
+from .channel import ChannelDescriptor, ChannelMessage, ChannelStatus, InputChannel, OutputChannel
 from core.event_source import EventSource
 from core.helios_state import HeliosState
 from core.trigger_merge import merge_triggers
@@ -95,6 +95,15 @@ class ChannelGateway(EventSource):
             except Exception:
                 statuses[channel_id] = ChannelStatus.ERROR
         return statuses
+
+    def get_channel_descriptors(self) -> Dict[str, ChannelDescriptor]:
+        descriptors: Dict[str, ChannelDescriptor] = {}
+        for channel_id, channel in {**self._input_channels, **self._output_channels}.items():
+            try:
+                descriptors[channel_id] = channel.get_descriptor()
+            except Exception as exc:
+                log.warning("Channel %s descriptor lookup failed: %s", channel_id, exc)
+        return descriptors
 
     def connect_all(self) -> None:
         seen = set()

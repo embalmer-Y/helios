@@ -17,6 +17,7 @@ from cognition.thinking import ThoughtFragment, ThinkingManager
 from cognition.thinking_integration import EMOTION_THOUGHT_BIAS, ThinkingEngineIntegration
 from core.helios_state import HeliosState
 from helios_main import Helios, HeliosConfig
+from personality_projection import build_personality_projection
 
 
 class FakeAutobioStore:
@@ -97,6 +98,65 @@ def test_thought_type_cooldown_enforcement():
 
     assert second is not None
     assert second.type != first.type
+
+
+def test_personality_novelty_bias_prioritizes_exploratory_thought_types():
+    integration = ThinkingEngineIntegration(FakeThinkingEngine(), FakeAutobioStore())
+    projection = build_personality_projection(
+        traits={
+            "openness": 1.5,
+            "extraversion": 1.3,
+            "agreeableness": 1.0,
+            "neuroticism": 0.9,
+            "conscientiousness": 0.9,
+        }
+    )
+
+    ranked = integration.get_ranked_types("SEEKING", projection)
+
+    assert ranked[0] in {"self_question", "free_association"}
+    assert ranked.index("self_question") < ranked.index("rumination")
+
+
+def test_personality_persistence_bias_prioritizes_reflective_thought_types():
+    integration = ThinkingEngineIntegration(FakeThinkingEngine(), FakeAutobioStore())
+    projection = build_personality_projection(
+        traits={
+            "openness": 0.9,
+            "extraversion": 0.8,
+            "agreeableness": 1.0,
+            "neuroticism": 1.4,
+            "conscientiousness": 1.5,
+        }
+    )
+
+    ranked = integration.get_ranked_types("PANIC", projection)
+
+    assert ranked[0] == "rumination"
+    assert ranked.index("counterfactual") < ranked.index("free_association")
+
+
+def test_thinking_integration_exposes_personality_trace_on_state():
+    integration = ThinkingEngineIntegration(FakeThinkingEngine(), FakeAutobioStore())
+    state = make_state(
+        dominant_system="SEEKING",
+        personality_projection=build_personality_projection(
+            traits={
+                "openness": 1.5,
+                "extraversion": 1.2,
+                "agreeableness": 1.0,
+                "neuroticism": 0.8,
+                "conscientiousness": 0.9,
+            }
+        ),
+    )
+
+    thought = integration.generate(state)
+
+    assert thought is not None
+    assert state.last_thought_personality_trace["selected_type"] == thought.type
+    assert state.last_thought_personality_trace["novelty_bias"] > 0.0
+    assert state.last_thought_personality_trace["ranked_types"][0] == thought.type
 
 
 def test_tick_updates_forwarded_state_with_thought_metadata():
