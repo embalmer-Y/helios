@@ -98,7 +98,8 @@ def test_preconscious_policy_prefers_reflection_for_rumination_with_memory_hits(
     assert proposals
     assert proposals[0].behavior_name == "reflect"
     assert proposals[0].source_type == "preconscious"
-    assert proposals[0].constraints["internal_only"] is True
+    assert proposals[0].origin_type == "thought"
+    assert proposals[0].constraints["requires_deliberate_review"] is True
 
 
 def test_preconscious_policy_prefers_learning_for_self_question_under_novelty_pressure():
@@ -111,6 +112,37 @@ def test_preconscious_policy_prefers_learning_for_self_question_under_novelty_pr
     assert proposals
     assert proposals[0].behavior_name == "learn"
     assert proposals[0].score_bundle["final"] <= 0.72
+
+
+def test_preconscious_policy_can_emit_thought_origin_external_candidate_from_current_stimulus():
+    policy = PreconsciousPolicy()
+    state = make_state(last_thought_type="rumination")
+    state.current_stimuli = [
+        {
+            "source_channel_id": "qq",
+            "stimulus_intensity": 0.74,
+            "payload": {"user_id": "master"},
+        }
+    ]
+    state.personality_projection = build_personality_projection(
+        traits={
+            "openness": 1.1,
+            "extraversion": 1.5,
+            "agreeableness": 1.0,
+            "neuroticism": 0.8,
+            "conscientiousness": 1.0,
+        }
+    )
+    thought = SimpleNamespace(type="rumination", content="我想把这段感受说出来", timestamp=1.0)
+
+    proposals = policy.propose(state=state, thought=thought, memory_hits=[])
+
+    outward = next(proposal for proposal in proposals if proposal.behavior_name == "speak_share")
+    assert outward.origin_type == "thought"
+    assert outward.op_name == "send"
+    assert outward.candidate_channels == ["qq"]
+    assert outward.parameters["target_user_id"] == "master"
+    assert 0.0 < outward.outbound_intensity <= 1.0
 
 
 def test_preconscious_policy_exposes_observability_snapshot_with_recent_outcomes():
@@ -133,7 +165,7 @@ def test_preconscious_policy_exposes_observability_snapshot_with_recent_outcomes
         decision_id="decision::reject",
         proposal_id=proposals[0].proposal_id,
         behavior_name=proposals[0].behavior_name,
-        rejection_reason="internal_only_constraint",
+        rejection_reason="execution_scope_constraint",
     )
     policy.on_decision_rejected(proposals[0], decision)
 
@@ -162,7 +194,7 @@ def test_preconscious_policy_exposes_observability_snapshot_with_recent_outcomes
     assert snapshot["assessment"]["primary_behavior"] == "reflect"
     assert snapshot["assessment"]["rationale"]
     assert snapshot["proposals"][0]["behavior_name"] == "reflect"
-    assert snapshot["latest_rejection"]["rejection_reason"] == "internal_only_constraint"
+    assert snapshot["latest_rejection"]["rejection_reason"] == "execution_scope_constraint"
     assert snapshot["latest_feedback"]["success"] is True
     assert snapshot["rejection_count"] == 1
     assert snapshot["feedback_count"] == 1

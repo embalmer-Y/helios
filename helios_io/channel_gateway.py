@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Dict, List, Optional
 
-from .channel import ChannelDescriptor, ChannelMessage, ChannelStatus, InputChannel, OutputChannel
+from .channel import ChannelDescriptor, ChannelMessage, ChannelStatus, InputChannel, OutputChannel, build_stimulus_envelope
 from core.event_source import EventSource
 from core.helios_state import HeliosState
 from core.trigger_merge import merge_triggers
@@ -56,10 +56,15 @@ class ChannelGateway(EventSource):
         if not channel.is_connected():
             log.warning("Output channel %s is disconnected", message.channel_id)
             return False
+        descriptor = self.get_channel_descriptors().get(message.channel_id)
+        requested_op = str(message.metadata.get("op_name", "send") or "send")
+        if not self._supports_output_op(descriptor, requested_op):
+            log.warning("Output channel %s does not support op %s", message.channel_id, requested_op)
+            return False
         try:
-            return channel.send(message)
+            return channel.execute_op(requested_op, message)
         except Exception as exc:
-            log.warning("Output channel %s send failed: %s", message.channel_id, exc)
+            log.warning("Output channel %s op %s failed: %s", message.channel_id, requested_op, exc)
             return False
 
     def broadcast(self, text: str, exclude: Optional[List[str]] = None) -> Dict[str, bool]:
@@ -166,4 +171,14 @@ class ChannelGateway(EventSource):
         data.setdefault("text", message.text)
         data.setdefault("timestamp", message.timestamp)
         data.setdefault("direction", message.direction)
+        data.setdefault("stimulus", build_stimulus_envelope(message).to_dict())
         return data
+
+    @staticmethod
+    def _supports_output_op(descriptor: Optional[ChannelDescriptor], op_name: str) -> bool:
+        if descriptor is None:
+            return False
+        for op in descriptor.supported_ops:
+            if op.name == op_name and op.direction in {"output", "bidirectional"}:
+                return True
+        return False

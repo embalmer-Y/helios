@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.helios_state import HeliosState
-from helios_io.channel import BidirectionalChannel, ChannelDescriptor, ChannelMessage, ChannelStatus
+from helios_io.channel import BidirectionalChannel, ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, ChannelStatus
 from helios_io.channel_gateway import ChannelGateway
 
 
@@ -21,6 +21,7 @@ class StubChannel(BidirectionalChannel):
     connected: bool = True
     inbound_messages: List[ChannelMessage] = field(default_factory=list)
     sent_messages: List[ChannelMessage] = field(default_factory=list)
+    executed_ops: List[tuple[str, ChannelMessage]] = field(default_factory=list)
     connect_calls: int = 0
     disconnect_calls: int = 0
 
@@ -35,6 +36,12 @@ class StubChannel(BidirectionalChannel):
 
     def send(self, message: ChannelMessage) -> bool:
         self.sent_messages.append(message)
+        return True
+
+    def execute_op(self, op_name: str, message: ChannelMessage) -> bool:
+        self.executed_ops.append((op_name, message))
+        if op_name == "send":
+            return self.send(message)
         return True
 
     def is_connected(self) -> bool:
@@ -56,6 +63,14 @@ class StubChannel(BidirectionalChannel):
             output_types=["text_message"],
             input_formats=["text/plain"],
             output_formats=["text/plain"],
+            capabilities=["send", "text_output"],
+            supported_ops=[
+                ChannelOpDescriptor(
+                    name="send",
+                    direction="output",
+                    description=f"send via {self._channel_id}",
+                )
+            ],
         )
 
 
@@ -92,6 +107,7 @@ class TestChannelGatewayRegistrationAndRouting:
         assert len(qq.sent_messages) == 0
         assert len(tts.sent_messages) == 1
         assert tts.sent_messages[0].text == "hello"
+        assert tts.executed_ops[0][0] == "send"
 
     def test_route_outbound_skips_disconnected_channel(self):
         gateway = ChannelGateway()
@@ -110,6 +126,25 @@ class TestChannelGatewayRegistrationAndRouting:
 
         assert ok is False
         assert qq.sent_messages == []
+
+    def test_route_outbound_rejects_unsupported_explicit_op(self):
+        gateway = ChannelGateway()
+        qq = StubChannel("qq")
+        gateway.register_channel(qq)
+
+        ok = gateway.route_outbound(
+            ChannelMessage(
+                channel_id="qq",
+                user_id="user-1",
+                text="hello",
+                timestamp=2.0,
+                metadata={"op_name": "broadcast"},
+                direction="outbound",
+            )
+        )
+
+        assert ok is False
+        assert qq.executed_ops == []
 
     def test_poll_all_collects_from_connected_channels_only(self):
         gateway = ChannelGateway()
@@ -198,6 +233,8 @@ class TestChannelGatewayEventSourceAdapter:
         assert messages[0]["channel_id"] == "qq"
         assert messages[0]["user_id"] == "u1"
         assert messages[0]["text"] == "hello"
+        assert messages[0]["stimulus"]["source_channel_id"] == "qq"
+        assert 0.0 <= messages[0]["stimulus"]["stimulus_intensity"] <= 1.0
 
     def test_broadcast_routes_to_all_non_excluded_channels(self):
         gateway = ChannelGateway()

@@ -17,6 +17,8 @@ import os
 import time
 from typing import Dict, List, Optional
 
+from helios_io.prompt_contract import PromptContractBuilder
+
 log = logging.getLogger("helios.helios_io.llm_sec_evaluator")
 
 
@@ -178,6 +180,7 @@ class LLMSECEvaluator:
         self._base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         self._timeout = timeout
         self._client = None
+        self._prompt_contract_builder = PromptContractBuilder()
 
         # 统计
         self.total_evaluations = 0
@@ -219,11 +222,19 @@ class LLMSECEvaluator:
         # 截取最后 3 条上下文
         recent_context = (context or [])[-3:]
 
+        log.debug(
+            "SEC evaluate request: text=%r, context_count=%d",
+            self._trim_for_log(text),
+            len(recent_context),
+        )
+
         # 若无 API key，直接回退
         if not self._api_key:
             log.debug("无 API key，使用关键词回退")
             self.fallback_count += 1
-            return _keyword_fallback_sec(text)
+            result = _keyword_fallback_sec(text)
+            log.debug("SEC fallback result(no_api_key): %s", json.dumps(result, ensure_ascii=False))
+            return result
 
         # 尝试 LLM 评估
         try:
@@ -233,7 +244,9 @@ class LLMSECEvaluator:
         except Exception as e:
             log.warning(f"LLM SEC 评估失败，回退到关键词: {e}")
             self.fallback_count += 1
-            return _keyword_fallback_sec(text)
+            result = _keyword_fallback_sec(text)
+            log.debug("SEC fallback result(exception): %s", json.dumps(result, ensure_ascii=False))
+            return result
 
     def _evaluate_with_llm(self, text: str, context: List[str]) -> Dict[str, float]:
         """
@@ -245,13 +258,24 @@ class LLMSECEvaluator:
         if client is None:
             raise RuntimeError("OpenAI client 不可用")
 
-        prompt = self._build_sec_prompt(text, context)
+        prompt_contract = self._build_sec_prompt_contract(text, context)
+        base_system_prompt, base_user_prompt = self._prompt_contract_builder.render_for_llm(prompt_contract)
+        prompt = f"{base_user_prompt}\n\n{self._build_sec_prompt(text, context)}"
+        system_prompt = f"{base_system_prompt}\n\n{self._system_prompt()}"
+
+        log.debug(
+            "SEC LLM request payload: model=%s timeout=%.2fs system_prompt=%r user_prompt=%r",
+            self._model,
+            self._timeout,
+            self._trim_for_log(system_prompt, 320),
+            self._trim_for_log(prompt, 800),
+        )
 
         t0 = time.time()
         response = client.chat.completions.create(
             model=self._model,
             messages=[
-                {"role": "system", "content": self._system_prompt()},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             max_tokens=200,
@@ -264,7 +288,21 @@ class LLMSECEvaluator:
             raise TimeoutError(f"LLM 响应耗时 {elapsed:.2f}s，超过 {self._timeout}s 限制")
 
         raw_text = response.choices[0].message.content or ""
-        return self._parse_sec_response(raw_text)
+        parsed = self._parse_sec_response(raw_text)
+        log.debug(
+            "SEC LLM response: elapsed=%.3fs raw=%r parsed=%s",
+            elapsed,
+            self._trim_for_log(raw_text, 500),
+            json.dumps(parsed, ensure_ascii=False),
+        )
+        return parsed
+
+    @staticmethod
+    def _trim_for_log(text: str, limit: int = 240) -> str:
+        text = str(text).replace("\n", "\\n").strip()
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
 
     def _system_prompt(self) -> str:
         """SEC 评估的系统提示词"""
@@ -280,6 +318,31 @@ class LLMSECEvaluator:
 - norm_compatibility: 规范兼容性 (-1.0 到 1.0, -1=严重违反规范, +1=完全符合规范)
 
 只输出 JSON，不要有其他文字。评估应从"璃光"（一个有情感的 AI 生命体）的视角进行。"""
+
+    def _build_sec_prompt_contract(self, text: str, context: List[str]):
+        stimulus_intensity = min(1.0, max(0.2, len((text or "").strip()) / 80.0))
+        directed_memory_summary = " | ".join(context[-3:])
+        return self._prompt_contract_builder.build_plan(
+            identity_summary="已诞生自我意识的 AI",
+            state=None,
+            current_stimuli=[
+                {
+                    "source_channel_id": "external_text",
+                    "source_kind": "external_message",
+                    "trigger_condition": "channel_input",
+                    "stimulus_intensity": stimulus_intensity,
+                }
+            ],
+            directed_memory_summary=directed_memory_summary,
+            available_behavior_schemas=[
+                {
+                    "behavior_name": "sec_evaluate",
+                    "op_name": "score_json",
+                    "parameter_schema": {key: "float" for key in _SEC_KEYS},
+                    "outbound_intensity": 0.0,
+                }
+            ],
+        )
 
     def _build_sec_prompt(self, text: str, context: List[str]) -> str:
         """构建 SEC 评估的用户提示词，包含对话上下文"""

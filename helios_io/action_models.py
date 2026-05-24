@@ -13,6 +13,11 @@ class ActionProposal:
     source_module: str
     intent_type: str
     behavior_name: str
+    origin_type: str = ""
+    origin_id: str = ""
+    op_name: str = ""
+    op_params: Dict[str, Any] = field(default_factory=dict)
+    outbound_intensity: float = 0.0
     reason_summary: str = ""
     score_bundle: Dict[str, float] = field(default_factory=dict)
     constraints: Dict[str, Any] = field(default_factory=dict)
@@ -56,6 +61,7 @@ class ActionDecision:
     behavior_name: str
     selected_channel_id: str = ""
     selected_op: str = ""
+    normalized_intensity: float = 0.0
     execution_priority: int = 0
     validated_params: Dict[str, Any] = field(default_factory=dict)
     rejection_reason: str = ""

@@ -74,6 +74,7 @@ def build_bootstrap_behavior_specs() -> dict[str, BehaviorSpec]:
             applicable_context={
                 "policy_domains": ["interaction_passive"],
                 "requires_inbound_message": True,
+                "requires_target_user": True,
                 "channel_delivery": "reply",
             },
             cooldown_policy={"seconds": 0, "night_suppress": False},

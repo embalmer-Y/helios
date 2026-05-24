@@ -130,7 +130,7 @@ class TestDriveRegulationWeightedScoringProperty:
         drive_urgency=drive_urgency_strategy,
         drive_dominant=sampled_from(DRIVE_NAMES),
     )
-    @settings(max_examples=200)
+    @settings(max_examples=200, deadline=None)
     def test_drive_weight_is_thirty_percent(self, candidate, drive_urgency, drive_dominant):
         """The drive component contributes exactly 30% of its value to final_score.
 

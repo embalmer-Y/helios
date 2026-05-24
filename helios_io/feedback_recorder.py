@@ -61,6 +61,7 @@ class FeedbackRecorder:
                     feedback_details={
                         "state_effects": dict(feedback.state_effects),
                         "modality": command.modality,
+                        "normalized_intensity": command.normalized_intensity,
                         "provenance": dict(command.provenance),
                         "policy_trace": dict(command.policy_trace),
                     },
@@ -80,6 +81,9 @@ class FeedbackRecorder:
                 payload={
                     "behavior_name": command.action,
                     "op_name": command.op_name,
+                    "normalized_intensity": command.normalized_intensity,
+                    "origin_id": str(command.provenance.get("origin_id", "") or ""),
+                    "origin_type": str(command.provenance.get("origin_type", "") or ""),
                     "success": feedback.success,
                     "result_details": dict(feedback.result_details),
                     "state_effects": dict(feedback.state_effects),
@@ -130,6 +134,9 @@ class FeedbackRecorder:
         proposal_id: str = "",
         decision_id: str = "",
         behavior_id: str = "",
+        op_name: str = "",
+        normalized_intensity: float = 0.0,
+        provenance: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
         observed_at_ts: float | None = None,
     ) -> FeedbackEventRecord:
@@ -145,6 +152,11 @@ class FeedbackRecorder:
             payload={
                 "action_name": action_name,
                 "success": bool(success),
+                "op_name": op_name,
+                "normalized_intensity": float(normalized_intensity),
+                "origin_id": str((provenance or {}).get("origin_id", "") or ""),
+                "origin_type": str((provenance or {}).get("origin_type", "") or ""),
+                "provenance": dict(provenance or {}),
                 "metadata": dict(metadata or {}),
             },
             created_at=observed_ts,
@@ -162,6 +174,9 @@ class FeedbackRecorder:
         decision_id: str = "",
         behavior_id: str = "",
         channel_id: str = "",
+        op_name: str = "",
+        normalized_intensity: float = 0.0,
+        provenance: Mapping[str, Any] | None = None,
         payload: Mapping[str, Any] | None = None,
         observed_at_ts: float | None = None,
     ) -> FeedbackEventRecord:
@@ -177,6 +192,11 @@ class FeedbackRecorder:
             payload={
                 "behavior_name": behavior_name,
                 "rejection_reason": rejection_reason,
+                "op_name": op_name,
+                "normalized_intensity": float(normalized_intensity),
+                "origin_id": str((provenance or {}).get("origin_id", "") or ""),
+                "origin_type": str((provenance or {}).get("origin_type", "") or ""),
+                "provenance": dict(provenance or {}),
                 **dict(payload or {}),
             },
             created_at=observed_ts,
@@ -209,6 +229,70 @@ class FeedbackRecorder:
             payload={
                 "memory_type": memory_type,
                 "summary": summary,
+                **dict(payload or {}),
+            },
+            created_at=observed_ts,
+        )
+        self._behavior_catalog.registry.record_feedback_event(record)
+        return record
+
+    def record_execution_consistency_failure(
+        self,
+        *,
+        source_path: str,
+        behavior_name: str,
+        proposal_id: str = "",
+        decision_id: str = "",
+        behavior_id: str = "",
+        channel_id: str = "",
+        op_name: str = "",
+        normalized_intensity: float = 0.0,
+        provenance: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
+        observed_at_ts: float | None = None,
+    ) -> FeedbackEventRecord:
+        observed_ts = time.time() if observed_at_ts is None else float(observed_at_ts)
+        record = FeedbackEventRecord(
+            event_id=f"feedback::consistency::{decision_id or proposal_id or uuid4().hex}",
+            event_kind="execution_consistency_failure",
+            source_path=source_path,
+            proposal_id=proposal_id,
+            decision_id=decision_id,
+            behavior_id=behavior_id,
+            channel_id=channel_id,
+            payload={
+                "behavior_name": behavior_name,
+                "op_name": op_name,
+                "normalized_intensity": float(normalized_intensity),
+                "origin_id": str((provenance or {}).get("origin_id", "") or ""),
+                "origin_type": str((provenance or {}).get("origin_type", "") or ""),
+                "provenance": dict(provenance or {}),
+                **dict(payload or {}),
+            },
+            created_at=observed_ts,
+        )
+        self._behavior_catalog.registry.record_feedback_event(record)
+        return record
+
+    def record_identity_revision(
+        self,
+        *,
+        source_path: str,
+        revision_id: str,
+        origin_thought_id: str,
+        result: str,
+        payload: Mapping[str, Any] | None = None,
+        observed_at_ts: float | None = None,
+    ) -> FeedbackEventRecord:
+        observed_ts = time.time() if observed_at_ts is None else float(observed_at_ts)
+        record = FeedbackEventRecord(
+            event_id=f"feedback::identity::{revision_id}",
+            event_kind="identity_revision",
+            source_path=source_path,
+            payload={
+                "revision_id": revision_id,
+                "origin_thought_id": origin_thought_id,
+                "result": result,
                 **dict(payload or {}),
             },
             created_at=observed_ts,

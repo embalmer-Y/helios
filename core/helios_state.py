@@ -34,8 +34,19 @@ class HeliosState:
     dmn_active: bool = False
     last_thought_type: str = ""
     thought_generated_this_tick: bool = False
+    continuation_requested: bool = False
+    continuation_pressure: float = 0.0
+    continuation_reason: str = ""
+    last_recall_intent: str = ""
+    last_thought_cycle_result: Dict[str, object] = field(default_factory=dict)
+    current_stimuli: list[Dict[str, object]] = field(default_factory=list)
+    last_thought_gate_result: Dict[str, object] = field(default_factory=dict)
     last_thought_personality_trace: Dict[str, object] = field(default_factory=dict)
+    last_internal_thought_trace: Dict[str, object] = field(default_factory=dict)
+    directed_memory_bundle: object | None = None
+    last_directed_retrieval_trace: Dict[str, object] = field(default_factory=dict)
     last_preconscious_trace: Dict[str, object] = field(default_factory=dict)
+    last_identity_revision_trace: Dict[str, object] = field(default_factory=dict)
 
     # Mood (from MoodTracker)
     mood_valence: float = 0.0
@@ -54,6 +65,7 @@ class HeliosState:
 
     # Personality
     personality_traits: Dict[str, float] = field(default_factory=dict)
+    identity_snapshot: Dict[str, object] = field(default_factory=dict)
     personality_projection: object | None = None
     temporal_state: object | None = None
     temporal_gate: object | None = None

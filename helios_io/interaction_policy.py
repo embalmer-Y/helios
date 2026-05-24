@@ -107,8 +107,8 @@ class InteractionPolicy:
         novelty = float(sec_result.get("novelty", 0.0))
         urgency = _clamp(goal_relevance * 0.62 + novelty * 0.38, 0.0, 1.0)
         available_channel_ids = [channel_id for channel_id in (available_channels or []) if channel_id]
-        source_channel = str(message.get("channel_id", "qq") or "qq")
-        if source_channel not in available_channel_ids:
+        source_channel = str(message.get("channel_id") or "")
+        if source_channel and source_channel not in available_channel_ids:
             available_channel_ids.insert(0, source_channel)
 
         available_modalities = ["text"]

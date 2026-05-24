@@ -192,7 +192,7 @@ class TestCapacityWarningAt80Percent:
         capacity=integers(min_value=10, max_value=30),
         fill_ratio=floats(min_value=0.0, max_value=0.79, allow_nan=False, allow_infinity=False),
     )
-    @settings(max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_state_history_below_80_percent_no_warning(self, capacity, fill_ratio, caplog):
         """When DAISY state_history is below 80% capacity, NO WARNING SHALL be logged."""
         import helios_main

@@ -40,6 +40,7 @@ class TestConversationExchange:
         )
         assert ex.timestamp == 1000.0
         assert ex.user_message == "你好"
+        assert ex.conversation_key == ""
         assert ex.sec_result == {"novelty": 0.5, "goal_relevance": 0.3}
         assert ex.reply is None
         assert ex.emotional_context == {}
@@ -214,6 +215,35 @@ class TestConversationHistoryManager:
         """get_recent_messages returns empty list for unknown user."""
         mgr = ConversationHistoryManager()
         assert mgr.get_recent_messages("ghost", count=3) == []
+
+    def test_get_history_filters_by_conversation_key(self):
+        """get_history can isolate one user's exchanges by conversation key."""
+        mgr = ConversationHistoryManager()
+        mgr.append_message("user1", "群聊消息", {}, timestamp=1.0, conversation_key="qq:group:g1")
+        mgr.append_message("user1", "私聊消息", {}, timestamp=2.0, conversation_key="qq:dm:user1")
+
+        history = mgr.get_history("user1", conversation_key="qq:dm:user1")
+
+        assert [ex.user_message for ex in history] == ["私聊消息"]
+
+    def test_append_reply_targets_matching_conversation_key(self):
+        """append_reply updates the latest pending exchange in the same conversation."""
+        mgr = ConversationHistoryManager()
+        mgr.append_message("user1", "群聊消息", {}, timestamp=1.0, conversation_key="qq:group:g1")
+        mgr.append_message("user1", "私聊消息", {}, timestamp=2.0, conversation_key="qq:dm:user1")
+
+        result = mgr.append_reply(
+            "user1",
+            "私聊回复",
+            {"valence": 0.3},
+            conversation_key="qq:dm:user1",
+        )
+
+        assert result is True
+        group_history = mgr.get_history("user1", conversation_key="qq:group:g1")
+        dm_history = mgr.get_history("user1", conversation_key="qq:dm:user1")
+        assert group_history[0].reply is None
+        assert dm_history[0].reply == "私聊回复"
 
     def test_clear_user(self):
         """clear_user removes all history for a specific user."""

@@ -1,0 +1,233 @@
+# Requirement Authoring Standard
+
+## 1. Purpose
+This document defines the mandatory rules for authoring requirement packages under `docs/requirements` so the resulting requirements are architecture-first, implementable, testable, and safe for staged migration.
+
+## 2. Scope
+This standard applies to all requirement packages created or updated under `docs/requirements`, including:
+
+1. New numbered requirement folders.
+2. New or updated `requirement.md` files.
+3. New or updated `design.md` files.
+4. New or updated `task.md` files.
+5. Updates to the requirements index.
+
+## 3. Directory and Naming Rules
+
+### 3.1 Folder naming
+Each requirement must be created as a dedicated folder under `docs/requirements` using the following pattern:
+
+`NN-short-name`
+
+Rules:
+
+1. `NN` is a two-digit incremental number, starting from `01`.
+2. `short-name` is concise, lowercase, with words joined by hyphen.
+3. Use only letters, numbers, and hyphen.
+4. Keep `short-name` within 3 to 6 words when practical.
+
+Examples:
+
+1. `06-memory-retrieval-ranking`
+2. `07-thought-to-action-bridge`
+
+### 3.2 File naming
+Each requirement folder must contain:
+
+1. `requirement.md`
+2. `design.md`
+3. `task.md`
+
+Legacy packages may be normalized in follow-up changes, but any actively maintained package must contain all three files.
+
+## 4. Mandatory Structure by File Type
+
+### 4.1 requirement.md
+Every `requirement.md` must include all sections below and preserve the order.
+
+1. Title
+2. Background and Problem
+3. Goal
+4. Functional Requirements
+5. Non-Functional Requirements
+6. Code Behavior Constraints
+7. Impacted Modules
+8. Acceptance Criteria
+
+### 4.2 design.md
+Every `design.md` must include all sections below and preserve the order.
+
+1. Title
+2. Design Overview
+3. Current State and Gap
+4. Target Architecture
+5. Data Structures
+6. Module Changes
+7. Migration Plan
+8. Failure Modes and Constraints
+9. Observability and Logging
+10. Validation Strategy
+
+### 4.3 task.md
+Every `task.md` must include all sections below and preserve the order.
+
+1. Title
+2. Task Breakdown
+3. Dependencies
+4. Files and Modules
+5. Implementation Order
+6. Validation Plan
+7. Completion Criteria
+
+## 5. Writing Rules by File Type
+
+### 5.1 Title
+1. Use format: `Requirement NN - Short requirement name`.
+2. The title must represent the architectural intent, not just a symptom.
+
+### 5.2 Background and Problem
+1. Describe the current runtime behavior and observable symptoms.
+2. State why the current behavior is insufficient.
+3. Avoid vague wording such as "improve quality" without concrete failure evidence.
+
+### 5.3 Goal
+1. Must be one concise paragraph.
+2. Must define the target runtime behavior, not only implementation work.
+
+### 5.4 Functional Requirements
+1. Break down into numbered subsections.
+2. Use normative language:
+   - `must` for mandatory behavior
+   - `should` for recommended behavior
+   - `may` for optional behavior
+3. Each key statement must describe observable runtime behavior.
+4. If a new runtime concept is introduced, it must be first-class in the architecture, not just metadata or logging text.
+
+### 5.5 Non-Functional Requirements
+At minimum cover applicable dimensions:
+
+1. Performance.
+2. Reliability and fault tolerance.
+3. Observability and logging.
+4. Compatibility and migration constraints.
+
+### 5.6 Code Behavior Constraints
+1. State explicit forbidden patterns where needed.
+2. Define module boundary rules and owning abstractions.
+3. Include failure-mode constraints, not only happy-path behavior.
+
+### 5.7 Impacted Modules
+1. List concrete file-level modules likely affected.
+2. Include new owning abstractions when the requirement introduces a first-class concept.
+3. Keep the list actionable for implementation planning.
+
+### 5.8 Acceptance Criteria
+1. Must be objectively verifiable.
+2. Must include runtime behavior checks and test expectations.
+3. Must avoid purely subjective criteria such as "feels better".
+4. Must avoid brittle string-only acceptance unless literal string behavior is the product goal.
+5. When data ownership or routing correctness is the goal, acceptance must validate source provenance rather than only prompt substrings.
+
+### 5.9 design.md rules
+1. Design must describe implementation shape, not repeat the requirement statement.
+2. Design must define target runtime data flow, module boundaries, and state transitions.
+3. Design must include explicit data structures when the change affects inputs, outputs, traces, persisted records, or ownership contracts.
+4. Design must identify the owning abstraction for every new runtime concept.
+5. Design must explain how the current implementation migrates to the target state without a full rewrite.
+6. Design must state failure modes and fallback behavior for missing dependencies, unavailable capabilities, or partial rollout.
+7. Design must make default-on vs default-off rollout explicit for newly introduced behavior.
+8. Design must include a validation strategy that can be translated into focused tests.
+
+### 5.10 task.md rules
+1. Task documents must break the design into ordered implementation units that can be completed and verified independently.
+2. Each task must state its dependency, touched modules, completion definition, and validation step.
+3. Tasks must be implementation-oriented and architecture-aware; they must not restate the background problem in long form.
+4. Task order must reflect dependency order and migration order.
+5. Each task must point to a concrete code or test surface where the work will land.
+6. Task documents must identify the first narrow validation command or check for each phase when practical.
+7. If a feature has independently configurable sinks or outputs, tasks must model them independently instead of through one umbrella toggle.
+
+## 6. Quality Bar
+A requirement package is acceptable only if all checks pass.
+
+1. Specific: states exactly what changes in runtime behavior.
+2. Testable: each key statement can be validated by logs, assertions, or integration checks.
+3. Bounded: defines scope and explicit constraints.
+4. Traceable: maps to one clear problem statement.
+5. Safe: includes fallback or degradation behavior when dependencies fail.
+6. Architecturally owned: every new runtime concept has a clear owner module and integration path.
+7. Migration-safe: default rollout behavior and compatibility behavior are both explicit.
+
+## 7. Language and Style Rules
+
+1. Keep terms consistent across all requirement files.
+2. Prefer short declarative sentences.
+3. Do not mix implementation TODO notes with requirement statements.
+4. Avoid contradictory requirements in the same document.
+5. Keep one requirement package focused on one architectural concern.
+
+## 8. Cross-File Update Rules
+When adding or materially changing a requirement package, the author must also update `docs/requirements/index.md` with:
+
+1. Overview table changes.
+2. Priority changes if relevant.
+3. Dependency changes if relevant.
+4. Suggested implementation sequence changes if order changes.
+
+A requirement change set is incomplete if `index.md` is stale.
+
+When updating a requirement package, the author must keep requirement, design, and task aligned:
+
+1. `requirement.md` defines the behavioral boundary.
+2. `design.md` defines the target runtime shape and owning abstractions.
+3. `task.md` defines the implementation slices and validation path.
+
+If design or task changes alter ordering, ownership, or rollout strategy, `index.md` must be updated in the same change set.
+
+## 9. Requirement Template
+Use this template when creating a new `requirement.md`.
+
+# Requirement NN - <name>
+
+## 1. Background and Problem
+<current behavior, issue evidence, impact>
+
+## 2. Goal
+<target behavior>
+
+## 3. Functional Requirements
+### 3.1 <subtopic>
+1. <mandatory behavior>
+2. <mandatory behavior>
+
+### 3.2 <subtopic>
+1. <mandatory behavior>
+
+## 4. Non-Functional Requirements
+1. <performance or reliability constraint>
+2. <observability or migration constraint>
+
+## 5. Code Behavior Constraints
+1. <forbidden pattern>
+2. <boundary rule>
+
+## 6. Impacted Modules
+1. <module path>
+2. <module path>
+
+## 7. Acceptance Criteria
+1. <verifiable criterion>
+2. <verifiable criterion>
+
+## 10. Review Checklist for AI Authors
+Before finalizing, verify:
+
+1. Folder and file naming follow the standard.
+2. All mandatory sections exist and are complete.
+3. Each `must` statement is testable.
+4. Acceptance criteria are objective and runnable.
+5. The design identifies the owning abstraction for new runtime concepts.
+6. The design states default rollout behavior and fallback behavior.
+7. The task document contains ordered, verifiable implementation slices.
+8. `index.md` has been updated.
+9. No unresolved placeholder text remains.

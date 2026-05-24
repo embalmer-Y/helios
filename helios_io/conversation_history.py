@@ -48,6 +48,9 @@ class ConversationExchange:
     user_message: str
     """用户发送的消息文本"""
 
+    conversation_key: str = ""
+    """会话标识；为空表示未提供可用会话边界"""
+
     sec_result: Dict[str, float] = field(default_factory=dict)
     """SEC 评估结果 {novelty, pleasantness, goal_relevance, ...}"""
 
@@ -95,7 +98,7 @@ class ConversationHistoryManager:
         """返回所有有历史记录的用户 ID 列表"""
         return list(self._histories.keys())
 
-    def get_history(self, user_id: str) -> List[ConversationExchange]:
+    def get_history(self, user_id: str, conversation_key: str = "") -> List[ConversationExchange]:
         """
         获取指定用户的对话历史。
 
@@ -107,9 +110,12 @@ class ConversationHistoryManager:
         """
         if user_id not in self._histories:
             return []
-        return list(self._histories[user_id])
+        history = list(self._histories[user_id])
+        if not conversation_key:
+            return history
+        return [ex for ex in history if ex.conversation_key == conversation_key]
 
-    def get_recent_messages(self, user_id: str, count: int = 3) -> List[str]:
+    def get_recent_messages(self, user_id: str, count: int = 3, conversation_key: str = "") -> List[str]:
         """
         获取最近 N 条用户消息文本，用于 SEC 评估上下文。
 
@@ -122,9 +128,27 @@ class ConversationHistoryManager:
         """
         if user_id not in self._histories:
             return []
-        history = self._histories[user_id]
-        recent = list(history)[-count:]
+        recent = self.get_history(user_id, conversation_key=conversation_key)[-count:]
         return [ex.user_message for ex in recent]
+
+    def get_recent_exchange_texts(
+        self,
+        user_id: str,
+        count: int = 5,
+        conversation_key: str = "",
+    ) -> List[str]:
+        """获取最近 N 轮交换的文本摘要，用于记忆检索与提示词构建。"""
+        history = self.get_history(user_id, conversation_key=conversation_key)[-count:]
+        texts: List[str] = []
+        for ex in history:
+            lines = []
+            if ex.user_message:
+                lines.append(f"对方: {ex.user_message}")
+            if ex.reply:
+                lines.append(f"你: {ex.reply}")
+            if lines:
+                texts.append("\n".join(lines))
+        return texts
 
     def history_length(self, user_id: str) -> int:
         """返回指定用户的当前历史长度"""
@@ -138,6 +162,7 @@ class ConversationHistoryManager:
         message: str,
         sec_result: Dict[str, float],
         timestamp: Optional[float] = None,
+        conversation_key: str = "",
     ) -> ConversationExchange:
         """
         接收消息时追加到对话历史。
@@ -164,6 +189,7 @@ class ConversationHistoryManager:
         exchange = ConversationExchange(
             timestamp=timestamp,
             user_message=message,
+            conversation_key=conversation_key,
             sec_result=dict(sec_result),  # 防御性拷贝
         )
 
@@ -185,6 +211,7 @@ class ConversationHistoryManager:
         user_id: str,
         reply: str,
         emotional_context: Dict[str, float],
+        conversation_key: str = "",
     ) -> bool:
         """
         发送回复时补充最新交换的 reply 和 emotional_context。
@@ -213,9 +240,24 @@ class ConversationHistoryManager:
             log.warning(f"无法附加回复: 用户 {user_id} 历史为空")
             return False
 
-        last_exchange = buf[-1]
-        last_exchange.reply = reply
-        last_exchange.emotional_context = dict(emotional_context)  # 防御性拷贝
+        target_exchange: Optional[ConversationExchange] = None
+        for exchange in reversed(buf):
+            if conversation_key and exchange.conversation_key != conversation_key:
+                continue
+            if exchange.reply is None:
+                target_exchange = exchange
+                break
+
+        if target_exchange is None:
+            log.warning(
+                "无法附加回复: 用户 %s 未找到可匹配的待回复历史 (conversation_key=%s)",
+                user_id,
+                conversation_key or "missing",
+            )
+            return False
+
+        target_exchange.reply = reply
+        target_exchange.emotional_context = dict(emotional_context)  # 防御性拷贝
 
         log.debug(f"回复已附加到 {user_id} 最新交换")
         return True

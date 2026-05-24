@@ -26,9 +26,12 @@ def test_feedback_recorder_persists_execution_log(tmp_path):
         decision_id="decision::1",
         channel_id="qq",
         op_name="send",
+        normalized_intensity=0.68,
         modality="text",
         provenance={
             "source_type": "regulation",
+            "origin_type": "thought",
+            "origin_id": "thought::7::rumination::1000",
             "personality_influence_trace": {
                 "behavior_bias": 0.18,
                 "novelty_bias": 0.62,
@@ -52,12 +55,15 @@ def test_feedback_recorder_persists_execution_log(tmp_path):
     assert rows[0].decision_id == "decision::1"
     assert rows[0].feedback_details["policy_trace"]["resolved_score"] == 0.7
     assert rows[0].feedback_details["provenance"]["personality_influence_trace"]["behavior_bias"] == 0.18
+    assert rows[0].feedback_details["normalized_intensity"] == 0.68
 
     events = catalog.registry.list_feedback_events(decision_id="decision::1")
     assert len(events) == 1
     assert events[0].event_kind == "execution_result"
     assert events[0].payload["success"] is True
     assert events[0].payload["provenance"]["personality_influence_trace"]["novelty_bias"] == 0.62
+    assert events[0].payload["origin_id"] == "thought::7::rumination::1000"
+    assert events[0].payload["normalized_intensity"] == 0.68
 
 
 def test_feedback_recorder_persists_user_channel_and_memory_events(tmp_path):
@@ -82,6 +88,9 @@ def test_feedback_recorder_persists_user_channel_and_memory_events(tmp_path):
         proposal_id="proposal::2",
         decision_id="decision::2",
         behavior_id="bootstrap.reply_message",
+        op_name="send",
+        normalized_intensity=0.51,
+        provenance={"origin_type": "thought", "origin_id": "thought::1::self_question::1000"},
         metadata={"user_id": "user1"},
         observed_at_ts=11.0,
     )
@@ -98,6 +107,8 @@ def test_feedback_recorder_persists_user_channel_and_memory_events(tmp_path):
     assert [event.event_kind for event in events] == ["user_feedback", "channel_receipt", "memory_write"]
     assert events[0].payload["user_id"] == "user1"
     assert events[1].behavior_id == "bootstrap.reply_message"
+    assert events[1].payload["op_name"] == "send"
+    assert events[1].payload["origin_id"] == "thought::1::self_question::1000"
     assert events[2].memory_id == "moment::1"
 
 
@@ -111,13 +122,68 @@ def test_feedback_recorder_persists_policy_rejection_event(tmp_path):
         proposal_id="proposal::reject::1",
         decision_id="decision::proposal::reject::1",
         behavior_name="speak_share",
-        rejection_reason="internal_only_constraint",
-        payload={"policy_trace": {"internal_only": True}},
+        rejection_reason="execution_scope_constraint",
+        op_name="send",
+        normalized_intensity=0.74,
+        provenance={"origin_type": "thought", "origin_id": "thought::1::rumination::1000"},
+        payload={"policy_trace": {"execution_scope": "internal"}},
         observed_at_ts=20.0,
     )
 
     events = catalog.registry.list_feedback_events(event_kind="policy_rejection")
     assert len(events) == 1
     assert events[0].source_path == "preconscious"
-    assert events[0].payload["rejection_reason"] == "internal_only_constraint"
-    assert events[0].payload["policy_trace"]["internal_only"] is True
+    assert events[0].payload["rejection_reason"] == "execution_scope_constraint"
+    assert events[0].payload["policy_trace"]["execution_scope"] == "internal"
+    assert events[0].payload["op_name"] == "send"
+    assert events[0].payload["origin_id"] == "thought::1::rumination::1000"
+
+
+def test_feedback_recorder_persists_execution_consistency_failure_event(tmp_path):
+    catalog = RuntimeBehaviorCatalog.from_db_path(tmp_path / "behavior_registry.sqlite3")
+    catalog.ensure_bootstrap_behaviors()
+    recorder = FeedbackRecorder(catalog)
+
+    recorder.record_execution_consistency_failure(
+        source_path="regulation",
+        proposal_id="proposal::consistency::1",
+        decision_id="decision::consistency::1",
+        behavior_id="bootstrap.speak_share",
+        behavior_name="speak_share",
+        channel_id="qq",
+        op_name="send",
+        normalized_intensity=0.61,
+        provenance={"origin_type": "thought", "origin_id": "thought::2::future_projection::1000"},
+        payload={"rejection_reason": "channel_status:disconnected"},
+        observed_at_ts=22.0,
+    )
+
+    events = catalog.registry.list_feedback_events(event_kind="execution_consistency_failure")
+    assert len(events) == 1
+    assert events[0].channel_id == "qq"
+    assert events[0].payload["behavior_name"] == "speak_share"
+    assert events[0].payload["rejection_reason"] == "channel_status:disconnected"
+    assert events[0].payload["normalized_intensity"] == 0.61
+    assert events[0].payload["origin_id"] == "thought::2::future_projection::1000"
+
+
+def test_feedback_recorder_persists_identity_revision_event(tmp_path):
+    catalog = RuntimeBehaviorCatalog.from_db_path(tmp_path / "behavior_registry.sqlite3")
+    catalog.ensure_bootstrap_behaviors()
+    recorder = FeedbackRecorder(catalog)
+
+    recorder.record_identity_revision(
+        source_path="internal_thought_llm",
+        revision_id="identity_revision::1",
+        origin_thought_id="thought::1000",
+        result="accepted",
+        payload={"applied_change": {"personality_baseline": {"openness": 1.05}}},
+        observed_at_ts=25.0,
+    )
+
+    events = catalog.registry.list_feedback_events(event_kind="identity_revision")
+    assert len(events) == 1
+    assert events[0].source_path == "internal_thought_llm"
+    assert events[0].payload["revision_id"] == "identity_revision::1"
+    assert events[0].payload["origin_thought_id"] == "thought::1000"
+    assert events[0].payload["result"] == "accepted"

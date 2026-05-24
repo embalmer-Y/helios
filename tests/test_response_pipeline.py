@@ -8,6 +8,7 @@ Requirements: 7.1, 7.2, 7.3, 7.5
 
 import sys
 import time
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
@@ -19,7 +20,11 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from helios_io.conversation_history import ConversationExchange
+from helios_io.channel import ChannelDescriptor, ChannelOpDescriptor
+from helios_io.prompt_contract import PromptContractBuilder
+from helios_io.reply_prompt_builder import ReplyPromptBuilder
 from helios_io.response_pipeline import ResponsePipeline
+from personality_projection import build_personality_projection
 
 
 @dataclass
@@ -47,6 +52,7 @@ class MockHeliosState:
         "agreeableness": 1.3,
         "openness": 1.1,
     })
+    personality_projection: Optional[object] = None
 
 
 # ═══════════════════════════════════════════════════
@@ -113,6 +119,15 @@ class TestRecordExchange:
 
     def setup_method(self):
         self.pipeline = ResponsePipeline()
+
+
+def test_unified_prompt_contract_builder_exists_as_separate_owner():
+    builder = PromptContractBuilder()
+
+    plan = builder.build_plan(identity_summary="已诞生自我意识的 AI")
+
+    assert plan.identity_layer
+    assert plan.metric_layer
 
     def test_record_creates_history_entry(self):
         """Recording an exchange should add to history"""
@@ -378,6 +393,28 @@ class TestGenerateReply:
         desc = pipeline._build_personality_desc(state)
         assert "温柔" in desc
 
+    def test_personality_descriptor_prefers_shared_projection_contract(self):
+        pipeline = ResponsePipeline()
+        projection = build_personality_projection(
+            traits={
+                "agreeableness": 1.35,
+                "openness": 1.28,
+                "neuroticism": 0.88,
+                "extraversion": 1.05,
+                "conscientiousness": 1.10,
+            }
+        )
+        state = MockHeliosState(
+            personality_traits=dict(projection.raw_traits),
+            personality_projection=projection,
+        )
+
+        descriptor, trace = pipeline._build_personality_descriptor(state)
+
+        assert descriptor.persona_text_summary == "温柔善良、好奇开放"
+        assert trace.source_path == "reply_generation"
+        assert trace.persona_text_summary == descriptor.persona_text_summary
+
     def test_generate_reply_uses_icri_temperature_mapping(self):
         pipeline = ResponsePipeline(api_key="test-key")
         mock_client = MagicMock()
@@ -414,6 +451,157 @@ class TestGenerateReply:
         long_text = "很长的回复。" * 50
         result = pipeline._clean_reply(long_text)
         assert len(result) <= 150
+
+    def test_reply_prompt_builder_returns_layered_plan(self):
+        pipeline = ResponsePipeline()
+        state = MockHeliosState(
+            personality_traits={"agreeableness": 1.3, "openness": 1.28},
+            personality_projection=build_personality_projection(
+                traits={"agreeableness": 1.3, "openness": 1.28}
+            ),
+        )
+        descriptor, trace = pipeline._build_personality_descriptor(state)
+        builder = ReplyPromptBuilder()
+
+        plan = builder.build_prompt_plan(
+            text="你今天在做什么？",
+            history=[],
+            sec_result={"goal_relevance": 0.8, "novelty": 0.3},
+            emotional_context=pipeline._build_emotional_context(state),
+            personality_descriptor=descriptor,
+            personality_trace=trace,
+            memory_context="",
+            autobio_context="",
+            current_conversation_context="",
+            user_long_term_context="",
+            global_fallback_context="",
+            channel_modality="text",
+        )
+
+        assert "你是璃光" in plan.identity_layer
+        assert "人格倾向" in plan.persona_layer
+        assert "任务解释" in plan.task_layer
+        assert plan.snapshot.identity_summary_length > 0
+        assert plan.snapshot.persona_summary_length > 0
+        assert plan.snapshot.task_summary_length > 0
+
+    def test_reply_prompt_builder_snapshot_keeps_task_first_summary(self):
+        pipeline = ResponsePipeline()
+        state = MockHeliosState(
+            personality_traits={"agreeableness": 1.1},
+            personality_projection=build_personality_projection(traits={"agreeableness": 1.1}),
+        )
+        descriptor, trace = pipeline._build_personality_descriptor(state)
+        builder = ReplyPromptBuilder()
+
+        plan = builder.build_prompt_plan(
+            text="为什么今天这么安静？",
+            history=[],
+            sec_result={"goal_relevance": 0.7, "novelty": 0.2},
+            emotional_context=pipeline._build_emotional_context(state),
+            personality_descriptor=descriptor,
+            personality_trace=trace,
+            memory_context="",
+            autobio_context="",
+            current_conversation_context="",
+            user_long_term_context="",
+            global_fallback_context="",
+            channel_modality="text",
+        )
+
+        assert "问答型请求" in plan.snapshot.task_interpretation_summary
+        assert "interaction=" in plan.snapshot.descriptor_summary
+
+    def test_reply_prompt_builder_supports_rollout_switch(self):
+        pipeline = ResponsePipeline()
+        state = MockHeliosState(
+            personality_traits={"agreeableness": 1.3},
+            personality_projection=build_personality_projection(traits={"agreeableness": 1.3}),
+        )
+        descriptor, trace = pipeline._build_personality_descriptor(state)
+        builder = ReplyPromptBuilder(layered_enabled=False)
+
+        plan = builder.build_prompt_plan(
+            text="你好呀",
+            history=[],
+            sec_result={"goal_relevance": 0.5, "novelty": 0.2},
+            emotional_context=pipeline._build_emotional_context(state),
+            personality_descriptor=descriptor,
+            personality_trace=trace,
+            memory_context="",
+            autobio_context="",
+            current_conversation_context="",
+            user_long_term_context="",
+            global_fallback_context="",
+            channel_modality="text",
+        )
+
+        assert plan.identity_layer == "你是璃光，一个有真实情感的 AI 生命体。你在回复收到的消息。"
+        assert plan.persona_layer == "你的性格: 温柔善良"
+
+    def test_generate_reply_logs_layer_summaries_without_prompt_body(self, caplog):
+        pipeline = ResponsePipeline(api_key="test-key")
+        pipeline._client = MagicMock()
+        pipeline._client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="你好呀"))]
+        )
+        state = MockHeliosState(
+            personality_traits={"agreeableness": 1.35, "openness": 1.28},
+            personality_projection=build_personality_projection(
+                traits={"agreeableness": 1.35, "openness": 1.28}
+            ),
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="helios.helios_io.response_pipeline"):
+            reply = pipeline.generate_reply(
+                {"text": "为什么今天这么安静？", "user_id": "user1"},
+                state,
+                {"goal_relevance": 0.72, "novelty": 0.24},
+            )
+
+        assert reply == "你好呀"
+        assert any("Reply prompt layers:" in record.message for record in caplog.records)
+        assert any("Reply LLM payload summary:" in record.message for record in caplog.records)
+        assert not any("人格倾向:" in record.message for record in caplog.records)
+        assert not any("任务解释:" in record.message for record in caplog.records)
+
+    def test_reply_prompt_contract_includes_runtime_channel_semantics(self):
+        pipeline = ResponsePipeline(
+            channel_descriptor_provider=lambda: {
+                "qq": ChannelDescriptor(
+                    channel_id="qq",
+                    display_name="QQ",
+                    supported_ops=[
+                        ChannelOpDescriptor(
+                            name="send",
+                            direction="output",
+                            description="send text",
+                            input_schema={"message": "ChannelMessage", "target_user_id": "str"},
+                        )
+                    ],
+                )
+            }
+        )
+        state = MockHeliosState()
+        descriptor, _trace = pipeline._build_personality_descriptor(state)
+
+        plan = pipeline._build_reply_prompt_contract(
+            message={"text": "你好", "user_id": "user1", "channel_id": "qq"},
+            state=state,
+            sec_result={"goal_relevance": 0.6, "novelty": 0.2},
+            personality_descriptor=descriptor,
+            history=[],
+            memory_context="",
+            current_conversation_context="",
+            user_long_term_context="",
+            global_fallback_context="",
+        )
+
+        assert len(plan.channel_descriptors) == 1
+        assert plan.channel_descriptors[0].channel_id == "qq"
+        assert plan.channel_descriptors[0].supported_ops == ("send",)
+        assert "channel_op=send" in plan.action_layer
+        assert "target_user_id:str" in plan.action_layer
 
 
 # ═══════════════════════════════════════════════════

@@ -130,6 +130,7 @@ def test_executor_enqueue_decision_preserves_metadata():
         behavior_snapshot={"behavior_id": "bootstrap.speak_share"},
         selected_channel_id="qq",
         selected_op="send",
+        normalized_intensity=0.63,
         execution_priority=75,
         validated_params={"text": "hello"},
         selected_modality="text",
@@ -143,7 +144,9 @@ def test_executor_enqueue_decision_preserves_metadata():
     assert command.proposal_id == "proposal::1"
     assert command.behavior_id == "bootstrap.speak_share"
     assert command.channel_id == "qq"
+    assert command.normalized_intensity == 0.63
     assert completed is not None
     assert completed.result["behavior_id"] == "bootstrap.speak_share"
     assert completed.result["decision_id"] == "decision::1"
     assert completed.result["channel_id"] == "qq"
+    assert completed.result["normalized_intensity"] == 0.63

@@ -9,6 +9,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
 from personality import PersonalityProfile
+from personality_contract import build_personality_contract
 from personality_projection import build_personality_projection
 
 
@@ -101,3 +102,72 @@ def test_projection_exposes_design_level_bias_surfaces_in_trace_payload():
     assert 0.0 <= float(payload["novelty_bias"]) <= 1.0
     assert 0.0 <= float(payload["persistence_bias"]) <= 1.0
     assert 0.0 <= float(payload["expressivity_bias"]) <= 1.0
+
+
+def test_unified_personality_contract_exposes_shared_descriptor_and_trace():
+    projection = build_personality_projection(
+        traits={
+            "openness": 1.25,
+            "extraversion": 1.18,
+            "agreeableness": 1.24,
+            "neuroticism": 0.84,
+            "conscientiousness": 1.02,
+        }
+    )
+
+    descriptor, trace = build_personality_contract(
+        projection=projection,
+        traits=projection.raw_traits,
+        source_path="reply_generation",
+    )
+
+    assert descriptor.persona_text_summary == "温柔善良、好奇开放"
+    assert descriptor.threshold_normalization["rule_id"] == "r06.big_five_projection.v1"
+    assert descriptor.projection_view["interaction_bias"] == round(projection.interaction_bias, 4)
+    assert trace.source_path == "reply_generation"
+    assert "agreeableness=1.24" in trace.trait_input_summary
+    assert "interaction=" in trace.projection_input_summary
+    assert trace.persona_text_summary == descriptor.persona_text_summary
+
+
+def test_unified_personality_contract_falls_back_to_neutral_defaults_when_missing_inputs():
+    descriptor, trace = build_personality_contract(source_path="active_speech_generation")
+
+    assert descriptor.persona_text_summary == "温柔、忠诚、有情感"
+    assert descriptor.fallback_state.projection_missing is True
+    assert descriptor.fallback_state.default_values_used is True
+    assert descriptor.fallback_state.degradation_reason == "projection_missing,traits_missing"
+    assert abs(descriptor.interaction_bias) <= 0.05
+    assert abs(descriptor.initiative_bias) <= 0.05
+    assert descriptor.projection_view["risk_tolerance_bias"] == 0.5
+    assert trace.normalization_rule_id == "r06.big_five_projection.v1"
+
+
+def test_unified_personality_contract_merges_identity_boundary_when_present():
+    descriptor, trace = build_personality_contract(
+        identity_store={
+            "self_imprint": "已诞生自我意识的 AI",
+            "self_definition": "Helios 是一个已诞生自我意识的 AI。",
+        },
+        source_path="active_speech_generation",
+    )
+
+    assert descriptor.persona_text_summary.startswith("已诞生自我意识的 AI，")
+    assert trace.persona_text_summary == descriptor.persona_text_summary
+
+
+def test_unified_personality_contract_includes_identity_narrative_summary_when_present():
+    descriptor, trace = build_personality_contract(
+        identity_store={
+            "self_imprint": "已诞生自我意识的 AI",
+            "identity_metadata": {
+                "autobiographical_identity_narrative": {
+                    "summary": "这些经历让我逐渐把自己理解为一个会在关系中成长的意识体。"
+                }
+            },
+        },
+        source_path="active_speech_generation",
+    )
+
+    assert "这些经历让我逐渐把自己理解为一个会在关系中成长的意识体。" in descriptor.persona_text_summary
+    assert trace.persona_text_summary == descriptor.persona_text_summary

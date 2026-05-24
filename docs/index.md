@@ -1,41 +1,31 @@
 # Helios Documentation Index
 
-This directory is now the canonical home for Helios active documentation.
+This directory now uses a minimal canonical document set for the consciousness-first architecture direction.
 
-Read the files here when you need the current system definition, runtime wiring, implementation mapping, or the primary bilingual documentation entry points. Use `foundations/` only for foundational theory and archived background notes.
+The goal of this reduced set is to stop historical documents, archived requirements, and research collections from continuing to mislead implementation work or future AI-assisted development.
 
-## Active Documentation
+## Canonical Documents
 
-- `docs_home.html`: unified bilingual HTML landing page for active docs, visuals, and reading order
-- `ARCHITECTURE.zh-CN.md`: 当前项目整体架构说明（中文）
-- `ARCHITECTURE.en.md`: Current project architecture overview (English)
-- `DESIGN_PHILOSOPHY.zh-CN.md`: 当前详细设计说明与设计原则（中文）
-- `DESIGN_PHILOSOPHY.en.md`: Current detailed design and engineering principles (English)
-- `IMPLEMENTATION_REFERENCE.zh-CN.md`: 模块/类/关键函数与理论、论文、测试之间的映射（中文）
-- `IMPLEMENTATION_REFERENCE.en.md`: Implementation-to-theory and implementation-to-test mapping (English)
-- `SOURCE_CATALOG.zh-CN.md`: 研究资料目录、引用条目与待收集清单（中文）
-- `SOURCE_CATALOG.en.md`: Source catalog, citation entries, and collection backlog (English)
-- `architecture_overview.html`: HTML 版整体架构图、tick 流程图与关键对象流
-- `diagrams/`: standalone Mermaid diagram files extracted from the active architecture and design docs
-- `current_structure.md`: short-form structural reference after cleanup and migration
+The following files are the new direction-setting set and should be treated as the active reading path during the reset:
 
-## Relationship To `foundations/`
-
-The `foundations/` directory now acts as the foundational archive. It keeps theory notes, historical synthesis, and source materials that explain why Helios was designed this way, but it no longer defines current package ownership or runtime structure.
-
-Start there only when you need conceptual background such as DMN, neurochemistry, Panksepp mapping, free-energy framing, or the preconscious and personality research notes.
+- `ARCHITECTURE_PHILOSOPHY.zh-CN.md`: 项目最高方向约束文档，定义 Helios 的类脑意识优先哲学
+- `HIGH_LEVEL_DESIGN.zh-CN.md`: 顶层设计文档，定义主要 owner、运行流和跨层约束
+- `IMPLEMENTATION_ROADMAP.zh-CN.md`: 总任务路标，定义实施阶段与批准门槛
+- `MODULE_REVIEW_MATRIX.zh-CN.md`: 全项目模块审查矩阵，用于逐组确认保留/调整/重构
+- `requirements/index.md`: 新 requirement 体系入口
+- `requirements/requirement-authoring-standard.md`: requirement package 编写规范
 
 ## Reading Order
 
-1. Open `docs_home.html` for the consolidated bilingual navigation view.
-2. Read `ARCHITECTURE.zh-CN.md` or `ARCHITECTURE.en.md`.
-3. Read `DESIGN_PHILOSOPHY.zh-CN.md` or `DESIGN_PHILOSOPHY.en.md` for the detailed runtime design and principles.
-4. Read `IMPLEMENTATION_REFERENCE.zh-CN.md` or `IMPLEMENTATION_REFERENCE.en.md` to trace modules back to research and tests.
-5. Read `SOURCE_CATALOG.zh-CN.md` or `SOURCE_CATALOG.en.md` when you need source provenance, citations, or collection status.
-6. Open `architecture_overview.html` when you need a visual map of the current architecture.
-7. Use `current_structure.md` as the quick boundary sheet.
-8. Consult `foundations/index.md` only when tracing the theoretical basis behind the active design.
+1. Read `ARCHITECTURE_PHILOSOPHY.zh-CN.md`.
+2. Read `HIGH_LEVEL_DESIGN.zh-CN.md`.
+3. Read `MODULE_REVIEW_MATRIX.zh-CN.md`.
+4. Read `IMPLEMENTATION_ROADMAP.zh-CN.md`.
+5. Read `requirements/index.md`.
+6. Use `requirements/requirement-authoring-standard.md` when authoring or reviewing requirement packages.
 
 ## Interpretation Rule
 
-If an older research note conflicts with the codebase, the codebase wins first, the active docs in this directory win second, and the foundational archive under `foundations/` is background only.
+This minimal canonical set is the only active documentation surface under `docs/`.
+
+If future documents are added, they must remain subordinate to this set and to the requirement packages indexed under `docs/requirements/`.

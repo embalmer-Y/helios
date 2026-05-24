@@ -50,6 +50,7 @@ from utils import StabilityMonitor, clamp
 from utils.persistence import StatePersistence
 from cognition import CognitiveImpactProfile, DriveOracle, HeliosSnapshot, PreconsciousPolicy, ThinkingEngineIntegration, ThinkingManager
 from habituation import HabituationTracker
+from identity_governance import IdentityGovernance, IdentityStore
 from helios_io.protocols.qq import QQBotClient, QQMessage
 from helios_io.llm.speech import LLMSpeechGenerator, SpeechContext
 
@@ -75,19 +76,22 @@ from core.helios_state import HeliosState
 from core.temporal_dynamics import TemporalDynamics, TemporalUpdate
 from core.tick_guard import TickGuard
 from behavior_registry import RuntimeBehaviorCatalog
-from helios_io.channel import ChannelMessage
+from helios_io.channel import ChannelMessage, ChannelStatus
 from helios_io.channel_gateway import ChannelGateway
+from personality_contract import build_personality_contract
 
 # ── Passive Reply Pipeline ──
 from helios_io.icri_temperature import ICRITemperatureMapper
 from helios_io.llm_sec_evaluator import LLMSECEvaluator
 from helios_io.planning import ExecutionPlanner, PolicyEvaluator
 from helios_io.response_pipeline import ResponsePipeline
+from helios_io.routing_policy import RoutingPreferencePolicy
 from helios_io.channels.qq_channel import QQChannel
 from helios_io.channels.tts_channel import TTSChannel
 from helios_io.channels.stt_channel import STTChannel
 from helios_io.channels.vision_channel import VisionChannel
 from helios_io.feedback_recorder import FeedbackRecorder
+from helios_io.action_models import ActionDecision, ActionProposal
 from helios_io.limb import BehaviorCommand, BehaviorExecutor
 from helios_io.limb_decision_bridge import LimbDecisionBridge
 
@@ -129,10 +133,20 @@ class HeliosConfig:
     QQ_API_BASE: str = os.getenv("HELIOS_QQ_API_BASE", "https://api.sgroup.qq.com")
     QQ_SANDBOX: bool = os.getenv("HELIOS_QQ_SANDBOX", "1") == "1"
     QQ_TARGET_ID: str = os.getenv("HELIOS_QQ_TARGET_ID", "")  # 主人的 openid
+    REQUIRE_CONNECTED_CHANNEL: bool = os.getenv("HELIOS_REQUIRE_CONNECTED_CHANNEL", "1") == "1"
     
     # LLM 对话生成 (G3)
     LLM_SPEECH_ENABLED: bool = os.getenv("HELIOS_LLM_SPEECH_ENABLED", "1") == "1"
     LLM_SPEECH_MODEL: str = os.getenv("HELIOS_LLM_SPEECH_MODEL", "")  # 空=使用全局模型
+
+    # Internal thought (R02)
+    INTERNAL_THINK_ENABLED: bool = os.getenv("HELIOS_INTERNAL_THINK_ENABLED", "1") == "1"
+    INTERNAL_THINK_LLM_ENABLED: bool = os.getenv("HELIOS_INTERNAL_THINK_LLM_ENABLED", "0") == "1"
+    INTERNAL_THINK_AUTOBIO_WRITE: bool = os.getenv("HELIOS_INTERNAL_THINK_AUTOBIO_WRITE", "1") == "1"
+    INTERNAL_THINK_EPISODIC_WRITE: bool = os.getenv("HELIOS_INTERNAL_THINK_EPISODIC_WRITE", "0") == "1"
+    INTERNAL_THINK_ICRI_THRESHOLD: float = float(os.getenv("HELIOS_INTERNAL_THINK_ICRI_THRESHOLD", "0.10"))
+    INTERNAL_THINK_INTERVAL_SECONDS: float = float(os.getenv("HELIOS_INTERNAL_THINK_INTERVAL_SECONDS", "5.0"))
+    INTERNAL_THINK_MAX_RESOURCE_PRESSURE: float = float(os.getenv("HELIOS_INTERNAL_THINK_MAX_RESOURCE_PRESSURE", "0.85"))
 
     # Multimodal channels
     TTS_ENABLED: bool = os.getenv("HELIOS_TTS_ENABLED", "1") == "1"
@@ -175,6 +189,8 @@ class Helios:
         ))
         self.mood = MoodTracker()
         self.personality = PersonalityProfile()
+        self.identity_governance = IdentityGovernance()
+        self.identity_store: Optional[IdentityStore] = None
         
         # ── 持久化 ──
         self.persistence = StatePersistence(self.cfg.DATA_DIR)
@@ -233,8 +249,25 @@ class Helios:
             thinking_engine=self.thinking_manager,
             autobio_store=self.autobio,
             on_thought_recorded=self._on_thought_recorded,
+            internal_think_enabled=self.cfg.INTERNAL_THINK_ENABLED,
+            llm_enabled=self.cfg.INTERNAL_THINK_LLM_ENABLED,
+            api_key=self.cfg.LLM_API_KEY,
+            base_url=self.cfg.LLM_BASE_URL,
+            model=self.cfg.LLM_MODEL,
+            memory_write_enabled=self.cfg.INTERNAL_THINK_AUTOBIO_WRITE,
         )
+        self.thinking_integration.ICRI_THRESHOLD = self.cfg.INTERNAL_THINK_ICRI_THRESHOLD
+        self.thinking_integration.GENERATION_INTERVAL = self.cfg.INTERNAL_THINK_INTERVAL_SECONDS
+        self.thinking_integration.MAX_RESOURCE_PRESSURE = self.cfg.INTERNAL_THINK_MAX_RESOURCE_PRESSURE
         self.preconscious_policy = PreconsciousPolicy()
+        self.last_internal_thought_trace: dict[str, object] = {}
+        self.continuation_pressure: float = 0.0
+        self.last_recall_intent: str = ""
+        self.last_thought_cycle_result: dict[str, object] = {}
+        self.current_stimuli: list[dict[str, object]] = []
+        self.last_thought_gate_result: dict[str, object] = {}
+        self.last_directed_retrieval_trace: dict[str, object] = {}
+        self.last_identity_revision_trace: dict[str, object] = {}
         
         # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
         self.qq: Optional[QQBotClient] = None
@@ -312,6 +345,7 @@ class Helios:
             model=self.cfg.LLM_MODEL,
             api_key=self.cfg.LLM_API_KEY,
             base_url=self.cfg.LLM_BASE_URL,
+            channel_descriptor_provider=self._channel_gateway.get_channel_descriptors,
         )
 
         # ── Multimodal channels (Requirement 30, 31, 32) ──
@@ -339,10 +373,17 @@ class Helios:
         self.behavior_executor.set_result_callback(self._on_behavior_result)
         self.limb_bridge = LimbDecisionBridge(self.behavior_executor)
         self.feedback_recorder = FeedbackRecorder(self.behavior_catalog)
-        self.policy_evaluator = PolicyEvaluator(require_connected_channel=False)
+        self.routing_policy = RoutingPreferencePolicy()
+        self.policy_evaluator = PolicyEvaluator(
+            require_connected_channel=self.cfg.REQUIRE_CONNECTED_CHANNEL,
+        )
         self.execution_planner = ExecutionPlanner(self.policy_evaluator)
         self.behavior_specs = self.behavior_catalog.snapshot_by_name()
         self.temporal_dynamics = TemporalDynamics(tick_interval=self.cfg.TICK_INTERVAL)
+        if not self.cfg.REQUIRE_CONNECTED_CHANNEL:
+            self.log.warning(
+                "Connected channel gating disabled by configuration; this is a debug-only runtime mode."
+            )
 
         # ── Tick exception protection ──
         self.tick_guard = TickGuard()
@@ -355,6 +396,8 @@ class Helios:
         self.last_rss_mb = 0.0
         self.last_uptime_hours = 0.0
         self.last_preconscious_trace: dict[str, object] = {}
+        self.decisions_rejected_by_connectivity = 0
+        self.decisions_failed_after_acceptance = 0
         
         # ── 记忆巩固调度 (Requirement 20) ──
         self._low_phi_counter: int = 0          # consecutive ticks with phi < 0.3
@@ -431,20 +474,28 @@ class Helios:
         If files are missing or corrupted, StatePersistence returns None
         and we keep the freshly-initialized defaults.
         """
-        # -- Personality --
         personality_data = self.persistence.load_personality()
-        if personality_data is not None:
-            traits = personality_data.get("traits", {})
-            self.personality.openness = traits.get("openness", self.personality.openness)
-            self.personality.extraversion = traits.get("extraversion", self.personality.extraversion)
-            self.personality.agreeableness = traits.get("agreeableness", self.personality.agreeableness)
-            self.personality.neuroticism = traits.get("neuroticism", self.personality.neuroticism)
-            self.personality.conscientiousness = traits.get("conscientiousness", self.personality.conscientiousness)
-            self.personality.total_emotion_cycles = personality_data.get("total_emotion_cycles", 0)
-            self.personality._recompute()
-            self.log.debug("Loaded personality state from disk")
+        identity_data = self.persistence.load_identity_store()
+        if identity_data is None:
+            bootstrap_traits = dict(personality_data.get("traits", {}) or {}) if personality_data is not None else self.personality._trait_dict()
+            self.identity_store = self.identity_governance.bootstrap_identity_store(
+                personality_baseline=bootstrap_traits,
+                bootstrap_source="persisted_personality" if personality_data is not None else "default_personality",
+            )
+            self.identity_governance.apply_identity_store_to_personality(self.identity_store, self.personality)
+            self.persistence.save_identity_store(self.identity_store)
+            self.log.info("Identity bootstrap completed and locked")
         else:
-            self.log.debug("No personality state found; using defaults")
+            self.identity_store = IdentityStore.from_dict(identity_data)
+            self.identity_governance.apply_identity_store_to_personality(self.identity_store, self.personality)
+            self.log.debug("Identity store loaded; bootstrap skipped")
+
+        # -- Personality runtime state --
+        if personality_data is not None:
+            self.personality.total_emotion_cycles = personality_data.get("total_emotion_cycles", 0)
+            self.log.debug("Loaded personality runtime counters from disk; identity baseline remains locked")
+        else:
+            self.log.debug("No personality runtime state found; using identity baseline")
         
         # -- Allostasis --
         allostasis_data = self.persistence.load_allostasis()
@@ -475,6 +526,11 @@ class Helios:
             self.persistence.save_personality(self.personality)
         except Exception as e:
             self.log.warning(f"Failed to save personality: {e}")
+        try:
+            if self.identity_store is not None:
+                self.persistence.save_identity_store(self.identity_store)
+        except Exception as e:
+            self.log.warning(f"Failed to save identity store: {e}")
         try:
             self.persistence.save_allostasis(self.allostasis)
         except Exception as e:
@@ -599,6 +655,37 @@ class Helios:
                     "EventSource %s poll failed: %s",
                     type(source).__name__, e,
                 )
+
+        normalized_stimuli: list[dict[str, object]] = []
+        for msg in all_messages:
+            stimulus = dict(msg.get("stimulus", {}) or {})
+            source_channel = str(stimulus.get("source_channel_id", msg.get("channel_id", "unknown")) or "unknown")
+            base_intensity = max(
+                float(stimulus.get("stimulus_intensity", 0.0) or 0.0),
+                float(msg.get("cognitive_impact", {}).get("novelty", 0.0) or 0.0),
+                max([float(value or 0.0) for value in dict(msg.get("event_triggers", {}) or {}).values()] or [0.0]),
+            )
+            novelty_factor = self.habituation.get_novelty_factor(
+                f"stimulus:{source_channel}",
+                self.tick_count,
+                arousal=max(float(getattr(state, "mood_arousal", 0.0) or 0.0), 0.0),
+            )
+            if base_intensity > 0.01:
+                self.habituation.register_exposure(f"stimulus:{source_channel}", self.tick_count)
+            stimulus.update(
+                {
+                    "source_channel_id": source_channel,
+                    "source_kind": str(stimulus.get("source_kind", "external_message") or "external_message"),
+                    "trigger_condition": str(stimulus.get("trigger_condition", "channel_input") or "channel_input"),
+                    "stimulus_intensity": max(0.0, min(1.0, base_intensity * novelty_factor)),
+                    "novelty_factor": round(float(novelty_factor), 4),
+                    "sensitization_factor": round(float(self.habituation.sensitization_level), 4),
+                }
+            )
+            msg["stimulus"] = stimulus
+            normalized_stimuli.append(stimulus)
+
+        state.current_stimuli = normalized_stimuli
         
         # Handle QQ-specific side effects: reset separation on message receipt
         if all_messages:
@@ -726,6 +813,7 @@ class Helios:
             allostatic_load=self.allostasis.get_load_level(),
             is_fatigued=bool(getattr(self.allostasis, "fatigue_cycles", 0) > 0),
             personality_traits=self.personality._trait_dict(),
+            identity_snapshot=self.identity_store.to_dict() if self.identity_store is not None else {},
             drive_dominant=getattr(self, '_last_drive_dominant', ''),
             drive_urgency=getattr(self, '_last_drive_urgency', 0.0),
             tts_available=bool(getattr(self._tts_channel, "is_available", False)),
@@ -733,6 +821,11 @@ class Helios:
             vision_available=bool(getattr(self._vision_channel, "is_available", False)),
             rss_mb=self.stability_monitor.rss_mb,
             uptime_hours=self.stability_monitor.uptime_hours,
+            continuation_pressure=self.continuation_pressure,
+            last_recall_intent=self.last_recall_intent,
+            last_thought_cycle_result=dict(self.last_thought_cycle_result),
+            current_stimuli=list(self.current_stimuli),
+            last_thought_gate_result=dict(self.last_thought_gate_result),
         )
         self.last_rss_mb = state.rss_mb
         self.last_uptime_hours = state.uptime_hours
@@ -744,6 +837,7 @@ class Helios:
         
         # 1. 采集事件 (EventSource registry with max-value merging)
         events, messages = self._collect_events(state)
+        self.current_stimuli = list(getattr(state, "current_stimuli", []) or [])
         
         # 2. 习惯化 — 重复刺激 → 反应递减 (Requirement 14)
         for key, intensity in list(events.items()):
@@ -815,7 +909,42 @@ class Helios:
         state.separation_hours = sep_secs / 3600.0
 
         # 6b. 内生思维流 (Requirement 28)
+        retrieval_plan = self.memory_system.build_retrieval_query_plan(
+            current_stimuli=list(getattr(state, "current_stimuli", []) or []),
+            recall_intent=str(getattr(state, "last_recall_intent", "") or ""),
+            limit=3,
+            metadata={"source": "thought_loop"},
+        )
+        directed_bundle = self.memory_system.directed_retrieval(
+            retrieval_plan,
+            valence=state.valence,
+            arousal=state.arousal,
+        )
+        state.directed_memory_bundle = directed_bundle
+        state.last_directed_retrieval_trace = {
+            "query_text": retrieval_plan.query_text,
+            "recall_intent": retrieval_plan.recall_intent,
+            "short_term_count": len(directed_bundle.short_term_context),
+            "mid_term_count": len(directed_bundle.mid_term_hits),
+            "long_term_count": len(directed_bundle.long_term_hits),
+            "autobiographical_count": len(directed_bundle.autobiographical_hits),
+            "selection_trace": [
+                {
+                    "tier_name": trace.tier_name,
+                    "candidate_count": trace.candidate_count,
+                    "selected_count": trace.selected_count,
+                    "query_source": trace.query_source,
+                }
+                for trace in directed_bundle.selection_trace
+            ],
+            "retrieval_sec_trace_count": len(directed_bundle.retrieval_sec_trace),
+        }
         thought = self.thinking_integration.generate(state)
+        self.continuation_pressure = max(0.0, min(float(getattr(state, "continuation_pressure", 0.0) or 0.0), 1.0))
+        self.last_recall_intent = str(getattr(state, "last_recall_intent", "") or "")
+        self.last_thought_cycle_result = dict(getattr(state, "last_thought_cycle_result", {}) or {})
+        self.last_thought_gate_result = dict(getattr(state, "last_thought_gate_result", {}) or {})
+        self.last_directed_retrieval_trace = dict(getattr(state, "last_directed_retrieval_trace", {}) or {})
         if thought and self.phi_engine:
             self.phi_engine.feed_dmn_from_thinking(
                 self.thinking_manager.current_mode,
@@ -826,6 +955,9 @@ class Helios:
             state.consciousness_label = self.phi_engine.label.value
             state.llm_temperature = ICRITemperatureMapper.map_temperature(state.icri)
             state.speech_style = ICRITemperatureMapper.get_style_label(state.icri)
+
+        if thought is not None:
+            self._process_identity_revision(thought, state)
 
         temporal_state = self.temporal_dynamics.update(
             TemporalUpdate(
@@ -908,6 +1040,8 @@ class Helios:
             )
         else:
             self.preconscious_policy.observe_idle_tick(state=state, reason="no_preconscious_thought")
+        self.last_internal_thought_trace = dict(getattr(state, "last_internal_thought_trace", {}))
+        self.last_identity_revision_trace = dict(getattr(state, "last_identity_revision_trace", {}) or {})
         state.last_preconscious_trace = self.preconscious_policy.get_observability_snapshot()
         
         # 7. 自传记忆 (有意义的时刻)
@@ -983,7 +1117,7 @@ class Helios:
                 )
                 self.feedback_recorder.record_user_feedback(
                     source_path="passive_inbound",
-                    channel_id=str(msg.get("channel_id", "qq") or "qq"),
+                    channel_id=str(msg.get("channel_id") or ""),
                     user_id=user_id,
                     text=text,
                     sec_result=sec_result,
@@ -1007,8 +1141,37 @@ class Helios:
                     msg,
                     sec_result,
                     state,
-                    available_channels=self._preferred_reply_channels(msg),
+                    available_channels=self.routing_policy.rank_reply_channels(
+                        message=msg,
+                        channel_descriptors=self._channel_gateway.get_channel_descriptors(),
+                        channel_statuses=self._channel_gateway.get_channel_status(),
+                        qq_target_id=self.cfg.QQ_TARGET_ID,
+                        personality_projection=getattr(state, "personality_projection", None),
+                    ),
                 )
+                if interaction_proposals:
+                    self.log.debug(
+                        "Passive trigger candidates: user=%s count=%d types=%s sec=%s",
+                        user_id,
+                        len(interaction_proposals),
+                        [proposal.behavior_name for proposal in interaction_proposals],
+                        {
+                            "goal_relevance": round(float(sec_result.get("goal_relevance", 0.0)), 3),
+                            "novelty": round(float(sec_result.get("novelty", 0.0)), 3),
+                            "pleasantness": round(float(sec_result.get("pleasantness", 0.0)), 3),
+                        },
+                    )
+                else:
+                    self.log.debug(
+                        "Passive trigger not fired: user=%s reason=no_interaction_proposal sec=%s text=%r",
+                        user_id,
+                        {
+                            "goal_relevance": round(float(sec_result.get("goal_relevance", 0.0)), 3),
+                            "novelty": round(float(sec_result.get("novelty", 0.0)), 3),
+                            "pleasantness": round(float(sec_result.get("pleasantness", 0.0)), 3),
+                        },
+                        text[:120],
+                    )
                 for proposal in interaction_proposals:
                     decision = self.execution_planner.plan(
                         proposal,
@@ -1022,7 +1185,32 @@ class Helios:
                             proposal.behavior_name,
                             decision.rejection_reason,
                         )
+                        if self._should_materialize_unrouted_reply(proposal, decision):
+                            reply = self.response_pipeline.generate_reply(
+                                msg,
+                                state,
+                                sec_result,
+                                temperature=state.llm_temperature,
+                            )
+                            if reply:
+                                self.log.debug(
+                                    "Passive reply materialized without outbound routing: user=%s reason=%s",
+                                    user_id,
+                                    decision.rejection_reason,
+                                )
+                                break
+                        self._record_policy_rejection(proposal, decision)
                         continue
+
+                    self.log.debug(
+                        "Passive trigger accepted: type=%s source=%s proposal_id=%s decision_id=%s channel=%s score=%.3f",
+                        proposal.behavior_name,
+                        proposal.source_module,
+                        proposal.proposal_id,
+                        decision.decision_id,
+                        decision.selected_channel_id,
+                        float(proposal.score_bundle.get("final", 0.0) or 0.0),
+                    )
 
                     state.pending_reply = None
                     if decision.behavior_name == "reply_message":
@@ -1059,6 +1247,7 @@ class Helios:
                     reply=reply,
                     emotional_context=emotional_context,
                     sec_result=sec_result,
+                    conversation_key=self.response_pipeline._derive_conversation_key(msg),
                 )
         
         # 10. 情感调节引擎 (with drive-regulation unification)
@@ -1072,7 +1261,13 @@ class Helios:
             hour_of_day=hour,
             tick=state.tick,
             timestamp=state.timestamp,
-            candidate_channel_resolver=self._preferred_active_channels,
+            candidate_channel_resolver=lambda action: self.routing_policy.rank_active_channels(
+                action=action,
+                channel_descriptors=self._channel_gateway.get_channel_descriptors(),
+                channel_statuses=self._channel_gateway.get_channel_status(),
+                qq_target_id=self.cfg.QQ_TARGET_ID,
+                personality_projection=state.personality_projection,
+            ),
             params={"tick": state.tick, "target_user_id": self.cfg.QQ_TARGET_ID},
             drive_urgency=self._last_drive_urgency,
             drive_dominant=self._last_drive_dominant,
@@ -1081,6 +1276,28 @@ class Helios:
             neurochem_gate=state.neurochem_gate,
             temporal_gate=state.temporal_gate,
         )
+        assessment = self.regulation.last_assessment
+        if assessment is None:
+            self.log.debug("Active trigger not evaluated: reason=no_panksepp_state")
+        elif not assessment.wants_regulation:
+            self.log.debug(
+                "Active trigger not fired: reason=%s deviations=%s dominant=%s drive=%s:%.3f",
+                assessment.reason_summary or "not_selected",
+                [(name, round(float(score), 3)) for name, score in assessment.deviations[:3]],
+                state.dominant_system,
+                self._last_drive_dominant,
+                self._last_drive_urgency,
+            )
+
+        if active_proposals:
+            self.log.debug(
+                "Active trigger candidates: count=%d types=%s reason=%s",
+                len(active_proposals),
+                [proposal.behavior_name for proposal in active_proposals],
+                (assessment.reason_summary if assessment else ""),
+            )
+        else:
+            self.log.debug("Active trigger candidates: none")
         for proposal in active_proposals:
             decision = self.execution_planner.plan(
                 proposal,
@@ -1089,14 +1306,36 @@ class Helios:
                 self._channel_gateway.get_channel_status(),
             )
             if decision.accepted:
+                self.log.debug(
+                    "Active trigger accepted: type=%s proposal_id=%s decision_id=%s channel=%s score=%.3f",
+                    proposal.behavior_name,
+                    proposal.proposal_id,
+                    decision.decision_id,
+                    decision.selected_channel_id,
+                    float(proposal.score_bundle.get("final", 0.0) or 0.0),
+                )
                 state.last_action = decision.behavior_name
                 self.limb_bridge.enqueue_decision(decision)
                 active_accepted = True
                 break
             else:
-                self.log.debug("Active proposal rejected: %s", decision.rejection_reason)
+                self.log.debug(
+                    "Active proposal rejected: type=%s reason=%s channel=%s",
+                    proposal.behavior_name,
+                    decision.rejection_reason,
+                    decision.selected_channel_id,
+                )
+                self._record_policy_rejection(proposal, decision)
 
         if not active_accepted:
+            if preconscious_proposals:
+                self.log.debug(
+                    "Preconscious fallback candidates: count=%d types=%s",
+                    len(preconscious_proposals),
+                    [proposal.behavior_name for proposal in preconscious_proposals],
+                )
+            else:
+                self.log.debug("Preconscious fallback not fired: reason=no_preconscious_proposals")
             for proposal in preconscious_proposals:
                 decision = self.execution_planner.plan(
                     proposal,
@@ -1105,22 +1344,17 @@ class Helios:
                     self._channel_gateway.get_channel_status(),
                 )
                 if decision.accepted:
+                    self.log.debug(
+                        "Preconscious trigger accepted: type=%s proposal_id=%s decision_id=%s channel=%s",
+                        proposal.behavior_name,
+                        proposal.proposal_id,
+                        decision.decision_id,
+                        decision.selected_channel_id,
+                    )
                     state.last_action = decision.behavior_name
                     self.limb_bridge.enqueue_decision(decision)
                     break
-                self.feedback_recorder.record_policy_rejection(
-                    source_path="preconscious",
-                    proposal_id=proposal.proposal_id,
-                    decision_id=decision.decision_id,
-                    behavior_id=str(decision.behavior_snapshot.get("behavior_id", "") or ""),
-                    channel_id=decision.selected_channel_id,
-                    behavior_name=proposal.behavior_name,
-                    rejection_reason=decision.rejection_reason,
-                    payload={
-                        "policy_trace": dict(decision.policy_trace),
-                        "proposal": dict(decision.proposal_snapshot),
-                    },
-                )
+                self._record_policy_rejection(proposal, decision)
                 self.preconscious_policy.on_decision_rejected(proposal, decision)
                 self.log.debug("Preconscious proposal rejected: %s", decision.rejection_reason)
                 state.last_preconscious_trace = self.preconscious_policy.get_observability_snapshot()
@@ -1244,14 +1478,28 @@ class Helios:
                 mood_arousal=getattr(self.mood.state, "arousal", 0.0),
                 mood_label=getattr(self.mood.state, "label", "neutral"),
                 personality_traits=self.personality._trait_dict(),
+                identity_snapshot=self.identity_store.to_dict() if self.identity_store is not None else {},
             )
 
         outbound_text = str(params.get("outbound_text", "") or "")
         outbound_metadata = dict(params.get("outbound_metadata", {}) or {})
         target_user_id = str(params.get("target_user_id", "") or "")
+        if command is not None:
+            outbound_metadata.setdefault("op_name", command.op_name)
+            outbound_metadata.setdefault("normalized_intensity", float(getattr(command, "normalized_intensity", 0.0) or 0.0))
+            outbound_metadata.setdefault("origin_type", str(command.provenance.get("origin_type", "") or ""))
+            outbound_metadata.setdefault("origin_id", str(command.provenance.get("origin_id", "") or ""))
         if outbound_text:
+            if not channel_id:
+                self.log.warning(
+                    "Action execution rejected: behavior=%s selected_channel_id=%s selected_op=%s rejection_reason=missing_channel_binding",
+                    action,
+                    channel_id,
+                    str((command.params if command else {}).get("selected_op", "") or ""),
+                )
+                return False
             ok = self._route_outbound_text(
-                channel_id=channel_id or "qq",
+                channel_id=channel_id,
                 user_id=target_user_id,
                 text=outbound_text,
                 metadata=outbound_metadata,
@@ -1263,12 +1511,20 @@ class Helios:
             return ok
         
         if action in master_actions:
+            if not channel_id:
+                self.log.warning(
+                    "Action execution rejected: behavior=%s selected_channel_id=%s selected_op=%s rejection_reason=missing_channel_binding",
+                    action,
+                    channel_id,
+                    str((command.params if command else {}).get("selected_op", "") or ""),
+                )
+                return False
             text = self._generate_speech(action, state)
             state.pending_reply = text or None
             if text:
                 ok = self._route_outbound_text(
-                    channel_id=channel_id or "qq",
-                    user_id=target_user_id or self.cfg.QQ_TARGET_ID,
+                    channel_id=channel_id,
+                    user_id=target_user_id,
                     text=text,
                     metadata=outbound_metadata,
                     action_label=action,
@@ -1300,16 +1556,74 @@ class Helios:
 
     def _route_outbound_text(self, channel_id: str, user_id: str, text: str, metadata: Optional[dict], action_label: str, command: Optional[BehaviorCommand] = None) -> bool:
         metadata = dict(metadata or {})
-        resolved_channel = channel_id or "qq"
+        resolved_channel = channel_id
         resolved_user_id = user_id
 
+        if not resolved_channel:
+            self.log.warning(
+                "Routing rejected: behavior=%s selected_channel_id=%s selected_op=%s rejection_reason=missing_channel_binding",
+                action_label,
+                resolved_channel,
+                getattr(command, "op_name", "") or "",
+            )
+            self.feedback_recorder.record_channel_receipt(
+                source_path=str((command.provenance if command else {}).get("source_type", "channel")),
+                channel_id=resolved_channel,
+                action_name=action_label,
+                success=False,
+                proposal_id=command.proposal_id if command else "",
+                decision_id=command.decision_id if command else "",
+                behavior_id=command.behavior_id if command else "",
+                op_name=command.op_name if command else "",
+                normalized_intensity=float(getattr(command, "normalized_intensity", 0.0) or 0.0),
+                provenance=dict(command.provenance) if command else {},
+                metadata={
+                    "user_id": resolved_user_id,
+                    "text": text,
+                    "message_metadata": metadata,
+                    "rejection_reason": "missing_channel_binding",
+                },
+            )
+            return False
+
         if resolved_channel == "qq":
-            resolved_user_id = resolved_user_id or self.cfg.QQ_TARGET_ID
             if not resolved_user_id:
-                self.log.warning("未设置 HELIOS_QQ_TARGET_ID，无法发送")
+                self.log.warning(
+                    "Routing rejected: behavior=%s selected_channel_id=%s selected_op=%s rejection_reason=missing_target_user_id",
+                    action_label,
+                    resolved_channel,
+                    getattr(command, "op_name", "") or "",
+                )
                 return False
-        elif not resolved_user_id:
-            resolved_user_id = "speaker"
+
+        channel_status = self._channel_gateway.get_channel_status().get(resolved_channel, ChannelStatus.ERROR)
+        if channel_status != ChannelStatus.CONNECTED:
+            self.decisions_failed_after_acceptance += 1
+            self.log.warning(
+                "Routing consistency failure: behavior=%s selected_channel_id=%s selected_op=%s rejection_reason=channel_status:%s",
+                action_label,
+                resolved_channel,
+                getattr(command, "op_name", "") or "",
+                channel_status.value,
+            )
+            self.feedback_recorder.record_execution_consistency_failure(
+                source_path=str((command.provenance if command else {}).get("source_type", "channel")),
+                behavior_name=action_label,
+                proposal_id=command.proposal_id if command else "",
+                decision_id=command.decision_id if command else "",
+                behavior_id=command.behavior_id if command else "",
+                channel_id=resolved_channel,
+                op_name=command.op_name if command else "",
+                normalized_intensity=float(getattr(command, "normalized_intensity", 0.0) or 0.0),
+                provenance=dict(command.provenance) if command else {},
+                payload={
+                    "rejection_reason": f"channel_status:{channel_status.value}",
+                    "user_id": resolved_user_id,
+                    "text": text,
+                    "message_metadata": metadata,
+                },
+            )
+            return False
 
         ok = self._channel_gateway.route_outbound(
             ChannelMessage(
@@ -1336,6 +1650,9 @@ class Helios:
             proposal_id=command.proposal_id if command else "",
             decision_id=command.decision_id if command else "",
             behavior_id=command.behavior_id if command else "",
+            op_name=command.op_name if command else "",
+            normalized_intensity=float(getattr(command, "normalized_intensity", 0.0) or 0.0),
+            provenance=dict(command.provenance) if command else {},
             metadata={
                 "user_id": resolved_user_id,
                 "text": text,
@@ -1344,24 +1661,40 @@ class Helios:
         )
         return ok
 
-    def _preferred_reply_channels(self, message: dict) -> list[str]:
-        primary = str(message.get("channel_id", "qq") or "qq")
-        preferred = [primary]
-        if primary != "qq" and self.cfg.QQ_TARGET_ID:
-            preferred.append("qq")
-        if self._tts_channel.is_connected():
-            preferred.append("tts")
-        return preferred
+    def _record_policy_rejection(self, proposal: ActionProposal, decision: ActionDecision) -> None:
+        if self._is_connectivity_rejection(decision):
+            self.decisions_rejected_by_connectivity += 1
+        self.feedback_recorder.record_policy_rejection(
+            source_path=str(proposal.source_type or proposal.source_module or "policy"),
+            proposal_id=proposal.proposal_id,
+            decision_id=decision.decision_id,
+            behavior_id=str(decision.behavior_snapshot.get("behavior_id", "") or ""),
+            channel_id=decision.selected_channel_id,
+            behavior_name=proposal.behavior_name,
+            rejection_reason=decision.rejection_reason,
+            op_name=proposal.op_name,
+            normalized_intensity=decision.normalized_intensity,
+            provenance=dict(decision.proposal_snapshot or {}),
+            payload={
+                "policy_trace": dict(decision.policy_trace),
+                "proposal": dict(decision.proposal_snapshot),
+            },
+        )
 
-    def _preferred_active_channels(self, action: str) -> list[str]:
-        if action in {"browse", "search", "learn", "reflect", "check_system", "idle"}:
-            return []
-        preferred: list[str] = []
-        if self.cfg.QQ_TARGET_ID:
-            preferred.append("qq")
-        if self._tts_channel.is_connected():
-            preferred.append("tts")
-        return preferred
+    @staticmethod
+    def _is_connectivity_rejection(decision: ActionDecision) -> bool:
+        filtered = dict(decision.policy_trace.get("filtered_out_reasons", {}) or {})
+        if any(str(reason).startswith("channel_status:") for reason in filtered.values()):
+            return True
+        return decision.rejection_reason in {"channel_disconnected", "channel_status_unknown"}
+
+    @classmethod
+    def _should_materialize_unrouted_reply(cls, proposal: ActionProposal, decision: ActionDecision) -> bool:
+        if proposal.behavior_name != "reply_message":
+            return False
+        if decision.rejection_reason == "no_channel_available":
+            return True
+        return cls._is_connectivity_rejection(decision)
 
     def _drain_behavior_executor(self, state: HeliosState):
         current = self.behavior_executor.current
@@ -1396,16 +1729,80 @@ class Helios:
 
     def _on_thought_recorded(self, thought, state: HeliosState, moment) -> None:
         self.feedback_recorder.record_memory_write(
-            source_path="preconscious_thought",
+            source_path=str(getattr(thought, "source_path", "internal_thought_llm") or "internal_thought_llm"),
             memory_type="autobiographical",
             memory_id=str(getattr(moment, "moment_id", "")),
             summary=str(getattr(moment, "narrative", "") or thought.content),
             payload={
                 "thought_type": getattr(thought, "type", ""),
                 "triggered_by": getattr(thought, "triggered_by", ""),
+                "llm_used": bool(getattr(thought, "llm_used", False)),
+                "fallback_used": bool(getattr(thought, "fallback_used", False)),
+                "behavior_name": str(getattr(thought, "metadata", {}).get("behavior_name", "think_message")),
                 "tick": state.tick,
             },
         )
+        if self.cfg.INTERNAL_THINK_EPISODIC_WRITE:
+            episodic_item = self.memory_system.remember(
+                summary=str(getattr(moment, "narrative", "") or thought.content),
+                scene="internal_thought",
+                semantic_text=str(getattr(thought, "type", "") or "internal_thought"),
+                decision="think_message",
+                valence=state.valence,
+                arousal=state.arousal,
+                phi=state.icri,
+                content={
+                    "thought_type": getattr(thought, "type", ""),
+                    "triggered_by": getattr(thought, "triggered_by", ""),
+                    "source_path": getattr(thought, "source_path", "internal_thought_llm"),
+                    "llm_used": bool(getattr(thought, "llm_used", False)),
+                    "fallback_used": bool(getattr(thought, "fallback_used", False)),
+                },
+            )
+            self.feedback_recorder.record_memory_write(
+                source_path=str(getattr(thought, "source_path", "internal_thought_llm") or "internal_thought_llm"),
+                memory_type="episodic",
+                memory_id=str(getattr(episodic_item, "id", "")),
+                summary=str(getattr(episodic_item, "summary", "") or thought.content),
+                payload={
+                    "thought_type": getattr(thought, "type", ""),
+                    "triggered_by": getattr(thought, "triggered_by", ""),
+                    "behavior_name": "think_message",
+                    "tick": state.tick,
+                },
+            )
+
+    def _process_identity_revision(self, thought, state: HeliosState) -> None:
+        proposal_payload = dict(getattr(thought, "metadata", {}).get("self_revision_proposal", {}) or {})
+        if not proposal_payload or self.identity_store is None:
+            state.last_identity_revision_trace = {}
+            return
+
+        proposal = self.identity_governance.build_proposal_from_payload(proposal_payload)
+        if proposal is None:
+            state.last_identity_revision_trace = {
+                "proposal_detected": True,
+                "result": "rejected",
+                "reason": "invalid_self_revision_payload",
+            }
+            return
+
+        record = self.identity_governance.apply_self_revision(store=self.identity_store, proposal=proposal)
+        if proposal.revision_type == "personality_adjustment" and record.result == "accepted":
+            self.identity_governance.apply_identity_store_to_personality(self.identity_store, self.personality)
+        self.persistence.save_identity_store(self.identity_store)
+        self.feedback_recorder.record_identity_revision(
+            source_path=str(getattr(thought, "source_path", "internal_thought_llm") or "internal_thought_llm"),
+            revision_id=record.revision_id,
+            origin_thought_id=record.origin_thought_id,
+            result=record.result,
+            payload={
+                "requested_change": dict(record.requested_change),
+                "applied_change": dict(record.applied_change),
+                "reason_trace": list(record.reason_trace),
+            },
+        )
+        state.last_identity_revision_trace = record.to_dict()
 
     def _register_optional_channels(self):
         active: list[str] = []
@@ -1442,6 +1839,7 @@ class Helios:
                 mood_arousal=getattr(self.mood.state, "arousal", 0.0),
                 mood_label=getattr(self.mood.state, "label", "neutral"),
                 personality_traits=self.personality._trait_dict(),
+                identity_snapshot=self.identity_store.to_dict() if self.identity_store is not None else {},
             )
 
         # ── G3 LLM 模式 ──
@@ -1478,18 +1876,13 @@ class Helios:
                 except Exception as e:
                     self.log.debug(f"获取记忆上下文失败: {e}")
 
-            # 人格简述
-            traits = state.personality_traits or self.personality._trait_dict()
-            trait_parts = []
-            for name, display in [("neuroticism", "神经质"), ("agreeableness", "宜人"),
-                                   ("openness", "开放"), ("extraversion", "外向"),
-                                   ("conscientiousness", "尽责")]:
-                v = traits.get(name, 0.5)
-                if v > 0.7:
-                    trait_parts.append(f"高{display}")
-                elif v < 0.3:
-                    trait_parts.append(f"低{display}")
-            personality = "、".join(trait_parts) if trait_parts else "均衡"
+            # 统一人格描述符
+            personality_descriptor, personality_trace = build_personality_contract(
+                projection=getattr(state, "personality_projection", None),
+                traits=state.personality_traits or self.personality._trait_dict(),
+                identity_store=getattr(state, "identity_snapshot", {}) or {},
+                source_path="active_speech_generation",
+            )
 
             ctx = SpeechContext(
                 dominant_emotion=state.dominant_system or "SEEKING",
@@ -1503,7 +1896,8 @@ class Helios:
                 time_since_contact=time_desc,
                 recent_memory=recent_memory,
                 memory_context=memory_context,
-                personality_summary=personality,
+                personality_summary=personality_descriptor.persona_text_summary,
+                personality_influence_trace=personality_trace.to_dict(),
                 total_messages_sent=self.speech.total_generated,
             )
 
@@ -1657,6 +2051,21 @@ class Helios:
             "allostatic_load": round(self.allostasis.get_load_level(), 3),
             "fatigued": self.allostasis.is_fatigued(),
             "personality": traits,
+            "identity": {
+                "initialized": bool(getattr(self.identity_store, "initialized", False)),
+                "bootstrap_version": str(getattr(self.identity_store, "bootstrap_version", "") or ""),
+                "self_imprint": str(getattr(self.identity_store, "self_imprint", "") or ""),
+                "self_definition": str(getattr(self.identity_store, "self_definition", "") or ""),
+                "identity_narrative": str(
+                    dict(getattr(self.identity_store, "identity_metadata", {}) or {})
+                    .get("autobiographical_identity_narrative", {})
+                    .get("summary", "")
+                    or ""
+                ),
+                "current_revision": str(getattr(self.identity_store, "current_revision", "") or ""),
+                "revision_history_len": len(getattr(self.identity_store, "revision_history", []) or []),
+                "latest_revision": dict(self.last_identity_revision_trace),
+            },
             "autobio_moments": autobio_stats.get("total_moments", 0),
             "autobio_chapters": autobio_stats.get("total_chapters", 0),
             "memory": {
@@ -1666,9 +2075,43 @@ class Helios:
                 "autobio_moments": mem_stats["autobio_moments"],
                 "episodic_capacity": self.memory_system.episodic.capacity,
                 "working_capacity": self.memory_system.working.capacity,
+                "public_tiers": [
+                    {
+                        "tier_name": tier.tier_name,
+                        "implementation_scopes": list(tier.implementation_scopes),
+                        "capacity_limit": tier.capacity_limit,
+                        "decay_policy": tier.decay_policy,
+                        "primary_use": tier.primary_use,
+                        "retrieval_role": tier.retrieval_role,
+                        "boundary_rule": tier.boundary_rule,
+                    }
+                    for tier in self.memory_system.get_public_memory_tiers()
+                ],
+                "tier_snapshots": [
+                    {
+                        "tier_name": snapshot.tier_name,
+                        "item_count": snapshot.item_count,
+                        "capacity_limit": snapshot.capacity_limit,
+                        "boundary_ok": snapshot.boundary_ok,
+                        "implementation_scopes": list(snapshot.implementation_scopes),
+                    }
+                    for snapshot in self.memory_system.get_public_memory_tier_snapshots()
+                ],
             },
+            "continuation_pressure": round(self.continuation_pressure, 4),
+            "recall_intent": self.last_recall_intent,
+            "current_stimuli": list(self.current_stimuli),
+            "thought_gate": dict(self.last_thought_gate_result),
+            "thought_cycle": dict(self.last_thought_cycle_result),
+            "directed_retrieval": dict(self.last_directed_retrieval_trace),
+            "internal_thought": dict(self.last_internal_thought_trace),
             "regulation": self.regulation.get_state(),
             "preconscious": self.preconscious_policy.get_observability_snapshot(),
+            "routing": {
+                "require_connected_channel": self.cfg.REQUIRE_CONNECTED_CHANNEL,
+                "decisions_rejected_by_connectivity": self.decisions_rejected_by_connectivity,
+                "decisions_failed_after_acceptance": self.decisions_failed_after_acceptance,
+            },
             "qq_io": self.qq.get_state() if self.qq else {"backend": "none"},
             "separation_anxiety": round(self._separation_anxiety, 3),
         }

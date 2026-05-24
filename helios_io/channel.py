@@ -8,7 +8,7 @@ pipeline transport-agnostic.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Literal
 
@@ -23,6 +23,10 @@ def _op_list() -> List["ChannelOpDescriptor"]:
 
 def _any_dict() -> Dict[str, Any]:
     return {}
+
+
+def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, float(value)))
 
 
 class ChannelStatus(str, Enum):
@@ -69,6 +73,63 @@ class ChannelMessage:
     timestamp: float
     metadata: Dict[str, Any] = field(default_factory=_any_dict)
     direction: Literal["inbound", "outbound"] = "inbound"
+
+
+@dataclass(frozen=True)
+class StimulusEnvelope:
+    source_channel_id: str
+    source_kind: str
+    trigger_condition: str
+    stimulus_intensity: float
+    payload: Dict[str, Any] = field(default_factory=_any_dict)
+    text_summary: str = ""
+    cognitive_impact: Dict[str, Any] = field(default_factory=_any_dict)
+    novelty_factor: float = 1.0
+    sensitization_factor: float = 0.5
+    timestamp: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=_any_dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def build_stimulus_envelope(message: ChannelMessage) -> StimulusEnvelope:
+    metadata = dict(message.metadata)
+    cognitive_impact = dict(metadata.get("cognitive_impact", {}) or {})
+    sec_result = dict(metadata.get("sec_result", {}) or {})
+    triggers = dict(metadata.get("event_triggers", {}) or {})
+    payload = {
+        "text": message.text,
+        "user_id": message.user_id,
+        "direction": message.direction,
+    }
+    source_kind = str(metadata.get("source_kind", "external_message") or "external_message")
+    trigger_condition = str(metadata.get("trigger_condition", "channel_input") or "channel_input")
+    intensity_candidates = [
+        metadata.get("stimulus_intensity", 0.0),
+        cognitive_impact.get("novelty", 0.0),
+        cognitive_impact.get("cognitive", 0.0),
+        cognitive_impact.get("self_", 0.0),
+        sec_result.get("goal_relevance", 0.0),
+        max(triggers.values(), default=0.0),
+    ]
+    text_weight = _clamp(len((message.text or "").strip()) / 80.0)
+    base_intensity = _clamp(max([float(candidate or 0.0) for candidate in intensity_candidates] + [text_weight * 0.35]))
+    return StimulusEnvelope(
+        source_channel_id=message.channel_id,
+        source_kind=source_kind,
+        trigger_condition=trigger_condition,
+        stimulus_intensity=base_intensity,
+        payload=payload,
+        text_summary=(message.text or "")[:120],
+        cognitive_impact=cognitive_impact,
+        timestamp=message.timestamp,
+        metadata={
+            "message_id": metadata.get("message_id", ""),
+            "event_triggers": triggers,
+            "sec_result": sec_result,
+        },
+    )
 
 
 class InputChannel(ABC):
@@ -175,6 +236,11 @@ class OutputChannel(ABC):
     def list_supported_ops(self) -> List[ChannelOpDescriptor]:
         descriptor = self.get_descriptor()
         return [*descriptor.supported_ops, *descriptor.management_ops]
+
+    def execute_op(self, op_name: str, message: ChannelMessage) -> bool:
+        if op_name == "send":
+            return self.send(message)
+        return False
 
 
 class BidirectionalChannel(InputChannel, OutputChannel, ABC):

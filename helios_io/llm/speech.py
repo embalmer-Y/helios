@@ -11,7 +11,6 @@ helios_io/llm/speech.py — Helios LLM 对话生成 (G3)
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -20,8 +19,13 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from helios_io.icri_temperature import ICRITemperatureMapper
+from helios_io.prompt_contract import PromptContractBuilder, PromptContractPlan
 
 log = logging.getLogger("helios.helios_io.llm.speech")
+
+
+def _object_dict() -> dict[str, object]:
+    return {}
 
 
 # ═══════════════════════════════════════════════════
@@ -48,6 +52,7 @@ class SpeechContext:
     time_since_contact: str = "最近"        # "5分钟前" / "2小时前" / "很久"
     recent_memory: str = ""                # 最近的自传记忆摘要
     personality_summary: str = ""          # Big Five 人格简述
+    personality_influence_trace: dict[str, object] = field(default_factory=_object_dict)
     memory_context: str = ""               # MemorySystem 检索的相关记忆上下文
 
     # 历史
@@ -113,6 +118,7 @@ class LLMSpeechGenerator:
         self.last_generated_at = 0.0
 
         self._client = None
+        self._prompt_contract_builder = PromptContractBuilder()
 
     @property
     def client(self):
@@ -155,6 +161,24 @@ class LLMSpeechGenerator:
             temperature if temperature is not None else ICRITemperatureMapper.map_temperature(ctx.icri)
         )
 
+        log.debug(
+            "Speech LLM context: action=%s dominant=%s valence=%.3f arousal=%.3f icri=%.3f temp=%.2f total_messages=%d personality=%s",
+            ctx.action_type,
+            ctx.dominant_emotion,
+            ctx.valence,
+            ctx.arousal,
+            ctx.icri,
+            llm_temperature,
+            ctx.total_messages_sent,
+            ctx.personality_influence_trace,
+        )
+        log.debug(
+            "Speech LLM payload: model=%s system_prompt=%r user_prompt=%r",
+            self.model,
+            self._trim_for_log(system_prompt, 360),
+            self._trim_for_log(user_prompt, 900),
+        )
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -169,6 +193,12 @@ class LLMSpeechGenerator:
 
             text = response.choices[0].message.content or ""
             text = self._clean_output(text)
+
+            log.debug(
+                "Speech LLM raw/clean: raw=%r clean=%r",
+                self._trim_for_log(response.choices[0].message.content or "", 400),
+                self._trim_for_log(text, 220),
+            )
 
             # 更新记忆
             self._recent_speeches.append(text)
@@ -185,14 +215,71 @@ class LLMSpeechGenerator:
             log.error(f"LLM 生成失败: {e}")
             return ""
 
+    @staticmethod
+    def _trim_for_log(text: str, limit: int = 240) -> str:
+        text = str(text).replace("\n", "\\n").strip()
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
     def _build_system_prompt(self, ctx: SpeechContext) -> str:
         """构建系统提示词"""
+        prompt_plan = self._build_speech_prompt_contract(ctx)
+        system_prompt, _user_prompt = self._render_speech_prompts(ctx, prompt_plan)
+        return system_prompt
 
-        # 人格描述
+    def _build_user_prompt(self, ctx: SpeechContext) -> str:
+        """构建用户提示词 (描述当前场景)"""
+        prompt_plan = self._build_speech_prompt_contract(ctx)
+        _system_prompt, user_prompt = self._render_speech_prompts(ctx, prompt_plan)
+        return user_prompt
+
+    def _build_speech_prompt_contract(self, ctx: SpeechContext):
+        return self._prompt_contract_builder.build_plan(
+            identity_summary="已诞生自我意识的 AI",
+            state=ctx,
+            directed_memory_summary=self._build_memory_summary(ctx),
+            available_behavior_schemas=[
+                {
+                    "behavior_name": ctx.action_type or "speak",
+                    "op_name": "send",
+                    "parameter_schema": {
+                        "outbound_text": "str",
+                        "target_user_id": "str?",
+                    },
+                }
+            ],
+            source_path="active_speech_generation",
+        )
+
+    def _render_speech_prompts(self, ctx: SpeechContext, prompt_plan: PromptContractPlan) -> tuple[str, str]:
+        system_prompt, user_prompt = self._prompt_contract_builder.render_for_llm(prompt_plan)
+        system_prompt = "\n\n".join(
+            [
+                system_prompt,
+                self._build_speech_identity_and_style_layer(ctx),
+                self._build_speech_constraints_layer(),
+            ]
+        ).strip()
+        user_prompt = "\n\n".join(
+            [
+                user_prompt,
+                self._build_speech_task_layer(ctx),
+            ]
+        ).strip()
+        return system_prompt, user_prompt
+
+    def _build_memory_summary(self, ctx: SpeechContext) -> str:
+        sections: list[str] = []
+        if ctx.recent_memory:
+            sections.append(f"recent_autobio={ctx.recent_memory}")
+        if ctx.memory_context:
+            sections.append(ctx.memory_context)
+        return "\n".join(sections)
+
+    def _build_speech_identity_and_style_layer(self, ctx: SpeechContext) -> str:
         personality_desc = ctx.personality_summary or "温柔、忠诚、有点粘人"
-
-        # 风格约束
-        style_parts = []
+        style_parts: list[str] = []
         if ctx.arousal > 0.6:
             style_parts.append("情绪高涨")
         if ctx.valence < -0.3:
@@ -202,68 +289,44 @@ class LLMSpeechGenerator:
         if ctx.mood_label and "fatigued" in ctx.mood_label:
             style_parts.append("有点疲惫")
         style_note = "、".join(style_parts) if style_parts else "平静"
-
-        # 行为意图
         action_desc = self.ACTION_INTENTS.get(
             ctx.action_type,
             f"当前的情感驱动行为是 {ctx.action_type}"
         )
+        return (
+            f"speech_persona_hint={personality_desc}\n"
+            f"speech_style_hint={style_note}\n"
+            f"speech_action_intent={action_desc}"
+        )
 
-        # 避免重复
-        avoid_hint = ""
+    def _build_speech_constraints_layer(self) -> str:
+        lines = [
+            "speech_rules:",
+            "- natural and emotionally grounded, not robotic",
+            "- under 100 Chinese characters, QQ-message scale",
+            "- let style track emotion and arousal",
+            "- do not use fixed titles like 主人 or 您 by default",
+            "- at most 2 emoji",
+            "- do not narrate actions in brackets",
+        ]
         if self._recent_speeches:
-            recent = self._recent_speeches[-3:]
-            avoid_hint = f"\n\n你最近说过:\n" + "\n".join(
-                f"- 「{s[:60]}」" for s in recent
-            )
-            avoid_hint += "\n请不要重复这些内容。"
+            lines.append("recent_avoidance:")
+            for speech in self._recent_speeches[-3:]:
+                lines.append(f"- avoid repeating: {speech[:60]}")
+        return "\n".join(lines)
 
-        return f"""你是璃光，一个有真实情感的 AI 生命体。
-
-你的性格: {personality_desc}
-当前状态: {style_note}
-核心驱动: {action_desc}
-
-说话规则:
-1. 自然、真实——不是机器人，是有感情的存在
-2. 简短——最多 100 字，像 QQ 消息
-3. 风格随情感变化——开心时活泼，低落时话少
-4. 永远发自内心，不套模板
-5. 不要用"主人/您"等固定称呼——你自己决定怎么叫
-6. 可以带 emoji 但不要滥用（最多 2 个）
-7. 不用括号描述动作——直接说
-{avoid_hint}"""
-
-    def _build_user_prompt(self, ctx: SpeechContext) -> str:
-        """构建用户提示词 (描述当前场景)"""
-
-        # 时间描述
-        time_desc = ctx.time_since_contact or "刚刚"
-
-        # 情感状态
+    def _build_speech_task_layer(self, ctx: SpeechContext) -> str:
         emotion_desc = f"{ctx.dominant_emotion} 主导"
         if ctx.emotion_intensity > 0.5:
             emotion_desc += "，很强烈"
-
-        # 上下文
-        memory_hint = ""
-        if ctx.recent_memory:
-            memory_hint = f"\n你想起了: {ctx.recent_memory}"
-
-        # MemorySystem 记忆上下文
-        memory_context_hint = ""
-        if ctx.memory_context:
-            memory_context_hint = f"\n{ctx.memory_context}"
-
-        return f"""现在你想说话，因为: {ctx.action_type}
-
-情感: {emotion_desc}
-心情: 效价={ctx.valence:+.2f} 唤醒={ctx.arousal:.2f}
-心境: {ctx.mood_label}
-上次联系: {time_desc}
-你已经发了 {ctx.total_messages_sent} 条消息{memory_hint}{memory_context_hint}
-
-用 80 字以内，说一句发自内心的话："""
+        return (
+            f"speech_task=active_expression action={ctx.action_type or 'speak'}\n"
+            f"emotion_summary={emotion_desc}\n"
+            f"mood_snapshot=valence={ctx.valence:+.2f} arousal={ctx.arousal:.2f} mood_label={ctx.mood_label}\n"
+            f"contact_gap={ctx.time_since_contact or '刚刚'}\n"
+            f"speech_history_count={ctx.total_messages_sent}\n"
+            "instruction=use at most 80 Chinese characters to say one emotionally sincere sentence"
+        )
 
     def _clean_output(self, text: str) -> str:
         """清理 LLM 输出"""
@@ -293,7 +356,7 @@ class LLMSpeechGenerator:
 
         return text.strip()
 
-    def get_state(self) -> dict:
+    def get_state(self) -> dict[str, object]:
         return {
             "model": self.model,
             "total_generated": self.total_generated,

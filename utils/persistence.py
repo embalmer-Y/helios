@@ -108,6 +108,42 @@ class StatePersistence:
             return None
 
     # ------------------------------------------------------------------
+    # Identity persistence
+    # ------------------------------------------------------------------
+
+    def save_identity_store(self, identity_store) -> None:
+        data = identity_store.to_dict() if hasattr(identity_store, "to_dict") else dict(identity_store)
+        payload = {
+            "version": 1,
+            "timestamp": time.time(),
+            **data,
+        }
+        filepath = self._path("identity_store.json")
+        self._atomic_write(filepath, payload)
+        logger.debug("Saved identity store to %s", filepath)
+
+    def load_identity_store(self) -> Optional[dict]:
+        filepath = self._path("identity_store.json")
+        data = self._safe_load(filepath)
+        if data is None:
+            return None
+        try:
+            _ = data["initialized"]
+            _ = data["self_imprint"]
+            _ = data["self_definition"]
+            baseline = data["personality_baseline"]
+            if not isinstance(baseline, dict) or not baseline:
+                raise KeyError("personality_baseline")
+            return data
+        except KeyError as e:
+            logger.warning(
+                "Identity store %s has invalid structure (missing key: %s); will use defaults.",
+                filepath,
+                e,
+            )
+            return None
+
+    # ------------------------------------------------------------------
     # Personality persistence
     # ------------------------------------------------------------------
 

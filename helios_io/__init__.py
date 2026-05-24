@@ -10,4 +10,6 @@ from .bootstrap_behavior_specs import build_bootstrap_behavior_specs
 from .channel import ChannelDescriptor, ChannelOpDescriptor
 from .interaction_policy import InteractionAssessment, InteractionPolicy, InteractionSignals
 from .planning import ExecutionPlanner, PolicyEvaluation, PolicyEvaluator, PolicyViolation
+from .prompt_contract import ChannelContextDescriptor, MetricDescriptor, PromptContractBuilder, PromptContractPlan
 from .response_pipeline import ResponsePipeline
+from .routing_policy import RoutingPreferencePolicy

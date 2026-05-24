@@ -30,6 +30,7 @@ class BehaviorCommand:
     decision_id: str = ""
     channel_id: str = ""
     op_name: str = ""
+    normalized_intensity: float = 0.0
     modality: str = ""
     provenance: dict[str, Any] = field(default_factory=dict)
     policy_trace: dict[str, Any] = field(default_factory=dict)
@@ -97,6 +98,7 @@ class BehaviorExecutor:
                 decision_id=decision.decision_id,
                 channel_id=decision.selected_channel_id,
                 op_name=decision.selected_op,
+                normalized_intensity=decision.normalized_intensity,
                 modality=decision.selected_modality,
                 provenance=dict(decision.proposal_snapshot),
                 policy_trace=dict(decision.policy_trace),
@@ -153,6 +155,7 @@ class BehaviorExecutor:
         merged_result.setdefault("behavior_id", completed.behavior_id)
         merged_result.setdefault("channel_id", completed.channel_id)
         merged_result.setdefault("op_name", completed.op_name)
+        merged_result.setdefault("normalized_intensity", completed.normalized_intensity)
         completed.result = merged_result
         self._current = None
         if self._result_callback:

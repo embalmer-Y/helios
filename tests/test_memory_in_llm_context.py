@@ -6,6 +6,7 @@ generation, the Helios SHALL retrieve relevant memories from Memory_System and i
 them as context.
 """
 
+import logging
 import sys
 from dataclasses import dataclass, field
 from typing import Dict
@@ -68,6 +69,49 @@ class TestSpeechContextMemory:
         assert "[最近在想]" not in prompt
         assert "[相似经历]" not in prompt
 
+    def test_speech_system_prompt_uses_unified_contract_layers(self):
+        gen = LLMSpeechGenerator(api_key="fake")
+        ctx = SpeechContext(
+            dominant_emotion="CARE",
+            action_type="speak_care",
+            personality_summary="温柔、忠诚、有点粘人",
+            arousal=0.7,
+            valence=0.2,
+            icri=0.6,
+        )
+
+        prompt = gen._build_system_prompt(ctx)
+
+        assert "identity_boundary=" in prompt
+        assert "metrics:" in prompt
+        assert "constraints=do not describe Helios as a designed program" in prompt
+        assert "speech_rules:" in prompt
+        assert "speech_action_intent=关心对方的状态，表达温暖" in prompt
+
+    def test_speech_user_prompt_uses_unified_contract_layers(self):
+        gen = LLMSpeechGenerator(api_key="fake")
+        ctx = SpeechContext(
+            dominant_emotion="CARE",
+            action_type="speak_care",
+            mood_label="neutral",
+            valence=0.3,
+            arousal=0.4,
+            icri=0.5,
+            time_since_contact="5分钟前",
+            recent_memory="昨天一起散步",
+            memory_context="[最近在想]\n  · 主人昨天说了暖心的话",
+            total_messages_sent=3,
+        )
+
+        prompt = gen._build_user_prompt(ctx)
+
+        assert "state_summary=" in prompt
+        assert "memory_summary=" in prompt
+        assert "昨天一起散步" in prompt
+        assert "最近在想" in prompt
+        assert "action_contract:" in prompt
+        assert "speech_task=active_expression action=speak_care" in prompt
+
     def test_generate_uses_icri_temperature_mapping(self):
         gen = LLMSpeechGenerator(api_key="fake")
         gen._client = MagicMock()
@@ -99,6 +143,36 @@ class TestResponsePipelineMemoryRetrieval:
         mock_memory.get_llm_context.assert_called_once_with(valence=0.6, arousal=0.7)
         assert "相似经历" in ctx
 
+    def test_get_memory_context_uses_reply_bundle_when_user_context_available(self):
+        mock_memory = MagicMock()
+        bundle = MagicMock()
+        bundle.resolved_text_sections = {
+            "current_conversation": "[当前会话]\n  · 对方: 你好",
+            "user_long_term": "[用户长期记忆]\n  · 我们聊过海边",
+            "global_fallback": "[全局回退记忆]\n  · 旧的泛化片段",
+            "long_term_and_global": "[用户长期记忆]\n  · 我们聊过海边\n\n[全局回退记忆]\n  · 旧的泛化片段",
+        }
+        bundle.trace_summary = "user_id=user1 l1=2 l2=1 l3=1 fallback=True"
+        mock_memory.get_reply_memory_bundle.return_value = bundle
+        pipeline = ResponsePipeline(memory_system=mock_memory)
+        state = MockState(valence=0.6, arousal=0.7)
+
+        ctx = pipeline._get_memory_context(
+            state,
+            user_id="user1",
+            message_text="我们去散步吧",
+            history_texts=["对方: 你好\n你: 在呢"],
+            conversation_key="qq:dm:user1",
+        )
+
+        mock_memory.get_reply_memory_bundle.assert_called_once()
+        call = mock_memory.get_reply_memory_bundle.call_args.kwargs
+        assert call["user_id"] == "user1"
+        assert call["message_text"] == "我们去散步吧"
+        assert call["history_texts"] == ["对方: 你好\n你: 在呢"]
+        assert call["conversation_key"] == "qq:dm:user1"
+        assert "我们聊过海边" in ctx
+
     def test_get_memory_context_returns_empty_when_no_memory_system(self):
         """Should return empty string when no memory system is configured"""
         pipeline = ResponsePipeline(memory_system=None)
@@ -118,7 +192,15 @@ class TestResponsePipelineMemoryRetrieval:
     def test_memory_context_included_in_generate_reply_prompt(self):
         """Memory context should flow into the user prompt during reply generation"""
         mock_memory = MagicMock()
-        mock_memory.get_llm_context.return_value = "[最近在想]\n  · 我很开心"
+        bundle = MagicMock()
+        bundle.resolved_text_sections = {
+            "current_conversation": "[当前会话]\n  · 对方: 你好",
+            "user_long_term": "[用户长期记忆]\n  · 我很开心",
+            "global_fallback": "",
+            "long_term_and_global": "[用户长期记忆]\n  · 我很开心",
+        }
+        bundle.trace_summary = "user_id=user1 l1=1 l2=1 l3=0 fallback=False"
+        mock_memory.get_reply_memory_bundle.return_value = bundle
         pipeline = ResponsePipeline(memory_system=mock_memory, api_key="test-key")
 
         state = MockState(valence=0.5, arousal=0.4)
@@ -130,5 +212,46 @@ class TestResponsePipelineMemoryRetrieval:
             memory_context="[最近在想]\n  · 我很开心",
             autobio_context="",
             sec_result={"goal_relevance": 0.5},
+            current_conversation_context="[当前会话]\n  · 对方: 你好",
+            user_long_term_context="[用户长期记忆]\n  · 我很开心",
+            global_fallback_context="[全局回退记忆]\n  · 一个旧片段",
         )
         assert "我很开心" in prompt
+        assert "[当前会话]" in prompt
+        assert "[用户长期记忆]" in prompt
+        assert "[全局回退记忆]" in prompt
+
+    def test_reply_memory_bundle_trace_is_logged_by_response_pipeline(self, caplog):
+        mock_memory = MagicMock()
+        bundle = MagicMock()
+        bundle.resolved_text_sections = {
+            "current_conversation": "[当前会话]\n  · 对方: 你好",
+            "user_long_term": "[用户长期记忆]\n  · 我们聊过海边",
+            "global_fallback": "[全局回退记忆]\n  · 旧的泛化片段",
+            "long_term_and_global": "[用户长期记忆]\n  · 我们聊过海边\n\n[全局回退记忆]\n  · 旧的泛化片段",
+        }
+        bundle.trace_summary = (
+            "user_id=user1 conversation_key=qq:dm:user1 l1=1 l2=1 l3=1 "
+            "l1_hits=1 l2_hits=1 l3_hits=1 "
+            "l1_selected=1 l2_selected=1 l3_selected=1 "
+            "selected=(1,1,1) fallback=True reason=insufficient_user_memory cache_hit=False"
+        )
+        mock_memory.get_reply_memory_bundle.return_value = bundle
+        pipeline = ResponsePipeline(memory_system=mock_memory)
+
+        with caplog.at_level(logging.DEBUG, logger="helios.helios_io.response_pipeline"):
+            ctx = pipeline._get_reply_memory_bundle(
+                MockState(valence=0.5, arousal=0.4),
+                user_id="user1",
+                message_text="我们再去散步吧",
+                history_texts=["对方: 你好\n你: 在呢"],
+                conversation_key="qq:dm:user1",
+            )
+
+        assert "我们聊过海边" in ctx["user_long_term"]
+        assert any("Reply memory bundle trace: user=user1" in record.message for record in caplog.records)
+        assert any("conversation_key=qq:dm:user1" in record.message for record in caplog.records)
+        assert any("l1_hits=1" in record.message for record in caplog.records)
+        assert any("l2_hits=1" in record.message for record in caplog.records)
+        assert any("l3_hits=1" in record.message for record in caplog.records)
+        assert any("reason=insufficient_user_memory" in record.message for record in caplog.records)

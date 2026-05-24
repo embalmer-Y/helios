@@ -23,6 +23,9 @@ def test_action_proposal_defaults_and_fields():
     assert proposal.proposal_id == "p-1"
     assert proposal.score_bundle == {}
     assert proposal.candidate_channels == []
+    assert proposal.origin_type == ""
+    assert proposal.op_name == ""
+    assert proposal.outbound_intensity == 0.0
 
 
 def test_action_decision_accepted_tracks_rejection_reason():
@@ -42,6 +45,28 @@ def test_action_decision_accepted_tracks_rejection_reason():
 
     assert accepted.accepted is True
     assert rejected.accepted is False
+    assert accepted.normalized_intensity == 0.0
+
+
+def test_action_proposal_supports_thought_origin_op_payload_and_intensity():
+    proposal = ActionProposal(
+        proposal_id="p-thought",
+        source_type="preconscious",
+        source_module="preconscious_policy",
+        origin_type="thought",
+        origin_id="thought::7::rumination::1000",
+        intent_type="thought_action",
+        behavior_name="speak_share",
+        op_name="send",
+        op_params={"target_user_id": "master"},
+        outbound_intensity=0.66,
+    )
+
+    assert proposal.origin_type == "thought"
+    assert proposal.origin_id.startswith("thought::7")
+    assert proposal.op_name == "send"
+    assert proposal.op_params["target_user_id"] == "master"
+    assert proposal.outbound_intensity == 0.66
 
 
 def test_execution_feedback_captures_structured_result_details():

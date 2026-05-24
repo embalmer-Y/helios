@@ -27,6 +27,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from helios_main import Helios, HeliosConfig
 from helios_io.action_models import ActionProposal
+from helios_io.channel import ChannelDescriptor, ChannelOpDescriptor, ChannelStatus
+from personality_contract import build_personality_contract
 
 
 # ═══════════════════════════════════════════════════
@@ -57,6 +59,23 @@ def helios_instance(tmp_path, monkeypatch):
     for handler in list(h.log.handlers):
         handler.close()
         h.log.removeHandler(handler)
+
+
+def make_output_descriptor(channel_id: str) -> ChannelDescriptor:
+    return ChannelDescriptor(
+        channel_id=channel_id,
+        display_name=channel_id.upper(),
+        output_types=["text_message"],
+        output_formats=["text/plain"],
+        capabilities=["send", "text_output"],
+        supported_ops=[
+            ChannelOpDescriptor(
+                name="send",
+                direction="output",
+                description=f"{channel_id} output",
+            )
+        ],
+    )
 
 
 # ═══════════════════════════════════════════════════
@@ -125,6 +144,9 @@ class TestTickResponseWiring:
     def test_generate_reply_called_when_should_reply_true(self, helios_instance):
         """When should_reply returns True, generate_reply should be invoked."""
         h = helios_instance
+        h._channel_gateway.get_channel_descriptors = MagicMock(return_value={"qq": make_output_descriptor("qq")})
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.CONNECTED})
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
         h.sec_evaluator.evaluate = MagicMock(return_value={
             "goal_relevance": 0.6,
             "novelty": 0.4,
@@ -134,7 +156,7 @@ class TestTickResponseWiring:
         h.response_pipeline.record_exchange = MagicMock()
         h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
-        h._msg_queue.put({"text": "你好", "user_id": "user1"})
+        h._msg_queue.put({"text": "你好", "user_id": "user1", "channel_id": "qq"})
 
         h._tick()
 
@@ -162,13 +184,12 @@ class TestTickResponseWiring:
 
         h.response_pipeline.generate_reply.assert_not_called()
 
-    def test_reply_sent_via_qq_when_connected(self, helios_instance):
-        """Generated reply should be sent via QQ send_c2c when bot is connected."""
+    def test_reply_sent_via_channel_gateway_when_connected(self, helios_instance):
+        """Generated reply should be routed through ChannelGateway when a channel decision is accepted."""
         h = helios_instance
-        # Set up mocked QQ
-        h.qq = MagicMock()
-        h.qq.is_connected.return_value = True
-        h.qq.send_c2c.return_value = True
+        h._channel_gateway.get_channel_descriptors = MagicMock(return_value={"qq": make_output_descriptor("qq")})
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.CONNECTED})
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
 
         h.sec_evaluator.evaluate = MagicMock(return_value={
             "goal_relevance": 0.6,
@@ -179,15 +200,22 @@ class TestTickResponseWiring:
         h.response_pipeline.record_exchange = MagicMock()
         h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
-        h._msg_queue.put({"text": "你好", "user_id": "target_user"})
+        h._msg_queue.put({"text": "你好", "user_id": "target_user", "channel_id": "qq"})
 
         h._tick()
 
-        h.qq.send_c2c.assert_called_once_with("target_user", "回复内容")
+        h._channel_gateway.route_outbound.assert_called_once()
+        outbound = h._channel_gateway.route_outbound.call_args[0][0]
+        assert outbound.channel_id == "qq"
+        assert outbound.user_id == "target_user"
+        assert outbound.text == "回复内容"
 
     def test_exchange_recorded_with_reply(self, helios_instance):
         """Exchange should be recorded with the reply when one is generated."""
         h = helios_instance
+        h._channel_gateway.get_channel_descriptors = MagicMock(return_value={"qq": make_output_descriptor("qq")})
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.CONNECTED})
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
         sec_result = {"goal_relevance": 0.6, "novelty": 0.4}
         h.sec_evaluator.evaluate = MagicMock(return_value=sec_result)
         h.response_pipeline.should_reply = MagicMock(return_value=True)
@@ -195,7 +223,7 @@ class TestTickResponseWiring:
         h.response_pipeline.record_exchange = MagicMock()
         h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
-        h._msg_queue.put({"text": "hey", "user_id": "user1"})
+        h._msg_queue.put({"text": "hey", "user_id": "user1", "channel_id": "qq"})
 
         h._tick()
 
@@ -242,6 +270,152 @@ class TestTickResponseWiring:
         h.response_pipeline.should_reply.assert_not_called()
         h.response_pipeline.record_exchange.assert_not_called()
 
+    def test_quiet_tick_internal_thought_stays_internal_and_observable(self, helios_instance):
+        h = helios_instance
+        h.qq = MagicMock()
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
+        h.preconscious_policy.propose = MagicMock(return_value=[])
+        h.response_pipeline.generate_reply = MagicMock()
+        h.response_pipeline.record_exchange = MagicMock()
+        h.thinking_integration = MagicMock(
+            generate=MagicMock(
+                side_effect=lambda state: (
+                    setattr(state, "dmn_active", True),
+                    setattr(state, "thought_generated_this_tick", True),
+                    setattr(
+                        state,
+                        "last_internal_thought_trace",
+                        {
+                            "triggered": True,
+                            "trigger_reason": "eligible",
+                            "llm_used": False,
+                            "fallback_used": True,
+                            "output_destination": "internal_log,memory,preconscious",
+                            "write_result": "written",
+                            "rejected_reason": "missing_api_key",
+                        },
+                    ),
+                    SimpleNamespace(
+                        type="self_question",
+                        content="我在整理刚才盘旋的念头。",
+                        timestamp=time.time(),
+                        triggered_by="SEEKING",
+                        source_path="internal_thought_llm",
+                        llm_used=False,
+                        fallback_used=True,
+                        metadata={"behavior_name": "think_message"},
+                    ),
+                )[-1]
+            )
+        )
+
+        h._tick()
+
+        h.response_pipeline.generate_reply.assert_not_called()
+        h.response_pipeline.record_exchange.assert_not_called()
+        h.qq.send_c2c.assert_not_called()
+        assert h.get_state()["internal_thought"]["triggered"] is True
+        assert h.get_state()["internal_thought"]["output_destination"] == "internal_log,memory,preconscious"
+        assert "continuation_pressure" in h.get_state()
+        assert "thought_cycle" in h.get_state()
+
+    def test_tick_exposes_stimulus_and_thought_gate_observability(self, helios_instance):
+        h = helios_instance
+        h._msg_queue.put({"text": "突然想到一件事", "user_id": "u1", "channel_id": "qq"})
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
+
+        h._tick()
+
+        state = h.get_state()
+        assert state["current_stimuli"]
+        assert state["current_stimuli"][0]["source_channel_id"] == "qq"
+        assert "thought_gate" in state
+        assert "gate_score" in state["thought_gate"]
+        assert "directed_retrieval" in state
+        assert "query_text" in state["directed_retrieval"]
+        assert "public_tiers" in state["memory"]
+        assert state["memory"]["public_tiers"][0]["tier_name"] == "short-term"
+        assert "tier_snapshots" in state["memory"]
+
+    def test_internal_thought_memory_writes_use_internal_thought_source_path(self, helios_instance):
+        h = helios_instance
+        h.cfg.INTERNAL_THINK_EPISODIC_WRITE = True
+        h.feedback_recorder.record_memory_write = MagicMock()
+        h.memory_system.remember = MagicMock(return_value=SimpleNamespace(id="episode-1", summary="内在念头"))
+
+        thought = SimpleNamespace(
+            type="self_question",
+            content="我在重新整理这个问题。",
+            triggered_by="SEEKING",
+            source_path="internal_thought_llm",
+            llm_used=True,
+            fallback_used=False,
+            metadata={"behavior_name": "think_message"},
+        )
+        state = SimpleNamespace(tick=9, valence=0.2, arousal=0.3, icri=0.5)
+        moment = SimpleNamespace(moment_id="moment-1", narrative="我在重新整理这个问题。")
+
+        h._on_thought_recorded(thought, state, moment)
+
+        calls = h.feedback_recorder.record_memory_write.call_args_list
+        assert calls[0].kwargs["source_path"] == "internal_thought_llm"
+        assert calls[0].kwargs["memory_type"] == "autobiographical"
+        assert calls[1].kwargs["source_path"] == "internal_thought_llm"
+        assert calls[1].kwargs["memory_type"] == "episodic"
+        h.memory_system.remember.assert_called_once()
+
+    def test_handle_action_rejects_missing_channel_binding_instead_of_defaulting_to_qq(self, helios_instance):
+        h = helios_instance
+        h._route_outbound_text = MagicMock(return_value=True)
+
+        ok = h._handle_action(
+            "reply_message",
+            params={"outbound_text": "hello", "target_user_id": "user1"},
+        )
+
+        assert ok is False
+        h._route_outbound_text.assert_not_called()
+
+    def test_helios_enables_connected_channel_gating_by_default(self, helios_instance):
+        h = helios_instance
+
+        assert h.policy_evaluator._require_connected_channel is True
+
+    def test_route_outbound_text_rejects_missing_qq_target_without_cfg_fallback(self, helios_instance):
+        h = helios_instance
+        h.cfg.QQ_TARGET_ID = "fallback-user"
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
+
+        ok = h._route_outbound_text(
+            channel_id="qq",
+            user_id="",
+            text="hello",
+            metadata={},
+            action_label="reply_message",
+        )
+
+        assert ok is False
+        h._channel_gateway.route_outbound.assert_not_called()
+
+    def test_route_outbound_text_records_consistency_failure_when_channel_disconnects_after_acceptance(self, helios_instance):
+        h = helios_instance
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.DISCONNECTED})
+        h.feedback_recorder.record_execution_consistency_failure = MagicMock()
+
+        ok = h._route_outbound_text(
+            channel_id="qq",
+            user_id="user1",
+            text="hello",
+            metadata={},
+            action_label="reply_message",
+        )
+
+        assert ok is False
+        assert h.decisions_failed_after_acceptance == 1
+        h._channel_gateway.route_outbound.assert_not_called()
+        h.feedback_recorder.record_execution_consistency_failure.assert_called_once()
+
     def test_conversation_context_passed_to_sec(self, helios_instance):
         """SEC evaluator should receive recent conversation context."""
         h = helios_instance
@@ -284,6 +458,8 @@ class TestTickResponseWiring:
         """Regulation-driven speech should send through ChannelGateway, not direct QQ calls."""
         h = helios_instance
         h.cfg.QQ_TARGET_ID = "target_user"
+        h._channel_gateway.get_channel_descriptors = MagicMock(return_value={"qq": make_output_descriptor("qq")})
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.CONNECTED})
         h.regulation.generate_action_proposals = MagicMock(return_value=[
             ActionProposal(
                 proposal_id="proposal::active::1",
@@ -307,12 +483,15 @@ class TestTickResponseWiring:
         assert outbound.channel_id == "qq"
         assert outbound.user_id == "target_user"
         assert outbound.text == "主动问候"
+        assert outbound.metadata["op_name"] == "send"
         h.qq.send_c2c.assert_not_called()
 
     def test_active_expression_uses_forwarded_state_for_speech_context(self, helios_instance):
         """Speech generation should receive the current tick state rather than stale runtime fields."""
         h = helios_instance
         h.cfg.QQ_TARGET_ID = "target_user"
+        h._channel_gateway.get_channel_descriptors = MagicMock(return_value={"qq": make_output_descriptor("qq")})
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.CONNECTED})
         h.regulation.generate_action_proposals = MagicMock(return_value=[
             ActionProposal(
                 proposal_id="proposal::active::2",
@@ -339,10 +518,18 @@ class TestTickResponseWiring:
         h._tick()
 
         speech_ctx = h.speech.generate.call_args[0][0]
+        expected_descriptor, expected_trace = build_personality_contract(
+            projection=getattr(h.personality, "get_projection")(),
+            traits=h.personality._trait_dict(),
+            identity_store=h.identity_store.to_dict(),
+            source_path="active_speech_generation",
+        )
         assert speech_ctx.dominant_emotion == "FEAR"
         assert speech_ctx.valence == -0.4
         assert speech_ctx.arousal == 0.8
         assert speech_ctx.mood_label == h.mood.state.label
+        assert speech_ctx.personality_summary == expected_descriptor.persona_text_summary
+        assert speech_ctx.personality_influence_trace == expected_trace.to_dict()
 
     def test_preconscious_proposals_can_drive_internal_behavior_before_regulation(self, helios_instance):
         h = helios_instance
@@ -366,6 +553,42 @@ class TestTickResponseWiring:
         h._handle_action.assert_called_once()
         assert h._handle_action.call_args[0][0] == "reflect"
         h.regulation.generate_action_proposals.assert_called_once()
+
+    def test_preconscious_thought_origin_external_proposal_can_route_before_regulation(self, helios_instance):
+        h = helios_instance
+        h._channel_gateway.get_channel_descriptors = MagicMock(return_value={"qq": make_output_descriptor("qq")})
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.CONNECTED})
+        h.preconscious_policy.propose = MagicMock(return_value=[
+            ActionProposal(
+                proposal_id="proposal::preconscious::external::1",
+                source_type="preconscious",
+                source_module="preconscious_policy",
+                origin_type="thought",
+                origin_id="thought::1::rumination::1000",
+                intent_type="thought_action",
+                behavior_name="speak_share",
+                score_bundle={"final": 0.49},
+                candidate_channels=["qq"],
+                suggested_modalities=["text"],
+                parameters={"tick": 1, "target_user_id": "target_user"},
+                op_name="send",
+                outbound_intensity=0.68,
+            )
+        ])
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
+        h._generate_speech = MagicMock(return_value="我想把这个想法告诉你")
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
+
+        h._tick()
+
+        h._channel_gateway.route_outbound.assert_called_once()
+        outbound = h._channel_gateway.route_outbound.call_args[0][0]
+        assert outbound.channel_id == "qq"
+        assert outbound.user_id == "target_user"
+        assert outbound.text == "我想把这个想法告诉你"
+        assert outbound.metadata["op_name"] == "send"
+        assert outbound.metadata["origin_type"] == "thought"
+        assert outbound.metadata["origin_id"] == "thought::1::rumination::1000"
 
     def test_channel_message_cognitive_impact_feeds_phi_engine(self, helios_instance):
         """Inbound channel metadata should flow into feed_from_impact before ICRI aggregation."""

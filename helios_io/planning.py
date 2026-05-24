@@ -9,6 +9,10 @@ from .action_models import ActionDecision, ActionProposal, BehaviorSpec
 from .channel import ChannelDescriptor, ChannelOpDescriptor, ChannelStatus
 
 
+def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, float(value)))
+
+
 @dataclass
 class PolicyViolation:
     code: str
@@ -59,17 +63,36 @@ class PolicyEvaluator:
             "candidate_channels": list(candidate_channels),
             "allowed_modalities": list(allowed_modalities),
         }
+        requested_op = str(proposal.op_name or "")
+        normalized_intensity = _clamp(proposal.outbound_intensity)
+        trace["requested_op"] = requested_op
+        trace["normalized_intensity"] = normalized_intensity
+        trace["origin_type"] = str(proposal.origin_type or "")
 
-        internal_only = bool(proposal.constraints.get("internal_only", False))
-        trace["internal_only"] = internal_only
-
-        if internal_only and behavior_spec.execution_mode != "internal":
+        if (
+            str(proposal.origin_type or "") == "thought"
+            and behavior_spec.execution_mode == "channel"
+            and not requested_op
+        ):
             violations.append(
                 PolicyViolation(
-                    code="internal_only_constraint",
-                    message="Preconscious internal-only proposals cannot bind to external channel behaviors.",
+                    code="missing_requested_op",
+                    message="Thought-origin channel proposals must explicitly declare the outbound channel op.",
+                    details={"behavior_name": behavior_spec.name, "origin_id": proposal.origin_id},
+                )
+            )
+
+        execution_scope = str(proposal.constraints.get("execution_scope", "") or "")
+        trace["execution_scope"] = execution_scope
+
+        if execution_scope == "internal" and behavior_spec.execution_mode != "internal":
+            violations.append(
+                PolicyViolation(
+                    code="execution_scope_constraint",
+                    message="Proposal execution scope is limited to internal execution and cannot bind to channel behaviors.",
                     details={
                         "source_type": proposal.source_type,
+                        "execution_scope": execution_scope,
                         "execution_mode": behavior_spec.execution_mode,
                         "behavior_name": behavior_spec.name,
                     },
@@ -108,18 +131,59 @@ class PolicyEvaluator:
         if required_capabilities:
             trace["required_capabilities"] = sorted(required_capabilities)
 
+        requires_target_user = bool(
+            proposal.constraints.get("requires_target_user", False)
+            or behavior_spec.applicable_context.get("requires_target_user", False)
+        )
+        trace["requires_target_user"] = requires_target_user
+        if behavior_spec.execution_mode == "channel" and requires_target_user:
+            target_user_id = str(proposal.parameters.get("target_user_id", "") or "")
+            if not target_user_id:
+                violations.append(
+                    PolicyViolation(
+                        code="missing_target_user_id",
+                        message="Channel behavior requires an explicit target user binding.",
+                        details={"behavior_name": behavior_spec.name},
+                    )
+                )
+
         allowed_channels: List[str] = []
+        filtered_out_reasons: Dict[str, str] = {}
         for channel_id in candidate_channels:
             descriptor = channel_descriptors.get(channel_id)
             if descriptor is None:
+                filtered_out_reasons[channel_id] = "missing_descriptor"
                 continue
+            if requested_op:
+                supported_ops = {
+                    op.name
+                    for op in descriptor.supported_ops
+                    if op.direction in {"output", "bidirectional"}
+                }
+                if requested_op not in supported_ops:
+                    filtered_out_reasons[channel_id] = "requested_op_unavailable"
+                    continue
             if required_capabilities.difference(descriptor.capabilities):
+                filtered_out_reasons[channel_id] = "missing_capabilities"
                 continue
             if self._require_connected_channel and channel_statuses is not None:
                 status = channel_statuses.get(channel_id, ChannelStatus.ERROR)
                 if status != ChannelStatus.CONNECTED:
+                    filtered_out_reasons[channel_id] = f"channel_status:{status.value}"
                     continue
             allowed_channels.append(channel_id)
+
+        trace["filtered_out_reasons"] = filtered_out_reasons
+
+        if behavior_spec.execution_mode == "channel" and requested_op and allowed_channels == []:
+            if any(reason == "requested_op_unavailable" for reason in filtered_out_reasons.values()):
+                violations.append(
+                    PolicyViolation(
+                        code="requested_op_unavailable",
+                        message="Requested channel op is not supported by any eligible channel.",
+                        details={"requested_op": requested_op, "candidate_channels": list(candidate_channels)},
+                    )
+                )
 
         if behavior_spec.execution_mode == "channel" and not allowed_channels:
             violations.append(
@@ -241,9 +305,70 @@ class ExecutionPlanner:
 
         selected_channel_id = ""
         selected_op = "internal_execute"
+        normalized_intensity = _clamp(proposal.outbound_intensity)
+        routing_trace = {
+            "candidate_order": list(evaluation.trace.get("candidate_channels", [])),
+            "selection_reason": "internal_execution" if behavior_spec.execution_mode == "internal" else "",
+            "rejection_reason": "",
+            "executor_ready": behavior_spec.execution_mode == "internal",
+        }
         if behavior_spec.execution_mode != "internal":
             selected_channel_id = self._select_channel(proposal, behavior_spec, evaluation.allowed_channels, channel_descriptors)
-            selected_op = self._select_output_op(channel_descriptors.get(selected_channel_id))
+            selected_op = proposal.op_name or self._select_output_op(channel_descriptors.get(selected_channel_id))
+            op_descriptor = self._resolve_output_op_descriptor(channel_descriptors.get(selected_channel_id), selected_op)
+            if selected_channel_id:
+                if selected_channel_id in proposal.candidate_channels:
+                    routing_trace["selection_reason"] = "proposal_candidate_preference"
+                elif selected_channel_id in behavior_spec.allowed_channel_ids:
+                    routing_trace["selection_reason"] = "behavior_allowed_channel_rank"
+                else:
+                    routing_trace["selection_reason"] = "planner_ranked_available_channel"
+            if not selected_channel_id:
+                routing_trace["rejection_reason"] = "missing_channel_binding"
+            elif not selected_op:
+                routing_trace["rejection_reason"] = "missing_output_op"
+            else:
+                missing_inputs = self._missing_required_op_inputs(
+                    op_descriptor,
+                    {**proposal.parameters, **proposal.op_params},
+                )
+                if missing_inputs:
+                    routing_trace["rejection_reason"] = "missing_op_inputs"
+                    routing_trace["missing_op_inputs"] = list(missing_inputs)
+                else:
+                    routing_trace["executor_ready"] = True
+
+        if behavior_spec.execution_mode != "internal" and (not selected_channel_id or not selected_op):
+            rejection_reason = routing_trace["rejection_reason"] or "invalid_channel_binding"
+            return ActionDecision(
+                decision_id=f"decision::{proposal.proposal_id}",
+                proposal_id=proposal.proposal_id,
+                behavior_name=behavior_spec.name,
+                rejection_reason=rejection_reason,
+                cost_estimate=dict(behavior_spec.cost_policy),
+                policy_trace={
+                    **evaluation.trace,
+                    "routing_trace": routing_trace,
+                },
+                proposal_snapshot=asdict(proposal),
+                behavior_snapshot=asdict(behavior_spec),
+            )
+
+        if behavior_spec.execution_mode != "internal" and routing_trace.get("rejection_reason"):
+            rejection_reason = str(routing_trace["rejection_reason"] or "invalid_channel_binding")
+            return ActionDecision(
+                decision_id=f"decision::{proposal.proposal_id}",
+                proposal_id=proposal.proposal_id,
+                behavior_name=behavior_spec.name,
+                rejection_reason=rejection_reason,
+                cost_estimate=dict(behavior_spec.cost_policy),
+                policy_trace={
+                    **evaluation.trace,
+                    "routing_trace": routing_trace,
+                },
+                proposal_snapshot=asdict(proposal),
+                behavior_snapshot=asdict(behavior_spec),
+            )
 
         score = evaluation.resolved_score
         return ActionDecision(
@@ -252,10 +377,14 @@ class ExecutionPlanner:
             behavior_name=behavior_spec.name,
             selected_channel_id=selected_channel_id,
             selected_op=selected_op,
+            normalized_intensity=normalized_intensity,
             execution_priority=self._score_to_priority(score),
-            validated_params=self._validate_params(proposal.parameters, behavior_spec),
+            validated_params=self._validate_params({**proposal.parameters, **proposal.op_params}, behavior_spec),
             cost_estimate=dict(behavior_spec.cost_policy),
-            policy_trace=evaluation.trace,
+            policy_trace={
+                **evaluation.trace,
+                "routing_trace": routing_trace,
+            },
             selected_modality=evaluation.allowed_modalities[0] if evaluation.allowed_modalities else "",
             proposal_snapshot=asdict(proposal),
             behavior_snapshot=asdict(behavior_spec),
@@ -315,11 +444,38 @@ class ExecutionPlanner:
     @staticmethod
     def _select_output_op(descriptor: Optional[ChannelDescriptor]) -> str:
         if descriptor is None:
-            return "send"
+            return ""
         for op in descriptor.supported_ops:
             if op.direction in {"output", "bidirectional"}:
                 return op.name
-        return "send"
+        return ""
+
+    @staticmethod
+    def _resolve_output_op_descriptor(
+        descriptor: Optional[ChannelDescriptor],
+        op_name: str,
+    ) -> Optional[ChannelOpDescriptor]:
+        if descriptor is None or not op_name:
+            return None
+        for op in descriptor.supported_ops:
+            if op.name == op_name and op.direction in {"output", "bidirectional"}:
+                return op
+        return None
+
+    @staticmethod
+    def _missing_required_op_inputs(
+        op_descriptor: Optional[ChannelOpDescriptor],
+        provided_params: Dict[str, object],
+    ) -> List[str]:
+        if op_descriptor is None:
+            return []
+        missing: List[str] = []
+        for name, schema in dict(op_descriptor.input_schema or {}).items():
+            if not isinstance(schema, dict) or not bool(schema.get("required", False)):
+                continue
+            if name not in provided_params or provided_params.get(name) in {None, ""}:
+                missing.append(name)
+        return missing
 
     @staticmethod
     def _validate_params(parameters: Dict[str, object], behavior_spec: BehaviorSpec) -> Dict[str, object]:
