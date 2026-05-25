@@ -50,6 +50,19 @@
 4. T08-4
 5. T08-5
 
+当前收口子任务边界：
+
+1. 把 thought gate 从 `InternalThoughtTrigger` 的隐含一部分收口为正式 `ThoughtGateResult` 契约。
+2. 显式把 `sensitization_factor` 与 temporal dynamics 纳入 gate score 和 trace。
+3. 保持现有主循环与 passive pipeline 的外部行为稳定，只修正 R08 owner 和 observability 缺口。
+4. 用窄测试先验证 gate owner，再用相邻集成测试验证主循环消费路径。
+
+当前子任务状态：已完成。
+
+1. `ThoughtGateResult` 风格 payload 已进入 `HeliosState.last_thought_gate_result`。
+2. 新增测试已覆盖 selected stimuli 摘要、sensitization trace、temporal dynamics trace，以及这些信号对 gate score 的影响。
+3. `channel_gateway` 的 message-dict ingress 边界已被清理，stimulus contract 现已作为更直接的主循环输入 owner 暴露。
+
 ## 5. Validation Plan
 
 1. 首轮验证 stimulus envelope normalization。
@@ -63,3 +76,9 @@
 2. thought gate 成为正式 owner。
 3. `habituation.py` 已从单纯 trigger 缩放器升级为 gate signal 参与者。
 4. 无用旧输入边界已清理。
+
+当前 requirement 状态：已完成。
+
+1. `ThoughtGateResult` 与 `current_stimuli` 已成为 R08 的正式读取面。
+2. `channel_gateway` 不再要求 message payload 夹带 normalized stimulus，旧输入边界已被清理。
+3. 最终收口验证已覆盖 event source registry、channel gateway、thinking integration、tick wiring 与 prompt contract 相邻面，共 71 项通过。

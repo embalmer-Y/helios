@@ -217,16 +217,6 @@ class PreconsciousPolicy:
             return []
 
         proposals: list[ActionProposal] = []
-        external_proposal = self._build_external_thought_proposal(
-            state=state,
-            thought=thought,
-            signals=signals,
-            assessment=assessment,
-            projection=projection,
-        )
-        if external_proposal is not None:
-            proposals.append(external_proposal)
-
         for index, behavior_name in enumerate(assessment.candidate_behaviors):
             final_score = _clamp(assessment.score - index * 0.06, 0.0, self._score_cap)
             proposals.append(
@@ -265,82 +255,6 @@ class PreconsciousPolicy:
         self._update_observability_snapshot(signals=signals, assessment=assessment, proposals=proposals)
         return proposals
 
-    def _build_external_thought_proposal(self, *, state, thought, signals: PreconsciousSignals, assessment: PreconsciousAssessment, projection) -> ActionProposal | None:
-        if not signals.thought_generated:
-            return None
-        target_user_id = signals.strongest_stimulus_user_id
-        channel_id = signals.strongest_stimulus_channel
-        if not target_user_id or not channel_id:
-            return None
-
-        thought_type_bonus = 0.12 if signals.thought_type in {"rumination", "episodic_fragment", "future_projection", "self_question"} else 0.0
-        social_pressure = _clamp(
-            signals.strongest_stimulus_intensity * 0.38
-            + projection.social_initiation_bias * 0.34
-            + float(getattr(state, "continuation_pressure", 0.0) or 0.0) * 0.16
-            + thought_type_bonus,
-            0.0,
-            1.0,
-        )
-        if social_pressure < max(self._activation_threshold + 0.02, 0.34):
-            return None
-
-        final_score = _clamp(
-            assessment.score + signals.strongest_stimulus_intensity * 0.10 + projection.social_initiation_bias * 0.10,
-            0.0,
-            self._score_cap,
-        )
-        thought_origin_id = self._build_thought_origin_id(state=state, thought=thought, signals=signals)
-        return ActionProposal(
-            proposal_id=f"proposal::preconscious::{uuid4().hex}",
-            source_type="preconscious",
-            source_module="preconscious_policy",
-            origin_type="thought",
-            origin_id=thought_origin_id,
-            intent_type="thought_action",
-            behavior_name="speak_share",
-            op_name="send",
-            op_params={
-                "target_user_id": target_user_id,
-                "outbound_metadata": {
-                    "origin_type": "thought",
-                    "origin_id": thought_origin_id,
-                    "thought_type": signals.thought_type,
-                },
-            },
-            outbound_intensity=social_pressure,
-            reason_summary="thought-origin external expression candidate surfaced from current stimulus and internal salience",
-            score_bundle={**assessment.feature_bundle, "social_pressure": social_pressure, "final": final_score},
-            constraints={
-                "requires_deliberate_review": True,
-                "requires_target_user": True,
-            },
-            suggested_modalities=["text"],
-            candidate_channels=[channel_id],
-            parameters={
-                "tick": int(getattr(state, "tick", 0)),
-                "target_user_id": target_user_id,
-                "preconscious_context": {
-                    "thought_type": signals.thought_type,
-                    "thought_generated": signals.thought_generated,
-                },
-            },
-            provenance={
-                "thought_type": signals.thought_type,
-                "thought_content": signals.thought_content,
-                "strongest_stimulus_channel": channel_id,
-                "strongest_stimulus_user_id": target_user_id,
-                "rationale": [
-                    *assessment.rationale,
-                    f"social_pressure={social_pressure:.2f}",
-                    f"stimulus_channel={channel_id}",
-                ],
-                "personality_projection": projection.to_dict(),
-            },
-            created_at_tick=int(getattr(state, "tick", 0)),
-            created_at_ts=float(getattr(state, "timestamp", time.time())),
-        )
-
     @staticmethod
     def _build_thought_origin_id(*, state, thought, signals: PreconsciousSignals) -> str:
         timestamp = getattr(thought, "timestamp", getattr(state, "timestamp", time.time()))
@@ -350,6 +264,7 @@ class PreconsciousPolicy:
         self._last_observability_snapshot = {
             **self._build_empty_snapshot(),
             "source_type": "preconscious",
+            "owner_role": "secondary_helper",
             "active": False,
             "skip_reason": reason,
             "signals": {
@@ -433,6 +348,7 @@ class PreconsciousPolicy:
         self._last_observability_snapshot = {
             **self._build_empty_snapshot(),
             "source_type": "preconscious",
+            "owner_role": "secondary_helper",
             "active": True,
             "skip_reason": "",
             "signals": {
@@ -464,6 +380,7 @@ class PreconsciousPolicy:
                 {
                     "proposal_id": proposal.proposal_id,
                     "behavior_name": proposal.behavior_name,
+                    "intent_type": proposal.intent_type,
                     "final_score": float(proposal.score_bundle.get("final", 0.0)),
                     "constraints": dict(proposal.constraints),
                 }

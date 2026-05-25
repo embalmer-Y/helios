@@ -13,6 +13,13 @@
 3. `cognitive_impact`、SEC appraisal、drive、temporal gate 和 phi 指标没有统一合流点。
 4. 主循环目前缺乏独立的 thought gate owner。
 
+上述 gap 已在本轮 R08 收口中完成实现，保留本节是为了说明设计出发点。当前运行时状态如下：
+
+1. `ChannelGateway` 已把 normalized stimulus 作为独立 source contract 暴露给主循环，而不是继续要求 message dict 夹带 stimulus payload。
+2. `ThinkingEngineIntegration` 已把 thought gating 正式化为 `ThoughtGateResult` 风格的结构化 payload。
+3. `habituation`、`sensitization`、temporal dynamics、drive、ICRI、resource pressure 与 continuation pressure 已在同一 gate owner 内统一合流。
+4. `HeliosState.last_thought_gate_result` 与 `current_stimuli` 已可作为 prompt、observability 与测试的正式读取面。
+
 ## 3. Target Architecture
 
 目标结构：
@@ -76,6 +83,15 @@ selected_stimuli
 3. 将 `habituation.py` 接入新 gate owner。
 4. 将 gate owner 接入主循环并取代零散阈值判断。
 
+本轮 R08 收口边界：
+
+1. 不再扩展更大的 retrieval / prompt 依赖面，只收 stimulus 与 gate owner 本身。
+2. 正式引入 `ThoughtGateResult` 作为 gate owner 契约，而不是继续把 gate 输出混在 internal-thought trigger 的临时结构里。
+3. gate score 必须显式消费 `sensitization_factor` 与 temporal dynamics，而不只是把 habituation 预先乘进 `stimulus_intensity` 或仅保留文本 summary。
+4. `helios_main.py` / `HeliosState` / tests 必须能直接读取结构化 gate trace，至少包括 `should_think`、`gate_score`、`dominant_reason`、`blocked_reasons`、`contributing_signals` 与 selected stimuli 摘要。
+
+该收口边界现已完成，包括最后的 ingress owner 清理：`channel_gateway` 不再通过 message payload 携带 normalized stimulus，而是通过独立 stimulus contract 供主循环消费。
+
 ## 7. Failure Modes and Constraints
 
 1. 若 stimulus 无法完整解析，系统必须允许降级为最小 envelope，但必须保留 source 和 intensity 字段。
@@ -98,3 +114,16 @@ selected_stimuli
 2. 单元测试验证 low-intensity stimulus 被 gate 拒绝。
 3. 单元测试验证 habituation / sensitization 会影响 gate score。
 4. 集成测试验证无外部输入但 continuation pressure 存在时仍可进入思考。
+
+本轮 R08 最终收口结果：
+
+1. `ThinkingEngineIntegration` 已把 gate trace 正式化为 `ThoughtGateResult` 风格的结构化 payload，而不是只把 `InternalThoughtTrigger` 临时投影成零散 dict。
+2. gate score 现已显式记录并消费 `sensitization_factor` 与 temporal dynamics 信号。
+3. `HeliosState.last_thought_gate_result` 现可直接暴露 `selected_stimuli` 摘要与完整 contributing signals，供主循环 observability 与测试读取。
+4. `ChannelGateway` 现已把 normalized stimuli 作为独立 source contract 暴露给主循环，旧的 message-dict ingress 边界已被清理。
+
+本轮验证结果：
+
+1. focused gate tests：`tests/test_thinking_integration_pbt.py` -> 16 passed。
+2. adjacent R08 slice：`tests/test_channel_gateway.py`、`tests/test_thinking_integration_pbt.py`、`tests/test_tick_response_wiring.py`、`tests/test_prompt_contract.py` -> 57 passed。
+3. final closeout regression：额外纳入 `tests/test_event_source_registry.py` 后，R08 相邻回归共 71 项通过，说明 stimulus ingress owner、gate owner、主循环 observability 与 prompt 指标消费未发生回退。

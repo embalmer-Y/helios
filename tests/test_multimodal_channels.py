@@ -48,6 +48,78 @@ def test_tts_channel_send_uses_injected_synth_and_player():
     assert played == ["audio:hello"]
 
 
+def test_tts_channel_send_passes_intensity_and_metadata_when_supported():
+    captured = {}
+
+    def synthesize(*, text, intensity=0.0, metadata=None, voice=""):
+        captured["text"] = text
+        captured["intensity"] = intensity
+        captured["metadata"] = dict(metadata or {})
+        captured["voice"] = voice
+        return f"audio:{text}:{intensity:.2f}"
+
+    played = []
+    channel = tts_mod.TTSChannel(
+        enabled=True,
+        force_available=True,
+        synthesize_func=synthesize,
+        play_func=lambda audio: played.append(audio) or True,
+    )
+    channel.connect()
+
+    channel_message = tts_mod.ChannelMessage(
+        channel_id="tts",
+        user_id="speaker",
+        text="hello",
+        timestamp=time.time(),
+        metadata={"normalized_intensity": 0.72, "outbound_intensity": 0.72},
+        direction="outbound",
+    )
+
+    ok = channel.send(channel_message)
+
+    assert ok is True
+    assert captured["text"] == "hello!"
+    assert captured["intensity"] == 0.72
+    assert captured["metadata"]["outbound_intensity"] == 0.72
+    assert captured["metadata"]["expression_profile"]["tone"] == "direct"
+    assert channel_message.metadata["rendered_text"] == "hello!"
+    assert played == ["audio:hello!:0.72"]
+
+
+def test_tts_channel_softens_text_when_outbound_intensity_is_low():
+    captured = {}
+
+    def synthesize(*, text, intensity=0.0, metadata=None, voice=""):
+        captured["text"] = text
+        captured["intensity"] = intensity
+        captured["metadata"] = dict(metadata or {})
+        return f"audio:{text}:{intensity:.2f}"
+
+    channel = tts_mod.TTSChannel(
+        enabled=True,
+        force_available=True,
+        synthesize_func=synthesize,
+        play_func=lambda _audio: True,
+    )
+    channel.connect()
+
+    ok = channel.send(
+        tts_mod.ChannelMessage(
+            channel_id="tts",
+            user_id="speaker",
+            text="hello!!!",
+            timestamp=time.time(),
+            metadata={"outbound_intensity": 0.18},
+            direction="outbound",
+        )
+    )
+
+    assert ok is True
+    assert captured["text"] == "hello."
+    assert captured["metadata"]["expression_profile"]["tone"] == "measured"
+
+
 def test_stt_channel_poll_returns_utterance_messages():
     channel = stt_mod.STTChannel(enabled=True, force_available=True)
     channel.connect()

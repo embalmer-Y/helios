@@ -1,67 +1,54 @@
 # Requirement 11 - Memory Tiering and Directed Retrieval
 
-## 1. Task Breakdown
+## 0. Execution Status
 
-### T11-1 定义四层公开语义
-1. 明确 short-term / mid-term / long-term / autobiographical 边界。
-2. 绑定到现有实现层或新实现层。
-3. 补充基本文档与测试。
+- Status: validated
+- Review result: T11-1 到 T11-4 已全部完成。
+- Runtime closure:
+	- `directed_retrieval` 已导出 query plan、selection trace、SEC trace 和 tier snapshots
+	- `memory_handoff` 已进入 runtime state，并参与下一轮 retrieval plan
+	- retrieval observability 与 four-tier public semantics 已闭合
 
-### T11-2 定义 directed retrieval contract
-1. 新增 `RetrievalQueryPlan`。
-2. 新增 `DirectedMemoryBundle`。
-3. 明确 recall intent 输入。
+## 1. Closeout Tasks
 
-### T11-3 实现 retrieval SEC
-1. 增加候选评分/筛选结构。
-2. 实现规则式 fallback。
-3. 补充 observability。
+### T11-1 Tighten SEC observability export
 
-### T11-4 接入 thought loop
-1. 在 thought loop 前运行 directed retrieval。
-2. 让 `thinking_integration` 消费新 bundle。
-3. 移除旧 reply-oriented memory owner。
+1. 为 `RetrievalSelectionTrace` 和 `RetrievalSECResult` 增加结构化序列化 helper。
+2. 为 `DirectedMemoryBundle` 增加 observability payload helper。
+3. `helios_main.py` 导出完整 `retrieval_sec_trace`，不再只导出 count。
 
-### T11-5 清理旧命名与回归
-1. 清理无用旧接口。
-2. 更新测试到新公开语义。
-3. 运行 memory + thinking 窄回归。
+### T11-2 Formalize memory handoff boundary
 
-## 2. Dependencies
+1. 为 thought result 增加 `memory_handoff` 结构化字段。
+2. 让下一轮 retrieval plan 显式消费 `memory_handoff`，而不是只吃启发式 recall text。
+3. 在 runtime state 中暴露 handoff 摘要，便于调试和验收。
 
-1. 依赖 R07 的 thought owner。
-2. 依赖 R08 的 stimulus contract。
-3. 与 R12 prompt contract 强耦合。
+### T11-3 Tighten state boundary
 
-## 3. Files and Modules
+1. `get_state()["directed_retrieval"]` 必须直接暴露 query plan 摘要、selection trace、SEC trace。
+2. 保留 count 字段作为汇总视图，但不再替代结构化 trace。
 
-1. `memory/memory_system.py`
-2. `memory/retrieval.py`
-3. `memory/autobiographical.py`
-4. `memory/backend.py`
-5. `memory/sqlite_backend.py`
-6. `helios_main.py`
-7. `cognition/thinking_integration.py`
-8. `tests/`
+### T11-4 Validation
 
-## 4. Implementation Order
+1. focused tests 验证 structured SEC trace 仍在 memory contract 中成立。
+2. focused tests 验证系统级 `get_state()` 暴露 structured retrieval trace。
+3. focused tests 验证上一轮 thought 导出的 `memory_handoff` 已进入下一轮 retrieval plan。
 
-1. T11-1
-2. T11-2
-3. T11-3
-4. T11-4
-5. T11-5
+## 2. Implementation Boundary
 
-## 5. Validation Plan
+1. 本轮不重写 retrieval ranking 策略。
+2. 本轮不改变四层公开语义。
+3. 本轮补齐 runtime observability 与 memory handoff 边界。
 
-1. 首轮验证四层语义 facade。
-2. 第二轮验证 directed retrieval contract。
-3. 第三轮验证 retrieval SEC 与 fallback。
-4. 第四轮验证 memory + thinking 集成。
+## 3. Completion Criteria
 
-## 6. Completion Criteria
+1. retrieval SEC 的结构化结果可从 runtime state 直接读取。
+2. public tiers、selection trace、SEC trace 在同一状态面上闭合。
+3. `memory_handoff` 不再只是 thought 文本截断副产物，而是正式的下一轮 retrieval 输入边界。
 
-1. 新四层记忆模型已成为公开语义。
-2. directed retrieval 已成为 thought loop 前置步骤。
-3. recall intent 已接入 retrieval。
-4. 无用旧 memory owner 路径已清理。
+## 4. Closeout Review
+
+1. T11-1 已完成：`RetrievalSelectionTrace` / `RetrievalSECResult` / `DirectedMemoryBundle` 已具备结构化导出。
+2. T11-2 已完成：thought result 已产出 `memory_handoff`，下一轮 retrieval plan 已显式消费 handoff。
+3. T11-3 已完成：`get_state()["directed_retrieval"]` 已暴露 query/selection/SEC 结构化 trace。
+4. T11-4 已完成：focused tests 与最终全量回归均覆盖并通过。

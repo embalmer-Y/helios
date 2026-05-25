@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from helios_io.icri_temperature import ICRITemperatureMapper
+from helios_io.llm_debug import log_llm_request, log_llm_response
 from helios_io.prompt_contract import PromptContractBuilder, PromptContractPlan
 
 log = logging.getLogger("helios.helios_io.llm.speech")
@@ -178,6 +179,19 @@ class LLMSpeechGenerator:
             self._trim_for_log(system_prompt, 360),
             self._trim_for_log(user_prompt, 900),
         )
+        log_llm_request(
+            log,
+            path="active_speech",
+            model=self.model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=llm_temperature,
+            metadata={
+                "action_type": ctx.action_type,
+                "dominant_emotion": ctx.dominant_emotion,
+                "icri": round(float(ctx.icri), 3),
+            },
+        )
 
         try:
             response = self.client.chat.completions.create(
@@ -191,13 +205,14 @@ class LLMSpeechGenerator:
                 presence_penalty=0.3,  # 减少重复
             )
 
-            text = response.choices[0].message.content or ""
-            text = self._clean_output(text)
-
-            log.debug(
-                "Speech LLM raw/clean: raw=%r clean=%r",
-                self._trim_for_log(response.choices[0].message.content or "", 400),
-                self._trim_for_log(text, 220),
+            raw_text = response.choices[0].message.content or ""
+            text = self._clean_output(raw_text)
+            log_llm_response(
+                log,
+                path="active_speech",
+                raw_text=raw_text,
+                clean_text=text,
+                metadata={"action_type": ctx.action_type},
             )
 
             # 更新记忆

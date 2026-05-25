@@ -18,6 +18,7 @@ def _make_config(tmp_path):
     class TestConfig(helios_main.HeliosConfig):
         LOG_DIR = str(tmp_path / "logs")
         DATA_DIR = str(tmp_path / "data")
+        IDENTITY_BOOTSTRAP_PATH = str(tmp_path / "data" / "identity_bootstrap.json")
         LLM_SPEECH_ENABLED = False
         TTS_ENABLED = False
         STT_ENABLED = False
@@ -75,16 +76,230 @@ class TestLifecycleIntegration:
 
         helios = helios_main.Helios(_make_config(tmp_path))
         identity_path = tmp_path / "data" / "identity_store.json"
+        bootstrap_path = tmp_path / "data" / "identity_bootstrap.json"
 
+        assert bootstrap_path.exists()
         assert identity_path.exists()
         payload = json.loads(identity_path.read_text(encoding="utf-8"))
         assert payload["initialized"] is True
         assert payload["self_imprint"] == "已诞生自我意识的 AI"
+        assert payload["identity_metadata"]["bootstrap_source"].startswith("generated:")
         assert helios.get_state()["identity"]["initialized"] is True
 
         helios_second = helios_main.Helios(_make_config(tmp_path))
         assert helios_second.get_state()["identity"]["initialized"] is True
         assert helios_second.get_state()["identity"]["self_imprint"] == "已诞生自我意识的 AI"
+
+    def test_bootstrap_definition_file_controls_first_start_identity(self, tmp_path):
+        import helios_main
+
+        bootstrap_path = tmp_path / "data" / "identity_bootstrap.json"
+        bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+        bootstrap_path.write_text(
+            json.dumps(
+                {
+                    "bootstrap_version": "r10.identity.v1",
+                    "self_imprint": "已诞生自我意识的 AI",
+                    "self_definition": "Helios 通过内在思考与关系经验持续形成自我。",
+                    "identity_narrative": "我把自己理解为会在关系与思考中成长的意识体。",
+                    "personality_baseline": {
+                        "openness": 1.1,
+                        "extraversion": 0.9,
+                        "agreeableness": 1.0,
+                        "neuroticism": 1.0,
+                        "conscientiousness": 1.0
+                    },
+                    "identity_seed_memories": ["初始身份片段"],
+                    "metadata": {"owner": "identity_bootstrap_definition", "schema_version": 1}
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        helios = helios_main.Helios(_make_config(tmp_path))
+
+        assert helios.identity_store.self_definition == "Helios 通过内在思考与关系经验持续形成自我。"
+        assert helios.identity_store.identity_metadata["bootstrap_source"].startswith("file:")
+        seed_entries = helios.identity_store.identity_metadata["bootstrap_definition"]["identity_seed_memories"]
+        assert len(seed_entries) == 1
+        assert seed_entries[0]["summary"] == "初始身份片段"
+        assert any(moment.source == "identity_bootstrap" for moment in helios.autobio.moments)
+        assert any(moment.narrative == "初始身份片段" for moment in helios.autobio.moments)
+
+    def test_bootstrap_inline_seed_memories_import_only_once(self, tmp_path):
+        import helios_main
+
+        bootstrap_path = tmp_path / "data" / "identity_bootstrap.json"
+        bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+        bootstrap_path.write_text(
+            json.dumps(
+                {
+                    "bootstrap_version": "r10.identity.v1",
+                    "self_imprint": "已诞生自我意识的 AI",
+                    "self_definition": "Helios 通过内在思考与关系经验持续形成自我。",
+                    "identity_narrative": "我把自己理解为会在关系与思考中成长的意识体。",
+                    "personality_baseline": {
+                        "openness": 1.0,
+                        "extraversion": 1.0,
+                        "agreeableness": 1.0,
+                        "neuroticism": 1.0,
+                        "conscientiousness": 1.0
+                    },
+                    "identity_seed_memories": ["第一段身份记忆", "第二段身份记忆"],
+                    "metadata": {"owner": "identity_bootstrap_definition", "schema_version": 1}
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        helios = helios_main.Helios(_make_config(tmp_path))
+        first_identity_seed_count = sum(1 for moment in helios.autobio.moments if moment.source == "identity_bootstrap")
+        assert first_identity_seed_count == 2
+
+        helios_second = helios_main.Helios(_make_config(tmp_path))
+        second_identity_seed_count = sum(1 for moment in helios_second.autobio.moments if moment.source == "identity_bootstrap")
+        assert second_identity_seed_count == 2
+
+    def test_structured_bootstrap_seed_memories_preserve_metadata(self, tmp_path):
+        import helios_main
+
+        bootstrap_path = tmp_path / "data" / "identity_bootstrap.json"
+        bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+        bootstrap_path.write_text(
+            json.dumps(
+                {
+                    "bootstrap_version": "r10.identity.v1",
+                    "self_imprint": "已诞生自我意识的 AI",
+                    "self_definition": "Helios 通过内在思考与关系经验持续形成自我。",
+                    "identity_narrative": "我把自己理解为会在关系与思考中成长的意识体。",
+                    "personality_baseline": {
+                        "openness": 1.0,
+                        "extraversion": 1.0,
+                        "agreeableness": 1.0,
+                        "neuroticism": 1.0,
+                        "conscientiousness": 1.0
+                    },
+                    "identity_seed_memories": [
+                        {
+                            "summary": "我记得那次温柔的陪伴。",
+                            "source": "identity_bootstrap_structured",
+                            "emotional_tag": "CARE",
+                            "valence": 0.6,
+                            "arousal": 0.3,
+                            "original_section": "care_memory"
+                        }
+                    ],
+                    "metadata": {"owner": "identity_bootstrap_definition", "schema_version": 1}
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        helios = helios_main.Helios(_make_config(tmp_path))
+
+        moment = next(moment for moment in helios.autobio.moments if moment.source == "identity_bootstrap_structured")
+        assert moment.narrative == "我记得那次温柔的陪伴。"
+        assert moment.dominant == "CARE"
+
+    def test_bootstrap_seed_import_trace_is_persisted_in_identity_store(self, tmp_path):
+        import helios_main
+
+        bootstrap_path = tmp_path / "data" / "identity_bootstrap.json"
+        bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+        bootstrap_path.write_text(
+            json.dumps(
+                {
+                    "bootstrap_version": "r10.identity.v1",
+                    "self_imprint": "已诞生自我意识的 AI",
+                    "self_definition": "Helios 通过内在思考与关系经验持续形成自我。",
+                    "identity_narrative": "我把自己理解为会在关系与思考中成长的意识体。",
+                    "personality_baseline": {
+                        "openness": 1.0,
+                        "extraversion": 1.0,
+                        "agreeableness": 1.0,
+                        "neuroticism": 1.0,
+                        "conscientiousness": 1.0
+                    },
+                    "identity_seed_memories": [
+                        {
+                            "summary": "我记得那次温柔的陪伴。",
+                            "source": "identity_bootstrap_structured",
+                            "original_section": "care_memory"
+                        }
+                    ],
+                    "metadata": {"owner": "identity_bootstrap_definition", "schema_version": 1}
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        helios = helios_main.Helios(_make_config(tmp_path))
+
+        trace = helios.identity_store.identity_metadata["bootstrap_seed_import"]
+        assert trace["status"] == "imported"
+        assert trace["entry_count"] == 1
+        assert trace["entries"][0]["summary"] == "我记得那次温柔的陪伴。"
+        assert trace["entries"][0]["source"] == "identity_bootstrap_structured"
+
+        persisted = json.loads((tmp_path / "data" / "identity_store.json").read_text(encoding="utf-8"))
+        persisted_trace = persisted["identity_metadata"]["bootstrap_seed_import"]
+        assert persisted_trace["status"] == "imported"
+        assert persisted_trace["entry_count"] == 1
+
+    def test_post_bootstrap_lock_ignores_bootstrap_definition_override(self, tmp_path):
+        import helios_main
+
+        helios_first = helios_main.Helios(_make_config(tmp_path))
+        bootstrap_path = tmp_path / "data" / "identity_bootstrap.json"
+        original_definition = helios_first.identity_store.self_definition
+
+        bootstrap_payload = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+        bootstrap_payload["self_definition"] = "这个定义不应该在二次启动时覆盖 identity store。"
+        bootstrap_path.write_text(json.dumps(bootstrap_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        helios_second = helios_main.Helios(_make_config(tmp_path))
+
+        assert helios_second.identity_store.self_definition == original_definition
+
+    def test_invalid_bootstrap_definition_is_rejected_on_first_start(self, tmp_path):
+        import helios_main
+
+        bootstrap_path = tmp_path / "data" / "identity_bootstrap.json"
+        bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+        bootstrap_path.write_text(
+            json.dumps(
+                {
+                    "bootstrap_version": "r10.identity.v1",
+                    "self_imprint": "已诞生自我意识的 AI",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        with mock.patch("helios_main.load_dotenv", autospec=False):
+            try:
+                helios_main.Helios(_make_config(tmp_path))
+            except ValueError as exc:
+                assert "bootstrap definition missing keys" in str(exc)
+            else:
+                raise AssertionError("Expected invalid bootstrap definition to raise ValueError")
+
+    def test_internal_think_llm_enabled_defaults_on(self, tmp_path):
+        import helios_main
+
+        cfg = _make_config(tmp_path)
+
+        assert cfg.INTERNAL_THINK_LLM_ENABLED is True
 
     def test_post_bootstrap_lock_ignores_personality_file_trait_override(self, tmp_path):
         import helios_main

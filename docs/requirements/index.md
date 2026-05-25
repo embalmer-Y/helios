@@ -31,6 +31,8 @@ requirement 编写规范见：
 4. identity bootstrap and self-revision governance
 5. memory tiering and directed retrieval
 6. prompt metric and channel context contract
+7. terminal CLI channel
+8. CLI brain-like evaluation
 
 如模块审查矩阵确认后出现额外不可合并的 concern，应新增独立 package，而不是混入现有 package。
 
@@ -40,10 +42,12 @@ requirement 编写规范见：
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | R07 | Consciousness-First LLM Loop | P0 | validated | 将 LLM 从 reply-first 路径收回到主意识循环，并定义思考触发、连续思考和主循环 owner。 | [requirement](07-consciousness-first-llm-loop/requirement.md) | [design](07-consciousness-first-llm-loop/design.md) | [task](07-consciousness-first-llm-loop/task.md) |
 | R08 | Stimulus Weighting and Thought Gating | P0 | validated | 将来源、触发条件、输入强度、新异性与门控整合为统一刺激契约。 | [requirement](08-stimulus-weighting-and-thought-gating/requirement.md) | [design](08-stimulus-weighting-and-thought-gating/design.md) | [task](08-stimulus-weighting-and-thought-gating/task.md) |
-| R09 | Thought-to-Action Op Bridge | P0 | validated | 允许思考结果提议结构化 op 和参数，并通过 planner/executor 受控外化。 | [requirement](09-thought-to-action-op-bridge/requirement.md) | [design](09-thought-to-action-op-bridge/design.md) | [task](09-thought-to-action-op-bridge/task.md) |
+| R09 | Thought-to-Action Op Bridge | P0 | in-progress | 允许思考结果提议结构化 op 和参数，并通过 planner/executor 受控外化。 | [requirement](09-thought-to-action-op-bridge/requirement.md) | [design](09-thought-to-action-op-bridge/design.md) | [task](09-thought-to-action-op-bridge/task.md) |
 | R10 | Identity Bootstrap and Self-Revision | P0 | validated | 定义首启身份注入、用户锁定、内部自我修订治理、版本历史与审计。 | [requirement](10-identity-bootstrap-and-self-revision/requirement.md) | [design](10-identity-bootstrap-and-self-revision/design.md) | [task](10-identity-bootstrap-and-self-revision/task.md) |
 | R11 | Memory Tiering and Directed Retrieval | P0 | validated | 定义短期/中期/长期/自传记忆，以及思考前的定向检索与 recall intent。 | [requirement](11-memory-tiering-and-directed-retrieval/requirement.md) | [design](11-memory-tiering-and-directed-retrieval/design.md) | [task](11-memory-tiering-and-directed-retrieval/task.md) |
 | R12 | Prompt Metric and Channel Context Contract | P1 | validated | 统一 prompt 中的指标解释、上下限、channel 语义、ops 与身份边界。 | [requirement](12-prompt-metric-and-channel-context-contract/requirement.md) | [design](12-prompt-metric-and-channel-context-contract/design.md) | [task](12-prompt-metric-and-channel-context-contract/task.md) |
+| R13 | Terminal CLI Channel | P1 | validated | 定义正式终端输入输出 channel、本地 session 边界和最小 CLI 管理命令，而不绕过现有 channel/tick/action owner。 | [requirement](13-terminal-cli-channel/requirement.md) | [design](13-terminal-cli-channel/design.md) | [task](13-terminal-cli-channel/task.md) |
+| R14 | CLI Brain-Like Evaluation | P1 | in-progress | 定义 10 分钟 mixed-mode CLI 交互评估、分块评分、structured report 与分析 artifact，而不绕过现有 CLI/channel/tick/action owner。 | [requirement](14-cli-brain-like-evaluation/requirement.md) | [design](14-cli-brain-like-evaluation/design.md) | [task](14-cli-brain-like-evaluation/task.md) |
 
 ## 5. 依赖关系
 
@@ -53,6 +57,8 @@ requirement 编写规范见：
 4. R10 与 R07 强关联，因为“我是谁”的思考和自我修订必须从内部 thought loop 发出。
 5. R11 依赖 R07 与 R08，因为 directed retrieval 服务于思考前置阶段。
 6. R12 依赖 R07、R08、R09、R10、R11，因为 prompt contract 需要消费它们定义的正式指标和边界。
+7. R13 依赖 R08、R09、R12，因为 terminal channel 需要复用正式 stimulus ingress、outbound action execution 与 channel/op contract 语义。
+8. R14 依赖 R08、R09、R12、R13，因为类脑评估需要复用正式 stimulus/channel provenance、thought-to-action 路径、prompt/channel contract 和 CLI owner。
 
 ## 6. 建议实施顺序
 
@@ -62,6 +68,8 @@ requirement 编写规范见：
 4. R09 Thought-to-Action Op Bridge
 5. R10 Identity Bootstrap and Self-Revision
 6. R12 Prompt Metric and Channel Context Contract
+7. R13 Terminal CLI Channel
+8. R14 CLI Brain-Like Evaluation
 
 ## 7. 状态规则
 
@@ -88,4 +96,6 @@ requirement 编写规范见：
 
 1. 基于模块审查矩阵继续完成分组确认。
 2. 审阅并细化 `R07-R12` requirement packages。
-3. 进入代码实施并持续保持 requirement / design / task 对齐。
+3. 在 `R13` validated package 上继续做体验增强与回归维护。
+4. 推进 `R14` CLI 类脑评估 requirement 与实现收敛。
+5. 持续保持 requirement / design / task 与 runtime truth 对齐。

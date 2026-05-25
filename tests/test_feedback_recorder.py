@@ -29,9 +29,12 @@ def test_feedback_recorder_persists_execution_log(tmp_path):
         normalized_intensity=0.68,
         modality="text",
         provenance={
-            "source_type": "regulation",
+            "source_type": "thought_action_bridge",
             "origin_type": "thought",
             "origin_id": "thought::7::rumination::1000",
+            "owner_path": "thought_action_bridge",
+            "requested_op": "send",
+            "candidate_channels": ["qq"],
             "personality_influence_trace": {
                 "behavior_bias": 0.18,
                 "novelty_bias": 0.62,
@@ -56,6 +59,7 @@ def test_feedback_recorder_persists_execution_log(tmp_path):
     assert rows[0].feedback_details["policy_trace"]["resolved_score"] == 0.7
     assert rows[0].feedback_details["provenance"]["personality_influence_trace"]["behavior_bias"] == 0.18
     assert rows[0].feedback_details["normalized_intensity"] == 0.68
+    assert rows[0].feedback_details["owner_path"] == "thought_action_bridge"
 
     events = catalog.registry.list_feedback_events(decision_id="decision::1")
     assert len(events) == 1
@@ -64,6 +68,9 @@ def test_feedback_recorder_persists_execution_log(tmp_path):
     assert events[0].payload["provenance"]["personality_influence_trace"]["novelty_bias"] == 0.62
     assert events[0].payload["origin_id"] == "thought::7::rumination::1000"
     assert events[0].payload["normalized_intensity"] == 0.68
+    assert events[0].payload["owner_path"] == "thought_action_bridge"
+    assert events[0].payload["requested_op"] == "send"
+    assert events[0].payload["selected_channel_id"] == "qq"
 
 
 def test_feedback_recorder_persists_user_channel_and_memory_events(tmp_path):
@@ -90,7 +97,16 @@ def test_feedback_recorder_persists_user_channel_and_memory_events(tmp_path):
         behavior_id="bootstrap.reply_message",
         op_name="send",
         normalized_intensity=0.51,
-        provenance={"origin_type": "thought", "origin_id": "thought::1::self_question::1000"},
+        provenance={
+            "origin_type": "thought",
+            "origin_id": "thought::1::self_question::1000",
+            "owner_path": "thought_action_bridge",
+            "requested_op": "send",
+            "candidate_channels": ["qq"],
+        },
+        original_text="你好。",
+        rendered_text="你好！",
+        expression_profile={"tone": "direct", "compactness": "compact", "applied": True},
         metadata={"user_id": "user1"},
         observed_at_ts=11.0,
     )
@@ -109,6 +125,11 @@ def test_feedback_recorder_persists_user_channel_and_memory_events(tmp_path):
     assert events[1].behavior_id == "bootstrap.reply_message"
     assert events[1].payload["op_name"] == "send"
     assert events[1].payload["origin_id"] == "thought::1::self_question::1000"
+    assert events[1].payload["owner_path"] == "thought_action_bridge"
+    assert events[1].payload["candidate_channels"] == ["qq"]
+    assert events[1].payload["original_text"] == "你好。"
+    assert events[1].payload["rendered_text"] == "你好！"
+    assert events[1].payload["expression_profile"]["tone"] == "direct"
     assert events[2].memory_id == "moment::1"
 
 
@@ -118,25 +139,33 @@ def test_feedback_recorder_persists_policy_rejection_event(tmp_path):
     recorder = FeedbackRecorder(catalog)
 
     recorder.record_policy_rejection(
-        source_path="preconscious",
+        source_path="thought_action_bridge",
         proposal_id="proposal::reject::1",
         decision_id="decision::proposal::reject::1",
         behavior_name="speak_share",
         rejection_reason="execution_scope_constraint",
         op_name="send",
         normalized_intensity=0.74,
-        provenance={"origin_type": "thought", "origin_id": "thought::1::rumination::1000"},
+        provenance={
+            "origin_type": "thought",
+            "origin_id": "thought::1::rumination::1000",
+            "owner_path": "thought_action_bridge",
+            "requested_op": "send",
+            "candidate_channels": ["qq"],
+        },
         payload={"policy_trace": {"execution_scope": "internal"}},
         observed_at_ts=20.0,
     )
 
     events = catalog.registry.list_feedback_events(event_kind="policy_rejection")
     assert len(events) == 1
-    assert events[0].source_path == "preconscious"
+    assert events[0].source_path == "thought_action_bridge"
     assert events[0].payload["rejection_reason"] == "execution_scope_constraint"
     assert events[0].payload["policy_trace"]["execution_scope"] == "internal"
     assert events[0].payload["op_name"] == "send"
     assert events[0].payload["origin_id"] == "thought::1::rumination::1000"
+    assert events[0].payload["owner_path"] == "thought_action_bridge"
+    assert events[0].payload["candidate_channels"] == ["qq"]
 
 
 def test_feedback_recorder_persists_execution_consistency_failure_event(tmp_path):
@@ -145,7 +174,7 @@ def test_feedback_recorder_persists_execution_consistency_failure_event(tmp_path
     recorder = FeedbackRecorder(catalog)
 
     recorder.record_execution_consistency_failure(
-        source_path="regulation",
+        source_path="thought_action_bridge",
         proposal_id="proposal::consistency::1",
         decision_id="decision::consistency::1",
         behavior_id="bootstrap.speak_share",
@@ -153,7 +182,13 @@ def test_feedback_recorder_persists_execution_consistency_failure_event(tmp_path
         channel_id="qq",
         op_name="send",
         normalized_intensity=0.61,
-        provenance={"origin_type": "thought", "origin_id": "thought::2::future_projection::1000"},
+        provenance={
+            "origin_type": "thought",
+            "origin_id": "thought::2::future_projection::1000",
+            "owner_path": "thought_action_bridge",
+            "requested_op": "send",
+            "candidate_channels": ["qq"],
+        },
         payload={"rejection_reason": "channel_status:disconnected"},
         observed_at_ts=22.0,
     )
@@ -165,6 +200,8 @@ def test_feedback_recorder_persists_execution_consistency_failure_event(tmp_path
     assert events[0].payload["rejection_reason"] == "channel_status:disconnected"
     assert events[0].payload["normalized_intensity"] == 0.61
     assert events[0].payload["origin_id"] == "thought::2::future_projection::1000"
+    assert events[0].payload["owner_path"] == "thought_action_bridge"
+    assert events[0].payload["candidate_channels"] == ["qq"]
 
 
 def test_feedback_recorder_persists_identity_revision_event(tmp_path):

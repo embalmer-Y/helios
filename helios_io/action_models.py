@@ -3,7 +3,67 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Mapping
+
+
+def _clamp_unit(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+@dataclass(frozen=True)
+class ThoughtActionProposal:
+    origin_thought_id: str
+    behavior_name: str
+    preferred_op: str
+    scope: Literal["internal", "external"] = "internal"
+    thought_type: str = ""
+    params: Dict[str, Any] = field(default_factory=dict)
+    channel_constraints: Dict[str, Any] = field(default_factory=dict)
+    outbound_intensity: float = 0.0
+    score: float = 0.0
+    reason_trace: List[str] = field(default_factory=list)
+    governance_hints: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "origin_thought_id": self.origin_thought_id,
+            "thought_type": self.thought_type,
+            "scope": self.scope,
+            "behavior_name": self.behavior_name,
+            "preferred_op": self.preferred_op,
+            "params": dict(self.params),
+            "channel_constraints": dict(self.channel_constraints),
+            "outbound_intensity": _clamp_unit(self.outbound_intensity),
+            "score": _clamp_unit(self.score),
+            "reason_trace": [str(item) for item in list(self.reason_trace) if str(item)],
+            "governance_hints": dict(self.governance_hints),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: "ThoughtActionProposal | Mapping[str, Any] | None") -> "ThoughtActionProposal | None":
+        if payload is None:
+            return None
+        if isinstance(payload, cls):
+            return payload
+        data = dict(payload)
+        origin_thought_id = str(data.get("origin_thought_id", "") or "").strip()
+        behavior_name = str(data.get("behavior_name", "") or "").strip()
+        preferred_op = str(data.get("preferred_op", "") or "").strip()
+        if not origin_thought_id or not behavior_name or not preferred_op:
+            return None
+        return cls(
+            origin_thought_id=origin_thought_id,
+            thought_type=str(data.get("thought_type", "") or "").strip(),
+            scope="external" if str(data.get("scope", "internal") or "internal").strip() == "external" else "internal",
+            behavior_name=behavior_name,
+            preferred_op=preferred_op,
+            params=dict(data.get("params", {}) or {}),
+            channel_constraints=dict(data.get("channel_constraints", {}) or {}),
+            outbound_intensity=_clamp_unit(data.get("outbound_intensity", 0.0) or 0.0),
+            score=_clamp_unit(data.get("score", 0.0) or 0.0),
+            reason_trace=[str(item) for item in list(data.get("reason_trace", []) or []) if str(item)],
+            governance_hints=dict(data.get("governance_hints", {}) or {}),
+        )
 
 
 @dataclass

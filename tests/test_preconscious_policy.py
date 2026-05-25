@@ -114,7 +114,7 @@ def test_preconscious_policy_prefers_learning_for_self_question_under_novelty_pr
     assert proposals[0].score_bundle["final"] <= 0.72
 
 
-def test_preconscious_policy_can_emit_thought_origin_external_candidate_from_current_stimulus():
+def test_preconscious_policy_no_longer_emits_external_thought_action_candidate():
     policy = PreconsciousPolicy()
     state = make_state(last_thought_type="rumination")
     state.current_stimuli = [
@@ -137,12 +137,10 @@ def test_preconscious_policy_can_emit_thought_origin_external_candidate_from_cur
 
     proposals = policy.propose(state=state, thought=thought, memory_hits=[])
 
-    outward = next(proposal for proposal in proposals if proposal.behavior_name == "speak_share")
-    assert outward.origin_type == "thought"
-    assert outward.op_name == "send"
-    assert outward.candidate_channels == ["qq"]
-    assert outward.parameters["target_user_id"] == "master"
-    assert 0.0 < outward.outbound_intensity <= 1.0
+    assert proposals
+    assert all(proposal.intent_type == "internal_bias" for proposal in proposals)
+    assert all(proposal.behavior_name != "speak_share" for proposal in proposals)
+    assert all(proposal.candidate_channels == [] for proposal in proposals)
 
 
 def test_preconscious_policy_exposes_observability_snapshot_with_recent_outcomes():

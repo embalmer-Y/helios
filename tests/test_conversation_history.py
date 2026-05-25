@@ -52,9 +52,11 @@ class TestConversationExchange:
             user_message="在吗",
             sec_result={"novelty": 0.2},
             reply="我在呢",
+            original_reply="我在呢。",
             emotional_context={"valence": 0.6, "arousal": 0.3},
         )
         assert ex.reply == "我在呢"
+        assert ex.original_reply == "我在呢。"
         assert ex.emotional_context == {"valence": 0.6, "arousal": 0.3}
 
     def test_mutable_reply_update(self):
@@ -65,8 +67,10 @@ class TestConversationExchange:
             sec_result={},
         )
         ex.reply = "response"
+        ex.original_reply = "response."
         ex.emotional_context = {"dominant_system": "CARE"}
         assert ex.reply == "response"
+        assert ex.original_reply == "response."
         assert ex.emotional_context == {"dominant_system": "CARE"}
 
 
@@ -133,12 +137,17 @@ class TestConversationHistoryManager:
             "user1",
             reply="你好呀！",
             emotional_context={"valence": 0.5, "arousal": 0.2, "dominant_system": "CARE"},
+            original_reply="你好呀。",
+            expression_profile={"tone": "direct"},
         )
         assert result is True
 
         history = mgr.get_history("user1")
         assert len(history) == 1
         assert history[0].reply == "你好呀！"
+        assert history[0].original_reply == "你好呀。"
+        assert history[0].assistant_reply == "你好呀！"
+        assert history[0].expression_profile["tone"] == "direct"
         assert history[0].emotional_context["valence"] == 0.5
         assert history[0].emotional_context["dominant_system"] == "CARE"
 

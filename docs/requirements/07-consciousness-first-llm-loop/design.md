@@ -2,56 +2,85 @@
 
 ## 1. Design Overview
 
-本设计把 Helios 的 LLM owner 从“被动回复生成器 + 内部 thought 支路”重构为“主意识循环中的思考参与者”。目标不是把所有行为都交给 LLM，而是让 LLM 的调用点严格收敛到内部思考阶段，再由思考结果影响后续行动、回想、自我修订或 quiet tick 延续。
+R07 的设计中心是把 Helios 的 thought loop 固化成正式运行时 contract，而不是停留在“能生成 internal thought 文本”的功能层。当前实现采用四层 owner：
 
-## 2. Current State and Gap
+1. `ThoughtGateResult` 负责是否进入 thought。
+2. `ThoughtCycleResult` 负责 thought tick 的正式结果契约。
+3. `ContinuationPressureState` 负责多 tick 的未完成思考压力状态。
+4. `memory_handoff` 负责把本轮 thought 选中的回想线索传给下一轮 retrieval。
 
-当前运行时存在三个问题：
+## 2. Runtime Flow
 
-1. `helios_main.py` 中 passive inbound 处理仍直接进入 SEC + reply generation。
-2. `cognition/thinking_integration.py` 只在满足阈值时生成 internal thought，属于旁路 owner。
-3. thought 结果是否需要继续思考没有正式状态 owner，导致多 tick 思考不成立。
+当前目标流如下：
 
-因此，当前架构是“外部响应优先，内部 thought 补充”，而不是“内部意识流优先，外部行动为结果”。
+1. `helios_main.py` 收集 stimulus 并完成 affect / drive / temporal / neurochem 更新。
+2. 在 thought loop 前运行 directed retrieval。
+3. `ThinkingEngineIntegration.evaluate_trigger()` 生成 `ThoughtGateResult`。
+4. 若 gate 命中，执行 structured thought generation，并返回包含 prose thought 与结构化 decision 的 `ThoughtCycleResult`。
+5. 若未命中或 type cooldown 命中，返回 `ThoughtCycleResult(triggered=False, quiet_tick=...)`。
+6. `ThinkingEngineIntegration` 根据 sufficiency 建立或衰减 `ContinuationPressureState`。
+7. `helios_main.py` 持有结构化 continuation state，并在下一 tick 重新注入 `HeliosState`。
+8. passive reply 只在 no-thought tick 中作为 helper 路径存在。
+9. 即便存在 channel 输入刺激，LLM 的对外表达文本也必须在 thought decision 内以结构化 op 参数出现，不能再由 reply path 二次生成自然语言。
 
-## 3. Target Architecture
+## 3. Data Contracts
 
-目标架构采用以下运行流：
+### 3.1 ThoughtCycleResult
 
-1. 收集并标准化 stimulus。
-2. 更新 affect、drive、temporal、neurochem、memory-ready state。
-3. 基于统一门控判断是否进入 thought loop。
-4. 若进入思考，则拉取定向记忆上下文并执行 thought generation。
-5. thought generation 返回 `ThoughtCycleResult`。
-6. 系统根据 `ThoughtCycleResult` 更新 continuation pressure、recall intent、action candidate、self-revision candidate。
-7. planner / executor 只消费 thought 输出，而不直接消费 reply-first prompt path。
-
-## 4. Data Structures
-
-### 4.1 ThoughtCycleResult
-
-建议新增统一结构：
+正式字段：
 
 ```text
+triggered
+trigger_reason
+thought
 thought_id
-triggered_at_tick
-triggered_by
-content
+thought_type
 sufficiency_level
 continuation_requested
 continuation_reason
 continuation_pressure_delta
+continuation_pressure
+continuation
 recall_intent
+memory_handoff
+llm_used
+fallback_used
+owner_path
 action_proposal
 self_revision_proposal
-observability
-fallback_used
-llm_used
+quiet_tick
 ```
 
-### 4.2 ContinuationPressure
+边界说明：
 
-建议在运行状态中引入：
+1. `thought` 只是内部内容，不是 orchestration owner；正式 owner 是其旁边的结构化 thought decision 字段。
+2. `continuation` 是正式 continuation state 快照；`continuation_pressure` 只是派生标量。
+3. `last_thought_cycle_result` 保存该结构的序列化快照。
+
+### 3.2 Structured thought decision contract
+
+正式字段：
+
+```text
+thought_text
+sufficiency_level
+continuation_requested
+continuation_reason
+recall_intent
+memory_handoff
+action_proposal
+self_revision_proposal
+```
+
+设计规则：
+
+1. LLM 输出必须优先按结构化 decision 解析；自由文本只作为 `thought_text`。
+2. continuation、recall、action、memory handoff 优先来自结构化 decision，而不是完全由后处理启发式推导。
+3. 若 LLM 输出不合格，系统回退到 fallback / heuristic derivation，但必须记录该降级。
+
+### 3.2 ContinuationPressureState
+
+正式字段：
 
 ```text
 active
@@ -62,9 +91,16 @@ expires_at_tick
 carry_count
 ```
 
-### 4.3 QuietTickOutcome
+设计规则：
 
-用于在未触发思考时保留可观测行为：
+1. 新 reflective open loop 建立 continuation 时写入 `origin_thought_id`。
+2. continuation 在 quiet tick 中衰减。
+3. continuation 到期或衰减为零时清空。
+4. `carry_count` 表示该 continuation 被跨 tick 携带的次数。
+
+### 3.4 QuietTickOutcome
+
+正式字段：
 
 ```text
 tick
@@ -74,56 +110,43 @@ stimulus_summary
 memory_summary
 ```
 
-## 5. Module Changes
+## 4. Module Ownership
 
-1. `helios_main.py`
-   - 移除 LLM reply-first 的主路径 owner 地位。
-   - 重排 tick 顺序，使 thought loop 成为唯一 LLM 入口。
+1. `core/helios_state.py`
+   - 持有 `ContinuationPressureState`。
+   - 提供标量镜像与结构化 payload。
 2. `cognition/thinking_integration.py`
-   - 升级为主 thought loop owner。
-   - 输出 `ThoughtCycleResult` 而非自由 thought 对象。
-3. `cognition/thinking.py`
-   - 保留 mode/type 机制，但扩展为 sufficiency / continuation owner 的一部分。
-4. `cognition/phi.py`
-   - 与思考门控和 continuation pressure 紧耦合。
-5. `core/helios_state.py`
-   - 新增 continuation pressure、recall intent、quiet tick outcome 等字段。
-6. `helios_io/response_pipeline.py`
-   - 降级或拆除 direct reply generation owner 地位。
-7. `helios_io/llm/speech.py`
-   - 若保留，则只服务 thought externalization。
+   - 生成 `ThoughtGateResult` 和 `ThoughtCycleResult`。
+   - 建立、衰减、清空 continuation state。
+3. `helios_main.py`
+   - 跨 tick 持有 continuation state。
+   - 通过 `get_state()` 暴露 `continuation`、`thought_cycle`、`internal_thought`、`directed_retrieval` 与 `memory_handoff`。
+4. `helios_io/response_pipeline.py`
+   - 只保留为 no-thought passive helper。
+   - 负责 interaction policy、history 与 observability。
+   - 不再拥有独立 reply LLM prompt 或用户消息直写权。
 
-## 6. Migration Plan
+## 5. Implementation Notes
 
-1. 先定义新的 `ThoughtCycleResult` 与 `ContinuationPressure` 数据结构。
-2. 再把 `thinking_integration` 的输出收敛到新结构。
-3. 再重排 `helios_main.py` tick orchestration。
-4. 最后拆除或降级 `response_pipeline.py` 中的旧 reply-first LLM owner。
+1. continuation state 通过 `HeliosState.continuation` 正式持有。
+2. `HeliosState.continuation_pressure` 和 `continuation_reason` 保留为派生镜像，服务已有度量面和 prompt metrics。
+3. `helios_main.py` 通过 `last_continuation_state` 跨 tick 传递完整 continuation owner。
+4. `ThoughtCycleResult.to_state_payload()` 必须带出结构化 `continuation`。
+5. `last_internal_thought_trace` 必须带出结构化 continuation 快照，方便调试 quiet tick 和 reflective carry。
+6. internal thought prompt 不得只注入 `internal_monologue` 伪行为，而必须接入真实 channel/op 与 memory handoff contract。
 
-本轮不要求保留旧接口兼容层，迁移中允许直接删除无用 wrapper。
+## 6. Failure Modes
 
-## 7. Failure Modes and Constraints
+1. LLM 不可用时返回结构化 fallback thought result。
+2. continuation 到期时必须显式清空，而不是静默残留旧 reason / origin。
+3. thought-active tick 不得回退到 passive direct reply owner。
+4. accepted `reply_message` decision 若缺失 `outbound_text`，必须视为上游 owner 缺失，而不是触发独立 reply LLM 补写。
+4. internal thought prompt 若长期出现 `channel_context=unavailable` 或 `no_channel_ops_available`，视为 thought contract 未正确接线。
 
-1. 若 LLM 请求失败，thought loop 必须返回结构化 fallback 结果。
-2. 若当前 tick 无足够刺激且无 continuation pressure，系统可以进入 quiet tick，但不得跳过状态演化。
-3. 若 continuation pressure 持续累积，系统必须有上限和衰减机制，避免永久高压锁死。
-4. 若旧 reply-first path 尚未完全删除，必须显式标记为 transitional path，不得继续扩展。
+## 7. Validation Strategy
 
-## 8. Observability and Logging
-
-必须新增以下可观测面：
-
-1. thought gate decision
-2. thought started / skipped
-3. thought sufficiency result
-4. continuation pressure established / decayed / cleared
-5. quiet tick outcome
-6. fallback_used / llm_used
-
-## 9. Validation Strategy
-
-1. 单元测试验证 thought gate 命中与未命中时的结构化输出。
-2. 单元测试验证 continuation pressure 从 thought result 写入 state。
-3. 集成测试验证 `helios_main.py` 在存在 inbound stimulus 时不再直接走 reply-first owner。
-4. 集成测试验证 quiet tick 仍记录结构化 observability。
-5. 回归测试验证 LLM 故障时返回结构化 fallback thought result。
+1. 单元测试验证 reflective thought 会建立结构化 continuation state。
+2. 单元测试验证 structured thought output 可直接产出 `recall_intent`、`memory_handoff` 和 optional `action_proposal`。
+3. 集成测试验证 `get_state()` 暴露 `continuation`、`thought_cycle.continuation` 和 `memory_handoff`。
+4. 集成测试验证 thought-active tick 不触发 passive fallback reply。
+5. debug 日志验证 internal thought prompt dump 包含真实 channel/op contract。

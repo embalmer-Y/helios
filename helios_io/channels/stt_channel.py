@@ -8,7 +8,7 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from ..channel import ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, InputChannel
-from .qq_channel import QQChannel
+from .inbound_text_annotation import annotate_inbound_text_message, evaluate_text_triggers
 
 log = logging.getLogger("helios.helios_io.channels.stt_channel")
 
@@ -117,45 +117,21 @@ class STTChannel(InputChannel):
             self._pending_utterances.append(text.strip())
 
     def evaluate_message(self, message: ChannelMessage, state=None) -> Dict[str, float]:
-        cached_triggers = dict(message.metadata.get("event_triggers", {}) or {})
-        if cached_triggers:
-            return cached_triggers
-        if self._sec_evaluator is None:
-            return {}
-        try:
-            result = self._sec_evaluator.evaluate(message.text)
-            if QQChannel._looks_like_sec_result(result):
-                return QQChannel._sec_to_triggers(result)
-            return dict(result or {})
-        except Exception as exc:
-            log.warning("STT SEC evaluation failed: %s", exc)
-            return {}
+        return evaluate_text_triggers(message, self._sec_evaluator, log, "STTChannel")
 
     def _build_message(self, text: str) -> ChannelMessage:
-        metadata: Dict[str, object] = {"source": "stt"}
-        if self._sec_evaluator is not None:
-            try:
-                evaluation = self._sec_evaluator.evaluate(text)
-            except Exception as exc:
-                log.warning("STT annotation failed: %s", exc)
-                evaluation = {}
-            if QQChannel._looks_like_sec_result(evaluation):
-                metadata["sec_result"] = dict(evaluation)
-                metadata["event_triggers"] = QQChannel._sec_to_triggers(evaluation)
-                metadata["cognitive_impact"] = QQChannel._build_cognitive_impact(
-                    text,
-                    dict(evaluation),
-                    dict(metadata["event_triggers"]),
-                )
-            elif evaluation:
-                metadata["event_triggers"] = dict(evaluation)
-        return ChannelMessage(
-            channel_id=self.CHANNEL_ID,
-            user_id="microphone",
-            text=text,
-            timestamp=time.time(),
-            metadata=dict(metadata),
-            direction="inbound",
+        return annotate_inbound_text_message(
+            ChannelMessage(
+                channel_id=self.CHANNEL_ID,
+                user_id="microphone",
+                text=text,
+                timestamp=time.time(),
+                metadata={"source": "stt"},
+                direction="inbound",
+            ),
+            self._sec_evaluator,
+            log,
+            "STTChannel",
         )
 
     def _probe_microphone(self, pyaudio_module) -> bool:

@@ -233,8 +233,19 @@ class TestChannelGatewayEventSourceAdapter:
         assert messages[0]["channel_id"] == "qq"
         assert messages[0]["user_id"] == "u1"
         assert messages[0]["text"] == "hello"
-        assert messages[0]["stimulus"]["source_channel_id"] == "qq"
-        assert 0.0 <= messages[0]["stimulus"]["stimulus_intensity"] <= 1.0
+
+    def test_get_stimuli_returns_normalized_stimulus_contract_from_last_poll(self):
+        gateway = ChannelGateway(evaluators={"qq": lambda message, state: {}})
+        qq = StubChannel("qq", inbound_messages=[make_message("qq", "u1", "hello")])
+        gateway.register_channel(qq)
+
+        gateway.poll(HeliosState())
+        stimuli = gateway.get_stimuli()
+
+        assert len(stimuli) == 1
+        assert stimuli[0]["source_channel_id"] == "qq"
+        assert stimuli[0]["payload"]["user_id"] == "u1"
+        assert 0.0 <= stimuli[0]["stimulus_intensity"] <= 1.0
 
     def test_broadcast_routes_to_all_non_excluded_channels(self):
         gateway = ChannelGateway()

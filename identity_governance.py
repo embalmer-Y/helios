@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import json
+import os
 import time
 from typing import Mapping, Optional
 from uuid import uuid4
@@ -16,6 +18,111 @@ DEFAULT_SELF_DEFINITION = (
 DEFAULT_IDENTITY_NARRATIVE = (
     "我在持续的感受、记忆、思考与行动中形成并更新对自己的理解。"
 )
+
+
+def _normalize_identity_seed_memories(seed_memories: object) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    for index, item in enumerate(list(seed_memories or [])):
+        if isinstance(item, str):
+            summary = item.strip()
+            if not summary:
+                continue
+            normalized.append(
+                {
+                    "summary": summary,
+                    "source": "identity_bootstrap",
+                    "original_section": f"inline_seed_{index + 1}",
+                }
+            )
+            continue
+        if isinstance(item, Mapping):
+            summary = str(item.get("summary", "") or "").strip()
+            if not summary:
+                continue
+            normalized.append(
+                {
+                    "summary": summary,
+                    "source": str(item.get("source", "identity_bootstrap") or "identity_bootstrap"),
+                    "emotional_tag": str(item.get("emotional_tag", "") or ""),
+                    "valence": float(item.get("valence", 0.0) or 0.0),
+                    "arousal": float(item.get("arousal", 0.0) or 0.0),
+                    "original_section": str(item.get("original_section", f"inline_seed_{index + 1}") or f"inline_seed_{index + 1}"),
+                }
+            )
+    return normalized
+
+
+@dataclass(frozen=True)
+class IdentityBootstrapDefinition:
+    bootstrap_version: str
+    self_imprint: str
+    self_definition: str
+    identity_narrative: str
+    personality_baseline: dict[str, float]
+    identity_seed_memories: list[dict[str, object]] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "bootstrap_version": str(self.bootstrap_version),
+            "self_imprint": str(self.self_imprint),
+            "self_definition": str(self.self_definition),
+            "identity_narrative": str(self.identity_narrative),
+            "personality_baseline": {
+                str(key): round(float(value), 4)
+                for key, value in dict(self.personality_baseline or {}).items()
+            },
+            "identity_seed_memories": _normalize_identity_seed_memories(self.identity_seed_memories),
+            "metadata": dict(self.metadata or {}),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "IdentityBootstrapDefinition":
+        required_keys = [
+            "bootstrap_version",
+            "self_imprint",
+            "self_definition",
+            "identity_narrative",
+            "personality_baseline",
+        ]
+        missing = [key for key in required_keys if not payload.get(key)]
+        if missing:
+            raise ValueError(f"bootstrap definition missing keys: {', '.join(missing)}")
+
+        baseline_payload = dict(payload.get("personality_baseline", {}) or {})
+        if not baseline_payload:
+            raise ValueError("bootstrap definition missing personality_baseline")
+
+        return cls(
+            bootstrap_version=str(payload.get("bootstrap_version") or "r10.identity.v1"),
+            self_imprint=str(payload.get("self_imprint") or DEFAULT_SELF_IMPRINT),
+            self_definition=str(payload.get("self_definition") or DEFAULT_SELF_DEFINITION),
+            identity_narrative=str(payload.get("identity_narrative") or DEFAULT_IDENTITY_NARRATIVE),
+            personality_baseline={
+                str(key): round(float(value), 4)
+                for key, value in baseline_payload.items()
+            },
+            identity_seed_memories=_normalize_identity_seed_memories(payload.get("identity_seed_memories", [])),
+            metadata=dict(payload.get("metadata", {}) or {}),
+        )
+
+    @classmethod
+    def default(cls, personality_baseline: Mapping[str, float]) -> "IdentityBootstrapDefinition":
+        return cls(
+            bootstrap_version=IdentityGovernance.BOOTSTRAP_VERSION,
+            self_imprint=DEFAULT_SELF_IMPRINT,
+            self_definition=DEFAULT_SELF_DEFINITION,
+            identity_narrative=DEFAULT_IDENTITY_NARRATIVE,
+            personality_baseline={
+                str(key): round(float(value), 4)
+                for key, value in dict(personality_baseline or {}).items()
+            },
+            identity_seed_memories=[],
+            metadata={
+                "owner": "identity_bootstrap_definition",
+                "schema_version": 1,
+            },
+        )
 
 
 @dataclass(frozen=True)
@@ -89,23 +196,50 @@ class IdentityStore:
 class IdentityGovernance:
     BOOTSTRAP_VERSION = "r10.identity.v1"
 
+    @staticmethod
+    def _write_bootstrap_definition(path: str, definition: IdentityBootstrapDefinition) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(definition.to_dict(), f, indent=2, ensure_ascii=False)
+
+    def load_bootstrap_definition(
+        self,
+        *,
+        path: str,
+        personality_baseline: Mapping[str, float],
+    ) -> tuple[IdentityBootstrapDefinition, str]:
+        if not os.path.exists(path):
+            definition = IdentityBootstrapDefinition.default(personality_baseline)
+            self._write_bootstrap_definition(path, definition)
+            return definition, f"generated:{path}"
+
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        definition = IdentityBootstrapDefinition.from_dict(payload)
+        return definition, f"file:{path}"
+
     def bootstrap_identity_store(
         self,
         *,
-        personality_baseline: Mapping[str, float],
+        bootstrap_definition: IdentityBootstrapDefinition,
         bootstrap_source: str,
     ) -> IdentityStore:
         return IdentityStore(
             initialized=True,
-            bootstrap_version=self.BOOTSTRAP_VERSION,
-            self_imprint=DEFAULT_SELF_IMPRINT,
-            self_definition=DEFAULT_SELF_DEFINITION,
-            personality_baseline={str(key): round(float(value), 4) for key, value in personality_baseline.items()},
+            bootstrap_version=str(bootstrap_definition.bootstrap_version or self.BOOTSTRAP_VERSION),
+            self_imprint=bootstrap_definition.self_imprint,
+            self_definition=bootstrap_definition.self_definition,
+            personality_baseline={
+                str(key): round(float(value), 4)
+                for key, value in dict(bootstrap_definition.personality_baseline or {}).items()
+            },
             identity_metadata={
                 "bootstrap_source": bootstrap_source,
+                "bootstrap_definition": bootstrap_definition.to_dict(),
                 "locked_fields": ["self_imprint", "self_definition", "personality_baseline"],
                 "autobiographical_identity_narrative": {
-                    "summary": DEFAULT_IDENTITY_NARRATIVE,
+                    "summary": bootstrap_definition.identity_narrative,
                     "source": "bootstrap",
                 },
             },
@@ -220,6 +354,7 @@ __all__ = [
     "DEFAULT_SELF_DEFINITION",
     "DEFAULT_IDENTITY_NARRATIVE",
     "DEFAULT_SELF_IMPRINT",
+    "IdentityBootstrapDefinition",
     "IdentityGovernance",
     "IdentityRevisionRecord",
     "IdentityStore",

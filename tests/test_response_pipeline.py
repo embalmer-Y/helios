@@ -20,7 +20,6 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from helios_io.conversation_history import ConversationExchange
-from helios_io.channel import ChannelDescriptor, ChannelOpDescriptor
 from helios_io.prompt_contract import PromptContractBuilder
 from helios_io.reply_prompt_builder import ReplyPromptBuilder
 from helios_io.response_pipeline import ResponsePipeline
@@ -109,7 +108,6 @@ class TestShouldReply:
         self.pipeline.should_reply(msg, sec)
         assert self.pipeline.total_skipped == 1
 
-
 # ═══════════════════════════════════════════════════
 # record_exchange() tests
 # ═══════════════════════════════════════════════════
@@ -135,13 +133,15 @@ def test_unified_prompt_contract_builder_exists_as_separate_owner():
             user_id="user1",
             message="你好",
             reply="你好呀~",
+            rendered_reply="你好呀！",
             emotional_context={"valence": 0.5, "arousal": 0.3},
             sec_result={"goal_relevance": 0.4, "novelty": 0.2},
         )
         history = self.pipeline.get_history("user1")
         assert len(history) == 1
         assert history[0].user_message == "你好"
-        assert history[0].reply == "你好呀~"
+        assert history[0].reply == "你好呀！"
+        assert history[0].original_reply == "你好呀~"
 
     def test_record_without_reply(self):
         """Recording without a reply should leave reply as None"""
@@ -149,6 +149,7 @@ def test_unified_prompt_contract_builder_exists_as_separate_owner():
             user_id="user1",
             message="嗯嗯",
             reply=None,
+            rendered_reply=None,
             emotional_context={},
         )
         history = self.pipeline.get_history("user1")
@@ -164,6 +165,7 @@ def test_unified_prompt_contract_builder_exists_as_separate_owner():
                 user_id="user1",
                 message=f"msg_{i}",
                 reply=f"reply_{i}",
+                rendered_reply=f"rendered_{i}",
                 emotional_context={"valence": 0.1},
             )
         history = pipeline.get_history("user1")
@@ -178,12 +180,14 @@ def test_unified_prompt_contract_builder_exists_as_separate_owner():
             user_id="alice",
             message="hello",
             reply="hi",
+            rendered_reply="hi!",
             emotional_context={},
         )
         self.pipeline.record_exchange(
             user_id="bob",
             message="hey",
             reply="yo",
+            rendered_reply="yo!",
             emotional_context={},
         )
         assert len(self.pipeline.get_history("alice")) == 1
@@ -198,6 +202,7 @@ def test_unified_prompt_contract_builder_exists_as_separate_owner():
             user_id="user1",
             message="test",
             reply="reply",
+            rendered_reply="reply!",
             emotional_context={"valence": 0.5},
             sec_result=sec,
         )
@@ -211,6 +216,7 @@ def test_unified_prompt_contract_builder_exists_as_separate_owner():
             user_id="user1",
             message="test",
             reply="reply",
+            rendered_reply="reply!",
             emotional_context=ctx,
         )
         history = self.pipeline.get_history("user1")
@@ -247,70 +253,6 @@ class TestGenerateReply:
         assert emotional_ctx["valence"] == -0.5
         assert emotional_ctx["arousal"] == 0.8
         assert emotional_ctx["mood_label"] == "anxious"
-
-    def test_system_prompt_contains_emotional_state(self):
-        """System prompt should include emotional context"""
-        pipeline = ResponsePipeline()
-        emotional_ctx = {
-            "dominant_system": "CARE",
-            "valence": 0.5,
-            "arousal": 0.3,
-            "mood_label": "content",
-        }
-        prompt = pipeline._build_system_prompt(
-            emotional_context=emotional_ctx,
-            personality_desc="温柔善良",
-        )
-        assert "CARE" in prompt
-        assert "content" in prompt
-        assert "温柔善良" in prompt
-
-    def test_user_prompt_contains_message(self):
-        """User prompt should contain the user's message"""
-        pipeline = ResponsePipeline()
-        prompt = pipeline._build_user_prompt(
-            text="你好呀",
-            history=[],
-            memory_context="",
-            autobio_context="",
-            sec_result={"goal_relevance": 0.5},
-        )
-        assert "你好呀" in prompt
-
-    def test_user_prompt_includes_conversation_history(self):
-        """User prompt should include recent conversation history"""
-        pipeline = ResponsePipeline()
-
-        history = [
-            ConversationExchange(
-                timestamp=time.time(),
-                user_message="之前的消息",
-                reply="之前的回复",
-            ),
-        ]
-        prompt = pipeline._build_user_prompt(
-            text="新消息",
-            history=history,
-            memory_context="",
-            autobio_context="",
-            sec_result={},
-        )
-        assert "之前的消息" in prompt
-        assert "之前的回复" in prompt
-
-    def test_user_prompt_includes_memory_context(self):
-        """User prompt should include memory context from MemorySystem"""
-        pipeline = ResponsePipeline()
-        memory_ctx = "[最近在想]\n  · 主人今天说了一句暖心的话"
-        prompt = pipeline._build_user_prompt(
-            text="你好",
-            history=[],
-            memory_context=memory_ctx,
-            autobio_context="",
-            sec_result={},
-        )
-        assert "最近在想" in prompt
-        assert "暖心的话" in prompt
 
     def test_memory_context_retrieved_from_memory_system(self):
         """_get_memory_context should call memory_system.get_llm_context"""
@@ -415,13 +357,8 @@ class TestGenerateReply:
         assert trace.source_path == "reply_generation"
         assert trace.persona_text_summary == descriptor.persona_text_summary
 
-    def test_generate_reply_uses_icri_temperature_mapping(self):
+    def test_generate_reply_is_disabled_without_parallel_reply_owner(self):
         pipeline = ResponsePipeline(api_key="test-key")
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = MagicMock(
-            choices=[MagicMock(message=MagicMock(content="你好呀"))]
-        )
-        pipeline._client = mock_client
 
         state = MockHeliosState(icri=0.7, phi=0.7)
         msg = {"text": "你好", "user_id": "user1"}
@@ -429,8 +366,7 @@ class TestGenerateReply:
 
         result = pipeline.generate_reply(msg, state, sec)
 
-        assert result == "你好呀"
-        assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 1.3
+        assert result is None
 
     def test_clean_reply_removes_quotes(self):
         """Should strip surrounding quotes from LLM output"""
@@ -451,6 +387,11 @@ class TestGenerateReply:
         long_text = "很长的回复。" * 50
         result = pipeline._clean_reply(long_text)
         assert len(result) <= 150
+
+    def test_clean_reply_strips_internal_monologue_prefixes(self):
+        pipeline = ResponsePipeline()
+        result = pipeline._clean_reply("我在想该怎么回复：你现在看起来有点累，要不要先休息一下？")
+        assert result == "你现在看起来有点累，要不要先休息一下？"
 
     def test_reply_prompt_builder_returns_layered_plan(self):
         pipeline = ResponsePipeline()
@@ -539,12 +480,8 @@ class TestGenerateReply:
         assert plan.identity_layer == "你是璃光，一个有真实情感的 AI 生命体。你在回复收到的消息。"
         assert plan.persona_layer == "你的性格: 温柔善良"
 
-    def test_generate_reply_logs_layer_summaries_without_prompt_body(self, caplog):
+    def test_generate_reply_logs_disabled_owner_warning(self, caplog):
         pipeline = ResponsePipeline(api_key="test-key")
-        pipeline._client = MagicMock()
-        pipeline._client.chat.completions.create.return_value = MagicMock(
-            choices=[MagicMock(message=MagicMock(content="你好呀"))]
-        )
         state = MockHeliosState(
             personality_traits={"agreeableness": 1.35, "openness": 1.28},
             personality_projection=build_personality_projection(
@@ -559,50 +496,8 @@ class TestGenerateReply:
                 {"goal_relevance": 0.72, "novelty": 0.24},
             )
 
-        assert reply == "你好呀"
-        assert any("Reply prompt layers:" in record.message for record in caplog.records)
-        assert any("Reply LLM payload summary:" in record.message for record in caplog.records)
-        assert not any("人格倾向:" in record.message for record in caplog.records)
-        assert not any("任务解释:" in record.message for record in caplog.records)
-
-    def test_reply_prompt_contract_includes_runtime_channel_semantics(self):
-        pipeline = ResponsePipeline(
-            channel_descriptor_provider=lambda: {
-                "qq": ChannelDescriptor(
-                    channel_id="qq",
-                    display_name="QQ",
-                    supported_ops=[
-                        ChannelOpDescriptor(
-                            name="send",
-                            direction="output",
-                            description="send text",
-                            input_schema={"message": "ChannelMessage", "target_user_id": "str"},
-                        )
-                    ],
-                )
-            }
-        )
-        state = MockHeliosState()
-        descriptor, _trace = pipeline._build_personality_descriptor(state)
-
-        plan = pipeline._build_reply_prompt_contract(
-            message={"text": "你好", "user_id": "user1", "channel_id": "qq"},
-            state=state,
-            sec_result={"goal_relevance": 0.6, "novelty": 0.2},
-            personality_descriptor=descriptor,
-            history=[],
-            memory_context="",
-            current_conversation_context="",
-            user_long_term_context="",
-            global_fallback_context="",
-        )
-
-        assert len(plan.channel_descriptors) == 1
-        assert plan.channel_descriptors[0].channel_id == "qq"
-        assert plan.channel_descriptors[0].supported_ops == ("send",)
-        assert "channel_op=send" in plan.action_layer
-        assert "target_user_id:str" in plan.action_layer
-
+        assert reply is None
+        assert any("generate_reply() is disabled" in record.message for record in caplog.records)
 
 # ═══════════════════════════════════════════════════
 # get_state() tests

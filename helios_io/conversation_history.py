@@ -57,8 +57,18 @@ class ConversationExchange:
     reply: Optional[str] = None
     """Helios 的回复文本 (None 表示未生成回复)"""
 
+    original_reply: Optional[str] = None
+    """Thought/planner 原始回复文本；当通道 render 改写表达时保留原文。"""
+
     emotional_context: Dict[str, float] = field(default_factory=dict)
     """生成回复时的情感上下文 {dominant_system, valence, arousal, mood_label, ...}"""
+
+    expression_profile: Dict[str, object] = field(default_factory=dict)
+    """通道表达调制结果摘要。"""
+
+    @property
+    def assistant_reply(self) -> Optional[str]:
+        return self.reply
 
 
 # ═══════════════════════════════════════════════════
@@ -212,6 +222,9 @@ class ConversationHistoryManager:
         reply: str,
         emotional_context: Dict[str, float],
         conversation_key: str = "",
+        *,
+        original_reply: Optional[str] = None,
+        expression_profile: Optional[Dict[str, object]] = None,
     ) -> bool:
         """
         发送回复时补充最新交换的 reply 和 emotional_context。
@@ -257,7 +270,9 @@ class ConversationHistoryManager:
             return False
 
         target_exchange.reply = reply
+        target_exchange.original_reply = original_reply if original_reply is not None else reply
         target_exchange.emotional_context = dict(emotional_context)  # 防御性拷贝
+        target_exchange.expression_profile = dict(expression_profile or {})
 
         log.debug(f"回复已附加到 {user_id} 最新交换")
         return True

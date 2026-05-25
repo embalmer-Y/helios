@@ -9,8 +9,6 @@ from dataclasses import dataclass, field
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-from helios_io.action_models import ActionDecision
-from helios_io.response_pipeline import ResponsePipeline
 from neurochem_gate import build_neurochem_gate
 from personality_projection import build_personality_projection
 from regulation.regulation import RegulationEngine
@@ -28,90 +26,6 @@ class MockHeliosState:
     phi: float = 0.5
     mood_label: str = "content"
     personality_traits: dict = field(default_factory=dict)
-
-
-def test_response_pipeline_build_reply_proposal_returns_structured_proposal():
-    pipeline = ResponsePipeline()
-    state = MockHeliosState()
-
-    proposal = pipeline.build_reply_proposal(
-        {
-            "text": "你好",
-            "user_id": "u1",
-            "channel_id": "qq",
-            "message_id": "m1",
-        },
-        {"goal_relevance": 0.4, "novelty": 0.2},
-        state,
-        available_channels=["qq", "tts"],
-    )
-
-    assert proposal is not None
-    assert proposal.behavior_name == "reply_message"
-    assert proposal.candidate_channels == ["qq", "tts"]
-    assert proposal.parameters["target_user_id"] == "u1"
-
-
-def test_response_pipeline_build_interaction_proposals_can_surface_non_reply_behavior():
-    pipeline = ResponsePipeline()
-    state = MockHeliosState(
-        dominant_system="CARE",
-        valence=0.45,
-        arousal=0.55,
-        personality_traits={
-            "agreeableness": 1.3,
-            "extraversion": 1.2,
-            "neuroticism": 1.0,
-            "openness": 1.0,
-        },
-    )
-    state.oxytocin = 0.8
-    state.cortisol = 0.2
-    state.allostatic_load = 0.05
-    state.is_fatigued = False
-    state.behavior_queue_depth = 0
-    state.current_behavior = ""
-    state.drive_urgency = 0.0
-
-    proposals = pipeline.build_interaction_proposals(
-        {
-            "text": "我想你了，能陪陪我吗",
-            "user_id": "u1",
-            "channel_id": "qq",
-            "message_id": "m1",
-        },
-        {"goal_relevance": 0.75, "novelty": 0.34},
-        state,
-        available_channels=["qq", "tts"],
-    )
-
-    assert proposals
-    assert proposals[0].behavior_name == "intimate"
-
-
-def test_response_pipeline_populate_reply_decision_injects_outbound_text():
-    pipeline = ResponsePipeline(api_key="")
-    pipeline.generate_reply = lambda *args, **kwargs: "reply-text"
-    decision = ActionDecision(
-        decision_id="decision::1",
-        proposal_id="proposal::1",
-        behavior_name="reply_message",
-        selected_channel_id="qq",
-        selected_op="send",
-        execution_priority=50,
-    )
-
-    hydrated = pipeline.populate_reply_decision(
-        decision,
-        {"text": "hi", "user_id": "u1", "message_id": "m1"},
-        MockHeliosState(),
-        {"goal_relevance": 0.5, "novelty": 0.4},
-    )
-
-    assert hydrated is not None
-    assert hydrated.validated_params["outbound_text"] == "reply-text"
-    assert hydrated.validated_params["target_user_id"] == "u1"
-
 
 def test_regulation_build_action_proposal_preserves_score_and_channels(tmp_path):
     engine = RegulationEngine(data_dir=str(tmp_path))

@@ -15,6 +15,7 @@ import os
 import logging
 import math
 import tempfile
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -28,6 +29,21 @@ from hypothesis.strategies import (
 )
 
 from memory import MemorySystem, EpisodicMemory, WorkingMemory, MemoryItem
+
+
+def _make_isolated_helios():
+    import helios_main
+
+    temp_dir = TemporaryDirectory()
+    config = helios_main.HeliosConfig()
+    config.LOG_DIR = temp_dir.name + "/logs"
+    config.DATA_DIR = temp_dir.name + "/data"
+    config.QQ_APP_ID = ""
+    config.QQ_CLIENT_SECRET = ""
+    config.LLM_API_KEY = ""
+    config.LLM_SPEECH_ENABLED = False
+    helios = helios_main.Helios(config)
+    return temp_dir, helios
 
 
 # ------------------------------------------------------------------
@@ -392,27 +408,30 @@ class TestThresholdBoundaryConditions:
 
     def test_warning_boundary_below_80_percent(self, caplog):
         """Test below 80% capacity - no warning should be logged."""
-        import helios_main
-        
         capacity = 100
         test_count = 79  # Below 80%
-        
-        h = helios_main.Helios()
-        h.memory_system.episodic.capacity = capacity
-        
-        for i in range(test_count):
-            h.memory_system.remember(f"event_{i}", valence=0.3, arousal=0.3, phi=0.3)
-        
-        with caplog.at_level(logging.WARNING):
-            h._check_memory_capacity_warnings()
-        
-        actual_count = len(h.memory_system.episodic.items)
-        actual_ratio = actual_count / capacity
-        
-        # Below 80%, NO warning should be logged
-        assert actual_ratio < 0.80, f"Expected < 80%, got {actual_ratio*100:.1f}%"
-        episodic_warnings = [r for r in caplog.records if "Episodic Memory" in r.message]
-        assert len(episodic_warnings) == 0, "Below 80%, expected NO warning"
+
+        temp_dir, h = _make_isolated_helios()
+        try:
+            h.memory_system.episodic.capacity = capacity
+
+            for i in range(test_count):
+                h.memory_system.remember(f"event_{i}", valence=0.3, arousal=0.3, phi=0.3)
+
+            with caplog.at_level(logging.WARNING):
+                h._check_memory_capacity_warnings()
+
+            actual_count = len(h.memory_system.episodic.items)
+            actual_ratio = actual_count / capacity
+
+            assert actual_ratio < 0.80, f"Expected < 80%, got {actual_ratio*100:.1f}%"
+            episodic_warnings = [r for r in caplog.records if "Episodic Memory" in r.message]
+            assert len(episodic_warnings) == 0, "Below 80%, expected NO warning"
+        finally:
+            for handler in list(h.log.handlers):
+                handler.close()
+                h.log.removeHandler(handler)
+            temp_dir.cleanup()
 
     def test_exactly_2000_items_does_not_trigger(self, caplog):
         """Exactly 2000 items should NOT trigger consolidation (threshold is > 2000)."""
@@ -510,23 +529,24 @@ class TestWarningMessageContent:
 
     def test_warning_includes_current_and_capacity(self, caplog):
         """WARNING messages SHALL include current count and capacity."""
-        import helios_main
-        
-        h = helios_main.Helios()
-        h.memory_system.episodic.capacity = 100
-        
-        # Fill to 85% (> 80%)
-        for i in range(85):
-            h.memory_system.remember(f"event_{i}", valence=0.3, arousal=0.3, phi=0.3)
-        
-        with caplog.at_level(logging.WARNING):
-            h._check_memory_capacity_warnings()
-        
-        warnings = [r for r in caplog.records if "Episodic Memory" in r.message]
-        assert len(warnings) >= 1
-        
-        # Should show current/capacity format
-        msg = warnings[0].message
-        # The message should contain "85/100" or similar format
-        assert "85" in msg, f"Warning should include current count 85, got: {msg}"
-        assert "100" in msg, f"Warning should include capacity 100, got: {msg}"
+        temp_dir, h = _make_isolated_helios()
+        try:
+            h.memory_system.episodic.capacity = 100
+
+            for i in range(85):
+                h.memory_system.remember(f"event_{i}", valence=0.3, arousal=0.3, phi=0.3)
+
+            with caplog.at_level(logging.WARNING):
+                h._check_memory_capacity_warnings()
+
+            warnings = [r for r in caplog.records if "Episodic Memory" in r.message]
+            assert len(warnings) >= 1
+
+            msg = warnings[0].message
+            assert "85" in msg, f"Warning should include current count 85, got: {msg}"
+            assert "100" in msg, f"Warning should include capacity 100, got: {msg}"
+        finally:
+            for handler in list(h.log.handlers):
+                handler.close()
+                h.log.removeHandler(handler)
+            temp_dir.cleanup()

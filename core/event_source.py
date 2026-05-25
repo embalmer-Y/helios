@@ -45,3 +45,12 @@ class EventSource(ABC):
             Returns empty list if this source does not produce messages.
         """
         ...
+
+    def get_stimuli(self) -> List[dict]:
+        """Return normalized stimuli emitted by this source.
+
+        Sources that do not own a formal stimulus contract can keep returning
+        an empty list. The main loop uses this to consume structured stimulus
+        inputs without forcing every message payload to embed a stimulus blob.
+        """
+        return []

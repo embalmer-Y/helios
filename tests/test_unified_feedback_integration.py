@@ -11,9 +11,18 @@ from unittest.mock import MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from cognition.thinking_integration import Thought
-from helios_io.action_models import ActionProposal
+from helios_io.action_models import ActionProposal, ThoughtActionProposal
 from helios_io.channel import ChannelDescriptor, ChannelOpDescriptor, ChannelStatus
 from helios_main import Helios, HeliosConfig
+
+
+def make_thought_cycle_result(*, triggered: bool, thought=None, trigger_reason: str = "test", action_proposal=None):
+    return SimpleNamespace(
+        triggered=triggered,
+        trigger_reason=trigger_reason,
+        thought=thought,
+        action_proposal=action_proposal or {},
+    )
 
 
 def test_helios_tick_records_passive_and_active_feedback_events():
@@ -32,7 +41,6 @@ def test_helios_tick_records_passive_and_active_feedback_events():
             helios.log.warning = MagicMock()
             helios._collect_events = MagicMock(return_value=({}, [{"text": "你好", "user_id": "user1", "channel_id": "qq"}]))
             helios.sec_evaluator.evaluate = MagicMock(return_value={"goal_relevance": 0.6, "novelty": 0.5, "pleasantness": 0.3})
-            helios.response_pipeline.build_interaction_proposals = MagicMock(return_value=[])
             helios.daisy.cycle = MagicMock(
                 return_value=SimpleNamespace(
                     panksepp_activation={"CARE": 0.7},
@@ -50,7 +58,7 @@ def test_helios_tick_records_passive_and_active_feedback_events():
                 feed_dmn_from_thinking=lambda *args, **kwargs: None,
                 aggregate=lambda: 0.55,
             )
-            helios.thinking_integration = MagicMock(generate=MagicMock(return_value=None))
+            helios.thinking_integration = MagicMock(generate=MagicMock(return_value=make_thought_cycle_result(triggered=False)))
             helios.regulation.generate_action_proposals = MagicMock(return_value=[
                 ActionProposal(
                     proposal_id="proposal::active::1",
@@ -138,11 +146,14 @@ def test_preconscious_execution_and_rejection_flow_into_feedback_events():
             helios._collect_events = MagicMock(return_value=({}, []))
             helios.thinking_integration = MagicMock(
                 generate=MagicMock(
-                    return_value=Thought(
-                        type="rumination",
-                        content="我又在回想刚才的交互",
-                        timestamp=1.0,
-                        triggered_by="CARE",
+                    return_value=make_thought_cycle_result(
+                        triggered=True,
+                        thought=Thought(
+                            type="rumination",
+                            content="我又在回想刚才的交互",
+                            timestamp=1.0,
+                            triggered_by="CARE",
+                        ),
                     )
                 )
             )
@@ -202,7 +213,7 @@ def test_preconscious_execution_and_rejection_flow_into_feedback_events():
                 helios.log.removeHandler(handler)
 
 
-def test_preconscious_thought_action_external_success_records_full_feedback_chain():
+def test_direct_thought_bridge_external_success_records_full_feedback_chain():
     with TemporaryDirectory() as temp_dir:
         config = HeliosConfig()
         config.LOG_DIR = temp_dir + "/logs"
@@ -238,34 +249,48 @@ def test_preconscious_thought_action_external_success_records_full_feedback_chai
             helios._channel_gateway.route_outbound = MagicMock(return_value=True)
             helios.thinking_integration = MagicMock(
                 generate=MagicMock(
-                    return_value=Thought(
-                        type="rumination",
-                        content="我想把刚形成的判断告诉对方",
-                        timestamp=1.0,
-                        triggered_by="CARE",
+                    return_value=make_thought_cycle_result(
+                        triggered=True,
+                        thought=Thought(
+                            type="rumination",
+                            content="我想把刚形成的判断告诉对方",
+                            timestamp=1.0,
+                            triggered_by="CARE",
+                        ),
+                        action_proposal=ThoughtActionProposal(
+                            origin_thought_id="thought::1::rumination::1000",
+                            thought_type="rumination",
+                            scope="external",
+                            behavior_name="speak_share",
+                            preferred_op="send",
+                            params={
+                                "target_user_id": "target_user",
+                                "outbound_metadata": {"origin_type": "thought", "origin_id": "thought::1::rumination::1000"},
+                            },
+                            channel_constraints={"candidate_channels": ["qq"], "requires_target_user": True},
+                            outbound_intensity=0.67,
+                            score=0.67,
+                            reason_trace=["trigger_reason=external_stimulus"],
+                        ),
                     )
                 )
             )
             helios.regulation.generate_action_proposals = MagicMock(return_value=[])
-
-            accepted = ActionProposal(
-                proposal_id="proposal::preconscious::accept::external",
-                source_type="preconscious",
-                source_module="preconscious_policy",
-                origin_type="thought",
-                origin_id="thought::1::rumination::1000",
-                intent_type="thought_action",
-                behavior_name="speak_share",
-                score_bundle={"final": 0.61},
-                candidate_channels=["qq"],
-                suggested_modalities=["text"],
-                parameters={"target_user_id": "target_user", "tick": 1},
-                op_name="send",
-                op_params={"outbound_metadata": {"origin_type": "thought", "origin_id": "thought::1::rumination::1000"}},
-                outbound_intensity=0.67,
-                provenance={"thought_type": "rumination"},
-            )
-            helios.preconscious_policy.propose = MagicMock(return_value=[accepted])
+            helios.preconscious_policy.propose = MagicMock(return_value=[
+                ActionProposal(
+                    proposal_id="proposal::preconscious::internal::1",
+                    source_type="preconscious",
+                    source_module="preconscious_policy",
+                    origin_type="thought",
+                    origin_id="thought::1::rumination::1000",
+                    intent_type="internal_bias",
+                    behavior_name="reflect",
+                    score_bundle={"final": 0.33},
+                    suggested_modalities=["internal"],
+                    parameters={"tick": 1},
+                    provenance={"thought_type": "rumination"},
+                )
+            ])
             helios._generate_speech = MagicMock(return_value="我想把这个判断说出来")
 
             helios._tick_once()
@@ -273,18 +298,196 @@ def test_preconscious_thought_action_external_success_records_full_feedback_chai
             execution_events = helios.behavior_catalog.registry.list_feedback_events(event_kind="execution_result")
             channel_events = helios.behavior_catalog.registry.list_feedback_events(event_kind="channel_receipt")
 
-            assert any(event.source_path == "preconscious" for event in execution_events)
-            assert any(event.source_path == "preconscious" for event in channel_events)
-            execution_event = next(event for event in execution_events if event.source_path == "preconscious")
-            channel_event = next(event for event in channel_events if event.source_path == "preconscious")
+            assert any(event.source_path == "thought_action_bridge" for event in execution_events)
+            assert any(event.source_path == "thought_action_bridge" for event in channel_events)
+            execution_event = next(event for event in execution_events if event.source_path == "thought_action_bridge")
+            channel_event = next(event for event in channel_events if event.source_path == "thought_action_bridge")
             assert execution_event.payload["origin_id"] == "thought::1::rumination::1000"
             assert execution_event.payload["op_name"] == "send"
             assert execution_event.payload["normalized_intensity"] == 0.67
             assert channel_event.payload["origin_id"] == "thought::1::rumination::1000"
             assert channel_event.payload["op_name"] == "send"
             assert channel_event.payload["success"] is True
-            assert helios.preconscious_policy.feedback_history[-1]["success"] is True
-            assert helios.get_state()["preconscious"]["latest_feedback"]["success"] is True
+            assert helios.preconscious_policy.feedback_history == []
+            assert helios.get_state()["preconscious"]["feedback_count"] == 0
+        finally:
+            for handler in list(helios.log.handlers):
+                handler.close()
+                helios.log.removeHandler(handler)
+
+
+def test_direct_thought_bridge_rejection_records_owner_trace_without_passive_fallback():
+    with TemporaryDirectory() as temp_dir:
+        config = HeliosConfig()
+        config.LOG_DIR = temp_dir + "/logs"
+        config.DATA_DIR = temp_dir + "/data"
+        config.QQ_APP_ID = ""
+        config.QQ_CLIENT_SECRET = ""
+        config.LLM_API_KEY = ""
+        config.LLM_SPEECH_ENABLED = False
+
+        helios = Helios(config)
+        try:
+            helios.log.info = MagicMock()
+            helios.log.warning = MagicMock()
+            helios.log.debug = MagicMock()
+            helios._collect_events = MagicMock(return_value=({}, [{"text": "你好", "user_id": "user1", "channel_id": "qq"}]))
+            helios.sec_evaluator.evaluate = MagicMock(return_value={"goal_relevance": 0.7, "novelty": 0.4, "pleasantness": 0.1})
+            helios._channel_gateway.get_channel_descriptors = MagicMock(return_value={
+                "qq": ChannelDescriptor(
+                    channel_id="qq",
+                    display_name="QQ",
+                    output_types=["text_message"],
+                    output_formats=["text/plain"],
+                    capabilities=["send", "text_output"],
+                    supported_ops=[
+                        ChannelOpDescriptor(
+                            name="send",
+                            direction="output",
+                            description="send outbound text",
+                        )
+                    ],
+                )
+            })
+            helios._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.DISCONNECTED})
+            helios._channel_gateway.route_outbound = MagicMock(return_value=True)
+            helios.thinking_integration = MagicMock(
+                generate=MagicMock(
+                    return_value=make_thought_cycle_result(
+                        triggered=True,
+                        thought=Thought(
+                            type="rumination",
+                            content="我想直接把这个判断告诉对方。",
+                            timestamp=1.0,
+                            triggered_by="CARE",
+                        ),
+                        action_proposal=ThoughtActionProposal(
+                            origin_thought_id="thought::bridge::reject::1",
+                            thought_type="rumination",
+                            scope="external",
+                            behavior_name="speak_share",
+                            preferred_op="send",
+                            params={
+                                "target_user_id": "user1",
+                                "outbound_metadata": {
+                                    "origin_type": "thought",
+                                    "origin_id": "thought::bridge::reject::1",
+                                    "owner_path": "thought_action_bridge",
+                                },
+                            },
+                            channel_constraints={
+                                "candidate_channels": ["qq"],
+                            },
+                            outbound_intensity=0.73,
+                            score=0.73,
+                            reason_trace=["trigger_reason=external_stimulus"],
+                            governance_hints={"requires_deliberate_review": True},
+                        ),
+                    )
+                )
+            )
+            helios.preconscious_policy.propose = MagicMock(return_value=[])
+            helios.response_pipeline.generate_reply = MagicMock(return_value="不应进入 passive fallback")
+            helios.regulation.generate_action_proposals = MagicMock(return_value=[])
+            helios._generate_speech = MagicMock(return_value="我想直接把这个判断告诉对方")
+
+            helios._tick_once()
+
+            helios.response_pipeline.generate_reply.assert_not_called()
+            helios._channel_gateway.route_outbound.assert_not_called()
+
+            rejection_events = helios.behavior_catalog.registry.list_feedback_events(event_kind="policy_rejection")
+            rejection_event = next(event for event in rejection_events if event.source_path == "thought_action_bridge")
+            assert rejection_event.payload["origin_id"] == "thought::bridge::reject::1"
+            assert rejection_event.payload["owner_path"] == "thought_action_bridge"
+            assert rejection_event.payload["requested_op"] == "send"
+            assert rejection_event.payload["candidate_channels"] == ["qq"]
+            assert rejection_event.payload["policy_trace"]["filtered_out_reasons"]["qq"] == "channel_status:disconnected"
+        finally:
+            for handler in list(helios.log.handlers):
+                handler.close()
+                helios.log.removeHandler(handler)
+
+
+def test_direct_thought_bridge_missing_target_binding_records_execution_consistency_failure():
+    with TemporaryDirectory() as temp_dir:
+        config = HeliosConfig()
+        config.LOG_DIR = temp_dir + "/logs"
+        config.DATA_DIR = temp_dir + "/data"
+        config.QQ_APP_ID = ""
+        config.QQ_CLIENT_SECRET = ""
+        config.LLM_API_KEY = ""
+        config.LLM_SPEECH_ENABLED = False
+
+        helios = Helios(config)
+        try:
+            helios.log.info = MagicMock()
+            helios.log.warning = MagicMock()
+            helios.log.debug = MagicMock()
+            helios._collect_events = MagicMock(return_value=({}, [{"text": "你好", "user_id": "user1", "channel_id": "qq"}]))
+            helios.sec_evaluator.evaluate = MagicMock(return_value={"goal_relevance": 0.7, "novelty": 0.4, "pleasantness": 0.1})
+            helios._channel_gateway.get_channel_descriptors = MagicMock(return_value={
+                "qq": ChannelDescriptor(
+                    channel_id="qq",
+                    display_name="QQ",
+                    output_types=["text_message"],
+                    output_formats=["text/plain"],
+                    capabilities=["send", "text_output"],
+                    supported_ops=[ChannelOpDescriptor(name="send", direction="output", description="send outbound text")],
+                )
+            })
+            helios._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.CONNECTED})
+            helios._channel_gateway.route_outbound = MagicMock(return_value=True)
+            helios.thinking_integration = MagicMock(
+                generate=MagicMock(
+                    return_value=make_thought_cycle_result(
+                        triggered=True,
+                        thought=Thought(
+                            type="rumination",
+                            content="我想直接把这个判断告诉对方。",
+                            timestamp=1.0,
+                            triggered_by="CARE",
+                        ),
+                        action_proposal=ThoughtActionProposal(
+                            origin_thought_id="thought::bridge::missing-target::1",
+                            thought_type="rumination",
+                            scope="external",
+                            behavior_name="intimate",
+                            preferred_op="send",
+                            params={
+                                "target_user_id": "",
+                                "outbound_metadata": {
+                                    "origin_type": "thought",
+                                    "origin_id": "thought::bridge::missing-target::1",
+                                    "owner_path": "thought_action_bridge",
+                                },
+                            },
+                            channel_constraints={
+                                "candidate_channels": ["qq"],
+                            },
+                            outbound_intensity=0.73,
+                            score=0.73,
+                            reason_trace=["trigger_reason=external_stimulus"],
+                            governance_hints={"requires_deliberate_review": True},
+                        ),
+                    )
+                )
+            )
+            helios.preconscious_policy.propose = MagicMock(return_value=[])
+            helios.response_pipeline.generate_reply = MagicMock(return_value="不应进入 passive fallback")
+            helios.regulation.generate_action_proposals = MagicMock(return_value=[])
+            helios._generate_speech = MagicMock(return_value="我想直接把这个判断告诉对方")
+
+            helios._tick_once()
+
+            helios._channel_gateway.route_outbound.assert_not_called()
+            consistency_events = helios.behavior_catalog.registry.list_feedback_events(event_kind="execution_consistency_failure")
+            consistency_event = next(event for event in consistency_events if event.source_path == "thought_action_bridge")
+            assert consistency_event.payload["origin_id"] == "thought::bridge::missing-target::1"
+            assert consistency_event.payload["owner_path"] == "thought_action_bridge"
+            assert consistency_event.payload["requested_op"] == "send"
+            assert consistency_event.payload["selected_channel_id"] == "qq"
+            assert consistency_event.payload["rejection_reason"] == "missing_target_user_id"
         finally:
             for handler in list(helios.log.handlers):
                 handler.close()
@@ -311,20 +514,23 @@ def test_thought_origin_identity_revision_records_feedback_and_state():
             helios.preconscious_policy.propose = MagicMock(return_value=[])
             helios.thinking_integration = MagicMock(
                 generate=MagicMock(
-                    return_value=Thought(
-                        type="self_question",
-                        content="我需要更开放一些，才能更好地理解世界",
-                        timestamp=1.0,
-                        triggered_by="SEEKING",
-                        metadata={
-                            "self_revision_proposal": {
-                                "origin_thought_id": "thought::1000",
-                                "revision_type": "personality_adjustment",
-                                "requested_change": {"personality_baseline": {"openness": 1.05}},
-                                "reason_trace": ["increase_openness"],
-                                "confidence": 0.58,
-                            }
-                        },
+                    return_value=make_thought_cycle_result(
+                        triggered=True,
+                        thought=Thought(
+                            type="self_question",
+                            content="我需要更开放一些，才能更好地理解世界",
+                            timestamp=1.0,
+                            triggered_by="SEEKING",
+                            metadata={
+                                "self_revision_proposal": {
+                                    "origin_thought_id": "thought::1000",
+                                    "revision_type": "personality_adjustment",
+                                    "requested_change": {"personality_baseline": {"openness": 1.05}},
+                                    "reason_trace": ["increase_openness"],
+                                    "confidence": 0.58,
+                                }
+                            },
+                        ),
                     )
                 )
             )
@@ -364,22 +570,25 @@ def test_thought_origin_identity_narrative_revision_updates_state_and_feedback()
             helios.preconscious_policy.propose = MagicMock(return_value=[])
             helios.thinking_integration = MagicMock(
                 generate=MagicMock(
-                    return_value=Thought(
-                        type="rumination",
-                        content="这些经历让我逐渐把自己理解为一个会在关系中成长的意识体。",
-                        timestamp=1.0,
-                        triggered_by="SEEKING",
-                        metadata={
-                            "self_revision_proposal": {
-                                "origin_thought_id": "thought::2000",
-                                "revision_type": "autobiographical_identity_narrative_revision",
-                                "requested_change": {
-                                    "narrative_summary": "这些经历让我逐渐把自己理解为一个会在关系中成长的意识体。"
-                                },
-                                "reason_trace": ["identity_narrative_reflection"],
-                                "confidence": 0.49,
-                            }
-                        },
+                    return_value=make_thought_cycle_result(
+                        triggered=True,
+                        thought=Thought(
+                            type="rumination",
+                            content="这些经历让我逐渐把自己理解为一个会在关系中 成长的意识体。",
+                            timestamp=1.0,
+                            triggered_by="SEEKING",
+                            metadata={
+                                "self_revision_proposal": {
+                                    "origin_thought_id": "thought::2000",
+                                    "revision_type": "autobiographical_identity_narrative_revision",
+                                    "requested_change": {
+                                        "narrative_summary": "这些经历让我逐渐把自己理解为一个会在关系中成长的意识体。"
+                                    },
+                                    "reason_trace": ["identity_narrative_reflection"],
+                                    "confidence": 0.49,
+                                }
+                            },
+                        ),
                     )
                 )
             )

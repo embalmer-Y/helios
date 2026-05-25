@@ -105,6 +105,49 @@ class TestQQChannelSend:
         assert ok is True
         client.send_c2c.assert_called_once_with("target_user", "reply", msg_id="mid")
 
+    def test_send_modulates_text_when_outbound_intensity_is_high(self):
+        q = queue.Queue()
+        client = MagicMock()
+        client.is_connected.return_value = True
+        client.send_c2c.return_value = True
+        channel = QQChannel(q, qq_client=client)
+
+        ok = channel.send(
+            ChannelMessage(
+                channel_id="qq",
+                user_id="target_user",
+                text="reply...",
+                timestamp=1.0,
+                metadata={"message_id": "mid", "outbound_intensity": 0.91},
+                direction="outbound",
+            )
+        )
+
+        assert ok is True
+        client.send_c2c.assert_called_once_with("target_user", "reply!", msg_id="mid")
+
+    def test_send_records_original_and_rendered_text_on_message_metadata(self):
+        q = queue.Queue()
+        client = MagicMock()
+        client.is_connected.return_value = True
+        client.send_c2c.return_value = True
+        channel = QQChannel(q, qq_client=client)
+        message = ChannelMessage(
+            channel_id="qq",
+            user_id="target_user",
+            text="reply...",
+            timestamp=1.0,
+            metadata={"message_id": "mid", "outbound_intensity": 0.91},
+            direction="outbound",
+        )
+
+        ok = channel.send(message)
+
+        assert ok is True
+        assert message.metadata["original_text"] == "reply..."
+        assert message.metadata["rendered_text"] == "reply!"
+        assert message.metadata["expression_profile"]["tone"] == "direct"
+
     def test_send_routes_group_message_via_send_group(self):
         q = queue.Queue()
         client = MagicMock()

@@ -63,3 +63,42 @@ class TestSeedMemoryImporter:
 
         assert len(related) == 1
         assert related[0].source == "seed_story"
+
+    def test_import_inline_memories_creates_predated_source_tagged_moments(self, tmp_path):
+        store = AutobiographicalStore(str(tmp_path / "autobio.jsonl"), auto_flush=False)
+        system_start = time.time()
+        importer = SeedMemoryImporter(store, system_start_time=system_start)
+
+        seeds = importer.import_inline_memories(
+            ["第一段身份记忆", "第二段身份记忆"],
+            source_label="identity_bootstrap",
+        )
+
+        assert len(seeds) == 2
+        assert all(seed.timestamp < system_start for seed in seeds)
+        assert all(seed.source == "identity_bootstrap" for seed in seeds)
+        assert [moment.narrative for moment in store.moments] == ["第一段身份记忆", "第二段身份记忆"]
+
+    def test_import_inline_memories_accepts_structured_entries(self, tmp_path):
+        store = AutobiographicalStore(str(tmp_path / "autobio.jsonl"), auto_flush=False)
+        importer = SeedMemoryImporter(store, system_start_time=time.time())
+
+        seeds = importer.import_inline_memories(
+            [
+                {
+                    "summary": "我记得那次温柔的陪伴。",
+                    "source": "identity_bootstrap_structured",
+                    "emotional_tag": "CARE",
+                    "valence": 0.6,
+                    "arousal": 0.3,
+                    "original_section": "care_memory",
+                }
+            ],
+            source_label="identity_bootstrap",
+        )
+
+        assert len(seeds) == 1
+        assert seeds[0].source == "identity_bootstrap_structured"
+        assert seeds[0].emotional_tag == "CARE"
+        assert seeds[0].valence == 0.6
+        assert store.moments[0].event_trigger == "care_memory"

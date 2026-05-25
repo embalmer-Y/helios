@@ -8,7 +8,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from helios_io.action_models import ActionDecision, ActionProposal, ExecutionFeedback
+from helios_io.action_models import ActionDecision, ActionProposal, ExecutionFeedback, ThoughtActionProposal
 
 
 def test_action_proposal_defaults_and_fields():
@@ -51,8 +51,8 @@ def test_action_decision_accepted_tracks_rejection_reason():
 def test_action_proposal_supports_thought_origin_op_payload_and_intensity():
     proposal = ActionProposal(
         proposal_id="p-thought",
-        source_type="preconscious",
-        source_module="preconscious_policy",
+        source_type="thought_action_bridge",
+        source_module="thinking_integration",
         origin_type="thought",
         origin_id="thought::7::rumination::1000",
         intent_type="thought_action",
@@ -67,6 +67,32 @@ def test_action_proposal_supports_thought_origin_op_payload_and_intensity():
     assert proposal.op_name == "send"
     assert proposal.op_params["target_user_id"] == "master"
     assert proposal.outbound_intensity == 0.66
+
+
+def test_thought_action_proposal_round_trips_as_formal_schema():
+    proposal = ThoughtActionProposal(
+        origin_thought_id="thought::7::rumination::1000",
+        thought_type="rumination",
+        scope="external",
+        behavior_name="speak_share",
+        preferred_op="send",
+        params={"target_user_id": "master"},
+        channel_constraints={"candidate_channels": ["qq"], "requires_target_user": True},
+        outbound_intensity=1.4,
+        score=0.72,
+        reason_trace=["trigger_reason=external_stimulus"],
+        governance_hints={"requires_deliberate_review": True},
+    )
+
+    payload = proposal.to_dict()
+    restored = ThoughtActionProposal.from_payload(payload)
+
+    assert payload["outbound_intensity"] == 1.0
+    assert restored is not None
+    assert restored.origin_thought_id == "thought::7::rumination::1000"
+    assert restored.scope == "external"
+    assert restored.preferred_op == "send"
+    assert restored.channel_constraints["candidate_channels"] == ["qq"]
 
 
 def test_execution_feedback_captures_structured_result_details():

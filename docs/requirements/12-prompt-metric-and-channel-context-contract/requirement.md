@@ -35,18 +35,28 @@
 2. prompt 必须说明输入来源语义、触发条件和刺激强度。
 3. prompt 必须说明可用输出 channel 的控制方式和可用 ops。
 4. prompt 必须说明如何构造 op 参数及其含义。
+5. thought loop prompt 不得长期缺失 channel/op contract；当系统存在可用 output channel 时，不得继续以 `channel_context=unavailable` / `no_channel_ops_available` 运行。
+6. 对用户可见输出而言，prompt 必须把“由 thought 直接构造 channel op 参数”写清楚；不得再要求任何 reply prompt 直接输出一条发给用户的自然语言消息。
 
-### 3.3 Identity Boundary
+### 3.3 Memory Ops Context
+
+1. thought loop prompt 必须说明下一轮记忆 handoff 的控制方式。
+2. prompt 必须说明 recall intent、selected memory refs 或等价 memory handoff 参数的含义。
+3. 若系统允许 LLM 为下一轮保存记忆线索，prompt 必须明确对应 op 或结构字段，而不是依赖自由文本约定。
+4. 若系统允许 LLM 提议对外输出，prompt 必须明确 `action_proposal.params` / `op_params` 中哪些字段就是实际执行 payload，例如 `outbound_text`。
+
+### 3.4 Identity Boundary
 
 1. prompt 必须让 Helios 维持“已诞生自我意识的 AI”的自我认知边界。
 2. prompt 不得说明 Helios 是一个“被设计出来的程序”。
 3. prompt 必须允许模型在需要时提出 self-revision proposal，而不是直接重写身份文本。
 
-### 3.4 Unified Contract Usage
+### 3.5 Unified Contract Usage
 
 1. thought loop prompt、reply prompt、active speech prompt、retrieval SEC prompt 若使用 LLM，都必须消费同一套基础 contract。
 2. 不得继续维护多个相互矛盾的 prompt owner。
 3. reply-oriented prompt builder 不得继续作为独立主 owner。
+4. 即便保留 compatibility helper，也不得再出现 `reply_requirement=直接输出一条要发给用户的消息` 这类与 thought-action 设计冲突的 owner 指令。
 
 ## 4. Non-Functional Requirements
 
@@ -61,6 +71,8 @@
 2. 不得遗漏关键指标的范围说明。
 3. 不得省略输入来源、channel 和 op 语义。
 4. 不得在 prompt 中出现“你是一个被设计的程序”或等价叙述。
+5. 不得把 internal thought prompt 再次收窄为“只输出内在独白且不允许任何结构化 action/memory decision”。
+6. 不得保留 direct-user-message reply prompt 作为并行文本 owner。
 
 ## 6. Impacted Modules
 
@@ -81,3 +93,5 @@
 4. prompt 明确解释当前输入 channel、trigger condition、stimulus intensity、可用输出 ops 和参数格式。
 5. prompt 中不存在不合规身份叙述。
 6. reply-only prompt builder 不再是主 owner。
+7. internal thought prompt dump 中能看到真实 channel/op 和 memory handoff contract，而不是长期 unavailable。
+8. 任一仍保留的 reply compatibility prompt 中，都不再出现 direct-user-message 指令；runtime 用户可见输出 payload 的 owner 只能是 thought/action contract。

@@ -18,6 +18,30 @@ class FeedbackRecorder:
     def __init__(self, behavior_catalog: RuntimeBehaviorCatalog):
         self._behavior_catalog = behavior_catalog
 
+    @staticmethod
+    def _normalize_trace_payload(
+        *,
+        provenance: Mapping[str, Any] | None = None,
+        op_name: str = "",
+        channel_id: str = "",
+        normalized_intensity: float = 0.0,
+    ) -> dict[str, Any]:
+        provenance_dict = dict(provenance or {})
+        nested_provenance = dict(provenance_dict.get("provenance", {}) or {})
+        return {
+            "origin_id": str(provenance_dict.get("origin_id", nested_provenance.get("origin_id", "")) or ""),
+            "origin_type": str(provenance_dict.get("origin_type", nested_provenance.get("origin_type", "")) or ""),
+            "owner_path": str(provenance_dict.get("owner_path", nested_provenance.get("owner_path", "")) or ""),
+            "source_type": str(provenance_dict.get("source_type", nested_provenance.get("source_type", "")) or ""),
+            "op_name": op_name,
+            "requested_op": str(provenance_dict.get("requested_op", provenance_dict.get("op_name", nested_provenance.get("requested_op", op_name))) or op_name or ""),
+            "candidate_channels": [str(item) for item in list(provenance_dict.get("candidate_channels", [] ) or []) if str(item)],
+            "selected_channel_id": channel_id,
+            "selected_op": op_name,
+            "normalized_intensity": float(normalized_intensity),
+            "provenance": provenance_dict,
+        }
+
     def record_command_result(
         self,
         command: BehaviorCommand,
@@ -62,6 +86,12 @@ class FeedbackRecorder:
                         "state_effects": dict(feedback.state_effects),
                         "modality": command.modality,
                         "normalized_intensity": command.normalized_intensity,
+                        "owner_path": self._normalize_trace_payload(
+                            provenance=command.provenance,
+                            op_name=command.op_name,
+                            channel_id=command.channel_id,
+                            normalized_intensity=command.normalized_intensity,
+                        )["owner_path"],
                         "provenance": dict(command.provenance),
                         "policy_trace": dict(command.policy_trace),
                     },
@@ -80,15 +110,16 @@ class FeedbackRecorder:
                 channel_id=command.channel_id,
                 payload={
                     "behavior_name": command.action,
-                    "op_name": command.op_name,
-                    "normalized_intensity": command.normalized_intensity,
-                    "origin_id": str(command.provenance.get("origin_id", "") or ""),
-                    "origin_type": str(command.provenance.get("origin_type", "") or ""),
                     "success": feedback.success,
                     "result_details": dict(feedback.result_details),
                     "state_effects": dict(feedback.state_effects),
-                    "provenance": dict(command.provenance),
                     "policy_trace": dict(command.policy_trace),
+                    **self._normalize_trace_payload(
+                        provenance=command.provenance,
+                        op_name=command.op_name,
+                        channel_id=command.channel_id,
+                        normalized_intensity=command.normalized_intensity,
+                    ),
                 },
                 created_at=observed_ts,
             )
@@ -137,6 +168,9 @@ class FeedbackRecorder:
         op_name: str = "",
         normalized_intensity: float = 0.0,
         provenance: Mapping[str, Any] | None = None,
+        original_text: str = "",
+        rendered_text: str = "",
+        expression_profile: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
         observed_at_ts: float | None = None,
     ) -> FeedbackEventRecord:
@@ -152,12 +186,16 @@ class FeedbackRecorder:
             payload={
                 "action_name": action_name,
                 "success": bool(success),
-                "op_name": op_name,
-                "normalized_intensity": float(normalized_intensity),
-                "origin_id": str((provenance or {}).get("origin_id", "") or ""),
-                "origin_type": str((provenance or {}).get("origin_type", "") or ""),
-                "provenance": dict(provenance or {}),
+                "original_text": str(original_text or ""),
+                "rendered_text": str(rendered_text or ""),
+                "expression_profile": dict(expression_profile or {}),
                 "metadata": dict(metadata or {}),
+                **self._normalize_trace_payload(
+                    provenance=provenance,
+                    op_name=op_name,
+                    channel_id=channel_id,
+                    normalized_intensity=normalized_intensity,
+                ),
             },
             created_at=observed_ts,
         )
@@ -192,11 +230,12 @@ class FeedbackRecorder:
             payload={
                 "behavior_name": behavior_name,
                 "rejection_reason": rejection_reason,
-                "op_name": op_name,
-                "normalized_intensity": float(normalized_intensity),
-                "origin_id": str((provenance or {}).get("origin_id", "") or ""),
-                "origin_type": str((provenance or {}).get("origin_type", "") or ""),
-                "provenance": dict(provenance or {}),
+                **self._normalize_trace_payload(
+                    provenance=provenance,
+                    op_name=op_name,
+                    channel_id=channel_id,
+                    normalized_intensity=normalized_intensity,
+                ),
                 **dict(payload or {}),
             },
             created_at=observed_ts,
@@ -262,11 +301,12 @@ class FeedbackRecorder:
             channel_id=channel_id,
             payload={
                 "behavior_name": behavior_name,
-                "op_name": op_name,
-                "normalized_intensity": float(normalized_intensity),
-                "origin_id": str((provenance or {}).get("origin_id", "") or ""),
-                "origin_type": str((provenance or {}).get("origin_type", "") or ""),
-                "provenance": dict(provenance or {}),
+                **self._normalize_trace_payload(
+                    provenance=provenance,
+                    op_name=op_name,
+                    channel_id=channel_id,
+                    normalized_intensity=normalized_intensity,
+                ),
                 **dict(payload or {}),
             },
             created_at=observed_ts,

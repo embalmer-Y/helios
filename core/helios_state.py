@@ -8,6 +8,42 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 
+@dataclass(frozen=True)
+class ContinuationPressureState:
+    """Formal multi-tick continuation owner carried across thought cycles."""
+
+    active: bool = False
+    level: float = 0.0
+    origin_thought_id: str = ""
+    reason: str = ""
+    expires_at_tick: int = 0
+    carry_count: int = 0
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "active": bool(self.active and self.level > 0.0),
+            "level": round(float(self.level), 4),
+            "origin_thought_id": self.origin_thought_id,
+            "reason": self.reason,
+            "expires_at_tick": int(self.expires_at_tick or 0),
+            "carry_count": int(self.carry_count or 0),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> "ContinuationPressureState":
+        if not isinstance(payload, dict):
+            return cls()
+        level = max(0.0, min(float(payload.get("level", 0.0) or 0.0), 1.0))
+        return cls(
+            active=bool(payload.get("active", level > 0.0)),
+            level=level,
+            origin_thought_id=str(payload.get("origin_thought_id", "") or ""),
+            reason=str(payload.get("reason", "") or ""),
+            expires_at_tick=int(payload.get("expires_at_tick", 0) or 0),
+            carry_count=max(0, int(payload.get("carry_count", 0) or 0)),
+        )
+
+
 @dataclass
 class HeliosState:
     """Single source of truth for each tick — created fresh, passed through pipeline."""
@@ -37,7 +73,10 @@ class HeliosState:
     continuation_requested: bool = False
     continuation_pressure: float = 0.0
     continuation_reason: str = ""
+    continuation: ContinuationPressureState = field(default_factory=ContinuationPressureState)
     last_recall_intent: str = ""
+    last_memory_handoff: Dict[str, object] = field(default_factory=dict)
+    current_thought_cycle_result: object | None = None
     last_thought_cycle_result: Dict[str, object] = field(default_factory=dict)
     current_stimuli: list[Dict[str, object]] = field(default_factory=list)
     last_thought_gate_result: Dict[str, object] = field(default_factory=dict)
@@ -75,6 +114,7 @@ class HeliosState:
     separation_hours: float = 0.0
     last_action: str = ""
     pending_reply: Optional[str] = None
+    pending_rendered_reply: Optional[str] = None
     boredom: float = 0.0
     fatigue_pressure: float = 0.0
     restoration_level: float = 0.5
@@ -109,3 +149,32 @@ class HeliosState:
     @phi.setter
     def phi(self, value: float):
         self.icri = value
+
+    def __post_init__(self):
+        self._sync_continuation_fields()
+
+    def _sync_continuation_fields(self):
+        if self.continuation.active or self.continuation.level > 0.0 or self.continuation.reason:
+            normalized = ContinuationPressureState.from_payload(self.continuation.to_dict())
+        elif self.continuation_pressure > 0.0 or self.continuation_reason:
+            normalized = ContinuationPressureState(
+                active=self.continuation_pressure > 0.0,
+                level=max(0.0, min(float(self.continuation_pressure or 0.0), 1.0)),
+                reason=str(self.continuation_reason or ""),
+            )
+        else:
+            normalized = ContinuationPressureState()
+        self.continuation = normalized
+        self.continuation_pressure = normalized.level
+        self.continuation_reason = normalized.reason
+
+    def set_continuation(self, continuation: ContinuationPressureState):
+        self.continuation = ContinuationPressureState.from_payload(continuation.to_dict())
+        self.continuation_pressure = self.continuation.level
+        self.continuation_reason = self.continuation.reason
+
+    def clear_continuation(self):
+        self.set_continuation(ContinuationPressureState())
+
+    def continuation_payload(self) -> Dict[str, object]:
+        return self.continuation.to_dict()

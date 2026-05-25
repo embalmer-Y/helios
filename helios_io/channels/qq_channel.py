@@ -8,6 +8,8 @@ import time
 from typing import Dict, List, Optional
 
 from ..channel import BidirectionalChannel, ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, ChannelStatus
+from ..expression_modulation import modulate_outbound_expression
+from .inbound_text_annotation import annotate_inbound_text_message, evaluate_text_triggers
 
 try:
     from ..protocols.qq import RECONNECT_DELAYS as _QQ_RECONNECT_DELAYS
@@ -15,16 +17,6 @@ except Exception:  # pragma: no cover - runtime fallback for isolated loading
     _QQ_RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 
 log = logging.getLogger("helios.helios_io.channels.qq_channel")
-
-_SEC_KEYS = {
-    "novelty",
-    "pleasantness",
-    "goal_relevance",
-    "goal_congruence",
-    "coping_potential",
-    "agency",
-    "norm_compatibility",
-}
 
 
 class WebSocketReconnector:
@@ -116,7 +108,7 @@ class QQChannel(BidirectionalChannel):
                     name="send",
                     direction="output",
                     description="Send a QQ C2C or group text message.",
-                    input_schema={"message": "ChannelMessage(text, user_id, metadata[message_id|group_id|is_group])"},
+                    input_schema={"message": "ChannelMessage(text, user_id, metadata[message_id|group_id|is_group|normalized_intensity|outbound_intensity])"},
                     output_schema={"success": "bool"},
                 ),
             ],
@@ -152,6 +144,11 @@ class QQChannel(BidirectionalChannel):
             return False
 
         metadata = dict(message.metadata)
+        modulation = modulate_outbound_expression(message.text, metadata)
+        rendered_text = modulation.rendered_text
+        message.metadata["original_text"] = message.text
+        message.metadata["rendered_text"] = rendered_text
+        message.metadata["expression_profile"] = modulation.to_metadata()
         msg_id = metadata.get("message_id", "")
         is_group = metadata.get("is_group", False)
         group_id = metadata.get("group_id", "")
@@ -159,11 +156,11 @@ class QQChannel(BidirectionalChannel):
         try:
             if is_group and group_id:
                 if msg_id:
-                    return bool(client.send_group(group_id, message.text, msg_id=msg_id))
-                return bool(client.send_group(group_id, message.text))
+                    return bool(client.send_group(group_id, rendered_text, msg_id=msg_id))
+                return bool(client.send_group(group_id, rendered_text))
             if msg_id:
-                return bool(client.send_c2c(message.user_id, message.text, msg_id=msg_id))
-            return bool(client.send_c2c(message.user_id, message.text))
+                return bool(client.send_c2c(message.user_id, rendered_text, msg_id=msg_id))
+            return bool(client.send_c2c(message.user_id, rendered_text))
         except Exception as exc:
             log.warning("QQChannel send failed: %s", exc)
             return False
@@ -239,131 +236,10 @@ class QQChannel(BidirectionalChannel):
             return 0
 
     def evaluate_message(self, message: ChannelMessage, state=None) -> Dict[str, float]:
-        cached_triggers = dict(message.metadata.get("event_triggers", {}) or {})
-        if cached_triggers:
-            return cached_triggers
-        if self._sec_evaluator is None or not message.text:
-            return {}
-        try:
-            result = self._sec_evaluator.evaluate(message.text)
-            if self._looks_like_sec_result(result):
-                return self._sec_to_triggers(result)
-            return dict(result or {})
-        except Exception as exc:
-            log.warning("QQChannel SEC evaluation failed: %s", exc)
-            return {}
+        return evaluate_text_triggers(message, self._sec_evaluator, log, "QQChannel")
 
     def _annotate_inbound_message(self, message: ChannelMessage) -> ChannelMessage:
-        if not message.text:
-            return message
-
-        metadata = dict(message.metadata)
-        triggers = dict(metadata.get("event_triggers", {}) or {})
-        sec_result = dict(metadata.get("sec_result", {}) or {})
-
-        if self._sec_evaluator is not None and not triggers:
-            try:
-                evaluation = self._sec_evaluator.evaluate(message.text)
-            except Exception as exc:
-                log.warning("QQChannel inbound annotation failed: %s", exc)
-                evaluation = {}
-
-            if self._looks_like_sec_result(evaluation):
-                sec_result = dict(evaluation)
-                triggers = self._sec_to_triggers(sec_result)
-            else:
-                triggers = dict(evaluation or {})
-                sec_result = self._triggers_to_sec(triggers)
-        elif triggers and not sec_result:
-            sec_result = self._triggers_to_sec(triggers)
-
-        if triggers:
-            metadata["event_triggers"] = triggers
-        if sec_result:
-            metadata["sec_result"] = sec_result
-            metadata["cognitive_impact"] = self._build_cognitive_impact(message.text, sec_result, triggers)
-
-        return ChannelMessage(
-            channel_id=message.channel_id,
-            user_id=message.user_id,
-            text=message.text,
-            timestamp=message.timestamp,
-            metadata=metadata,
-            direction=message.direction,
-        )
-
-    @staticmethod
-    def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
-        return max(minimum, min(maximum, value))
-
-    @classmethod
-    def _looks_like_sec_result(cls, result: object) -> bool:
-        return isinstance(result, dict) and bool(_SEC_KEYS.intersection(result.keys()))
-
-    @classmethod
-    def _sec_to_triggers(cls, sec_result: Dict[str, float]) -> Dict[str, float]:
-        novelty = cls._clamp(sec_result.get("novelty", 0.0))
-        pleasantness = sec_result.get("pleasantness", 0.0)
-        goal_relevance = cls._clamp(sec_result.get("goal_relevance", 0.0))
-        goal_congruence = sec_result.get("goal_congruence", 0.0)
-        coping = cls._clamp(sec_result.get("coping_potential", 0.5))
-        agency = sec_result.get("agency", 0.0)
-        norm = sec_result.get("norm_compatibility", 0.0)
-
-        triggers = {
-            "SEEKING": cls._clamp(0.55 * novelty + 0.45 * goal_relevance + max(goal_congruence, 0.0) * 0.15),
-            "CARE": cls._clamp(max(pleasantness, 0.0) * 0.55 + goal_relevance * 0.25 + max(norm, 0.0) * 0.20),
-            "PLAY": cls._clamp(max(pleasantness, 0.0) * 0.45 + novelty * 0.35 + coping * 0.20),
-            "PANIC": cls._clamp(max(-pleasantness, 0.0) * 0.45 + goal_relevance * 0.35 + (1.0 - coping) * 0.20),
-            "FEAR": cls._clamp(max(-pleasantness, 0.0) * 0.35 + novelty * 0.35 + (1.0 - coping) * 0.30),
-            "RAGE": cls._clamp(max(-goal_congruence, 0.0) * 0.45 + max(-pleasantness, 0.0) * 0.25 + max(-agency, 0.0) * 0.30),
-        }
-        return {key: value for key, value in triggers.items() if value > 0.0}
-
-    @classmethod
-    def _triggers_to_sec(cls, triggers: Dict[str, float]) -> Dict[str, float]:
-        seeking = cls._clamp(triggers.get("SEEKING", 0.0))
-        care = cls._clamp(triggers.get("CARE", 0.0))
-        play = cls._clamp(triggers.get("PLAY", 0.0))
-        panic = cls._clamp(triggers.get("PANIC", 0.0))
-        fear = cls._clamp(triggers.get("FEAR", 0.0))
-        rage = cls._clamp(triggers.get("RAGE", 0.0))
-
-        pleasantness = cls._clamp(0.6 * care + 0.55 * play - 0.45 * panic - 0.4 * fear - 0.5 * rage, -1.0, 1.0)
-        goal_congruence = cls._clamp(0.5 * seeking + 0.3 * care - 0.45 * fear - 0.55 * rage - 0.5 * panic, -1.0, 1.0)
-        agency = cls._clamp(0.2 * seeking - 0.6 * rage - 0.2 * fear, -1.0, 1.0)
-        norm = cls._clamp(0.35 * care + 0.25 * play - 0.3 * rage, -1.0, 1.0)
-
-        return {
-            "novelty": cls._clamp(max(seeking, play * 0.7, fear * 0.6)),
-            "pleasantness": pleasantness,
-            "goal_relevance": cls._clamp(max(seeking, care, panic, fear, rage)),
-            "goal_congruence": goal_congruence,
-            "coping_potential": cls._clamp(0.65 - 0.35 * panic - 0.25 * fear + 0.15 * play),
-            "agency": agency,
-            "norm_compatibility": norm,
-        }
-
-    @classmethod
-    def _build_cognitive_impact(
-        cls,
-        text: str,
-        sec_result: Dict[str, float],
-        triggers: Dict[str, float],
-    ) -> Dict[str, float]:
-        novelty = cls._clamp(sec_result.get("novelty", 0.0))
-        goal_relevance = cls._clamp(sec_result.get("goal_relevance", 0.0))
-        pleasantness = abs(sec_result.get("pleasantness", 0.0))
-        coping = cls._clamp(sec_result.get("coping_potential", 0.5))
-        urgency = cls._clamp(max(triggers.values(), default=0.0))
-        text_density = cls._clamp(len(text.strip()) / 80.0)
-
-        return {
-            "sensory": cls._clamp(0.20 + text_density * 0.35 + novelty * 0.45),
-            "cognitive": cls._clamp(0.15 + goal_relevance * 0.45 + novelty * 0.20 + (1.0 - coping) * 0.20),
-            "self_": cls._clamp(0.10 + goal_relevance * 0.45 + pleasantness * 0.15 + urgency * 0.30),
-            "novelty": cls._clamp(max(novelty, urgency * 0.8)),
-        }
+        return annotate_inbound_text_message(message, self._sec_evaluator, log, "QQChannel")
 
     @staticmethod
     def _normalize_message(msg) -> ChannelMessage:

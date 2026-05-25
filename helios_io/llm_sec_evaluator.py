@@ -17,6 +17,7 @@ import os
 import time
 from typing import Dict, List, Optional
 
+from helios_io.llm_debug import log_llm_request, log_llm_response
 from helios_io.prompt_contract import PromptContractBuilder
 
 log = logging.getLogger("helios.helios_io.llm_sec_evaluator")
@@ -178,6 +179,12 @@ class LLMSECEvaluator:
         self._model = model or os.getenv("HELIOS_LLM_MODEL", "deepseek/deepseek-v4-flash")
         self._api_key = api_key or os.getenv("OPENAI_API_KEY", "")
         self._base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        env_timeout = os.getenv("HELIOS_LLM_SEC_TIMEOUT", "")
+        if timeout == 3.0 and env_timeout:
+            try:
+                timeout = float(env_timeout)
+            except (TypeError, ValueError):
+                pass
         self._timeout = timeout
         self._client = None
         self._prompt_contract_builder = PromptContractBuilder()
@@ -270,6 +277,18 @@ class LLMSECEvaluator:
             self._trim_for_log(system_prompt, 320),
             self._trim_for_log(prompt, 800),
         )
+        log_llm_request(
+            log,
+            path="sec_evaluation",
+            model=self._model,
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            timeout=self._timeout,
+            metadata={
+                "context_count": len(context),
+                "text_len": len(text),
+            },
+        )
 
         t0 = time.time()
         response = client.chat.completions.create(
@@ -289,11 +308,12 @@ class LLMSECEvaluator:
 
         raw_text = response.choices[0].message.content or ""
         parsed = self._parse_sec_response(raw_text)
-        log.debug(
-            "SEC LLM response: elapsed=%.3fs raw=%r parsed=%s",
-            elapsed,
-            self._trim_for_log(raw_text, 500),
-            json.dumps(parsed, ensure_ascii=False),
+        log_llm_response(
+            log,
+            path="sec_evaluation",
+            raw_text=raw_text,
+            clean_text=json.dumps(parsed, ensure_ascii=False, sort_keys=True),
+            metadata={"elapsed_seconds": round(float(elapsed), 3)},
         )
         return parsed
 

@@ -7,6 +7,7 @@ import os
 from typing import Any, Callable, Optional
 
 from ..channel import ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, OutputChannel
+from ..expression_modulation import modulate_outbound_expression
 
 log = logging.getLogger("helios.helios_io.channels.tts_channel")
 
@@ -21,7 +22,7 @@ class TTSChannel(OutputChannel):
         app_key: str = "",
         voice: str = "xiaoyun",
         enabled: bool = True,
-        synthesize_func: Optional[Callable[[str], Any]] = None,
+        synthesize_func: Optional[Callable[..., Any]] = None,
         play_func: Optional[Callable[[Any], bool]] = None,
         force_available: Optional[bool] = None,
     ):
@@ -76,7 +77,7 @@ class TTSChannel(OutputChannel):
                     name="send",
                     direction="output",
                     description="Synthesize outbound text and optionally play it through the speaker.",
-                    input_schema={"message": "ChannelMessage(text)"},
+                    input_schema={"message": "ChannelMessage(text, metadata[normalized_intensity|outbound_intensity|voice])"},
                     output_schema={"success": "bool"},
                 )
             ],
@@ -95,7 +96,18 @@ class TTSChannel(OutputChannel):
         if not self.is_connected():
             return False
         try:
-            audio = self._synthesize(message.text)
+            metadata = dict(message.metadata or {})
+            modulation = modulate_outbound_expression(message.text, metadata)
+            expression_profile = modulation.to_metadata()
+            message.metadata["original_text"] = message.text
+            message.metadata["rendered_text"] = modulation.rendered_text
+            message.metadata["expression_profile"] = expression_profile
+            metadata.setdefault("expression_profile", expression_profile)
+            audio = self._synthesize(
+                modulation.rendered_text,
+                intensity=modulation.normalized_intensity,
+                metadata=metadata,
+            )
             if audio is False:
                 return False
             if self._play_func is not None:
@@ -115,9 +127,20 @@ class TTSChannel(OutputChannel):
     def disconnect(self) -> None:
         self._connected = False
 
-    def _synthesize(self, text: str):
+    def _synthesize(self, text: str, *, intensity: float = 0.0, metadata: Optional[dict[str, Any]] = None):
         if self._synthesize_func is not None:
-            return self._synthesize_func(text)
+            try:
+                return self._synthesize_func(
+                    text=text,
+                    intensity=float(intensity),
+                    metadata=dict(metadata or {}),
+                    voice=str((metadata or {}).get("voice", self._voice) or self._voice),
+                )
+            except TypeError:
+                try:
+                    return self._synthesize_func(text=text)
+                except TypeError:
+                    return self._synthesize_func(text)
         if self._nls is None:
             return False
 

@@ -329,7 +329,7 @@ class DaisySystemEngine:
 
         # 历史
         self.state_history: List[AffectState] = []
-        self.max_history = 200
+        self.max_history = 4096
 
         # v2.5 兼容: 稳态压力 (保留)
         self._dominance_streaks: Dict[str, int] = {n: 0 for n in PANKSEPP_SYSTEMS}
@@ -455,7 +455,7 @@ class DaisySystemEngine:
 
         self.state_history.append(state)
         if len(self.state_history) > self.max_history:
-            self.state_history.pop(0)
+            self.state_history = self.state_history[-self.max_history:]
 
         # ── X5: 心境累积 ──
         if self.mood_tracker is not None:

@@ -21,6 +21,7 @@ class ChannelGateway(EventSource):
         self._output_channels: Dict[str, OutputChannel] = {}
         self._evaluators: Dict[str, object] = dict(evaluators or {})
         self._pending_messages: List[dict] = []
+        self._pending_stimuli: List[dict] = []
 
     def register_channel(self, channel: InputChannel | OutputChannel) -> None:
         channel_id = channel.channel_id
@@ -135,6 +136,7 @@ class ChannelGateway(EventSource):
     def poll(self, state: HeliosState) -> Dict[str, float]:
         inbound_messages = self.poll_all(state)
         self._pending_messages = [self._message_to_dict(message) for message in inbound_messages]
+        self._pending_stimuli = [build_stimulus_envelope(message).to_dict() for message in inbound_messages]
         trigger_dicts: List[Dict[str, float]] = []
         for message in inbound_messages:
             triggers = self._evaluate_message(message, state)
@@ -144,6 +146,9 @@ class ChannelGateway(EventSource):
 
     def get_messages(self) -> List[dict]:
         return list(self._pending_messages)
+
+    def get_stimuli(self) -> List[dict]:
+        return list(self._pending_stimuli)
 
     def _evaluate_message(self, message: ChannelMessage, state: HeliosState) -> Dict[str, float]:
         evaluator = self._evaluators.get(message.channel_id)
@@ -171,7 +176,6 @@ class ChannelGateway(EventSource):
         data.setdefault("text", message.text)
         data.setdefault("timestamp", message.timestamp)
         data.setdefault("direction", message.direction)
-        data.setdefault("stimulus", build_stimulus_envelope(message).to_dict())
         return data
 
     @staticmethod

@@ -46,7 +46,7 @@ class FakePhiEngine:
     phi_value=st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
     dominant=st.sampled_from(["CARE", "SEEKING", "PANIC", "PLAY", "FEAR"]),
 )
-def test_reply_stage_receives_forward_propagated_state(valence, arousal, phi_value, dominant):
+def test_no_thought_tick_retains_forward_propagated_state_without_passive_fallback(valence, arousal, phi_value, dominant):
     with TemporaryDirectory() as temp_dir:
         config = HeliosConfig()
         config.LOG_DIR = temp_dir + "/logs"
@@ -75,24 +75,41 @@ def test_reply_stage_receives_forward_propagated_state(valence, arousal, phi_val
         helios.response_pipeline.generate_reply = MagicMock(return_value="reply")
         helios.response_pipeline.record_exchange = MagicMock()
         helios._channel_gateway.route_outbound = MagicMock(return_value=True)
+        observed_state = {}
+        helios.thinking_integration.generate = MagicMock(
+            side_effect=lambda state: (
+            observed_state.setdefault("state", state),
+                setattr(state, "dmn_active", True),
+                setattr(state, "thought_generated_this_tick", False),
+                setattr(state, "last_thought_type", ""),
+                setattr(state, "last_thought_cycle_result", {"triggered": False, "trigger_reason": "test_no_thought"}),
+                SimpleNamespace(
+                    triggered=False,
+                    thought=None,
+                    action_proposal={},
+                ),
+            )[-1]
+        )
 
         helios._msg_queue.put({"text": "聊聊现在的感受", "user_id": "user-a"})
 
-        helios._tick()
+        try:
+            helios._tick()
 
-        forwarded_state = helios.response_pipeline.generate_reply.call_args[0][1]
-        assert forwarded_state.valence == valence
-        assert forwarded_state.arousal == arousal
-        assert forwarded_state.dominant_system == dominant
-        assert forwarded_state.icri == phi_value
-        assert forwarded_state.phi == phi_value
-        assert forwarded_state.consciousness_label == "focused"
-        assert forwarded_state.panksepp[dominant] == max(arousal, 0.2)
-        assert forwarded_state.personality_traits == helios.personality._trait_dict()
-        assert forwarded_state.temporal_state is not None
-        assert 0.0 <= forwarded_state.boredom <= 1.0
-        assert 0.0 <= forwarded_state.restoration_level <= 1.0
-
-        for handler in list(helios.log.handlers):
-            handler.close()
-            helios.log.removeHandler(handler)
+            forwarded_state = observed_state["state"]
+            assert forwarded_state.valence == valence
+            assert forwarded_state.arousal == arousal
+            assert forwarded_state.dominant_system == dominant
+            assert forwarded_state.icri == phi_value
+            assert forwarded_state.phi == phi_value
+            assert forwarded_state.consciousness_label == "focused"
+            assert forwarded_state.panksepp[dominant] == max(arousal, 0.2)
+            assert forwarded_state.personality_traits == helios.personality._trait_dict()
+            assert forwarded_state.temporal_state is not None
+            assert 0.0 <= forwarded_state.boredom <= 1.0
+            assert 0.0 <= forwarded_state.restoration_level <= 1.0
+            helios.response_pipeline.generate_reply.assert_not_called()
+        finally:
+            for handler in list(helios.log.handlers):
+                handler.close()
+                helios.log.removeHandler(handler)

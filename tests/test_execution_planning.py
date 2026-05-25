@@ -323,8 +323,8 @@ def test_execution_planner_accepts_thought_origin_external_behavior_and_normaliz
     planner = ExecutionPlanner(PolicyEvaluator())
     proposal = ActionProposal(
         proposal_id="p-4c",
-        source_type="preconscious",
-        source_module="preconscious_policy",
+        source_type="thought_action_bridge",
+        source_module="thinking_integration",
         origin_type="thought",
         origin_id="thought::7::rumination::1000",
         intent_type="thought_action",
@@ -368,8 +368,8 @@ def test_execution_planner_rejects_requested_op_when_channel_does_not_support_it
     planner = ExecutionPlanner(PolicyEvaluator())
     proposal = ActionProposal(
         proposal_id="p-4d",
-        source_type="preconscious",
-        source_module="preconscious_policy",
+        source_type="thought_action_bridge",
+        source_module="thinking_integration",
         origin_type="thought",
         origin_id="thought::7::rumination::1000",
         intent_type="thought_action",
@@ -406,8 +406,8 @@ def test_execution_planner_rejects_thought_origin_channel_behavior_without_expli
     planner = ExecutionPlanner(PolicyEvaluator())
     proposal = ActionProposal(
         proposal_id="p-4e",
-        source_type="preconscious",
-        source_module="preconscious_policy",
+        source_type="thought_action_bridge",
+        source_module="thinking_integration",
         origin_type="thought",
         origin_id="thought::7::rumination::1000",
         intent_type="thought_action",
@@ -443,8 +443,8 @@ def test_execution_planner_rejects_missing_required_op_inputs():
     planner = ExecutionPlanner(PolicyEvaluator())
     proposal = ActionProposal(
         proposal_id="p-4f",
-        source_type="preconscious",
-        source_module="preconscious_policy",
+        source_type="thought_action_bridge",
+        source_module="thinking_integration",
         origin_type="thought",
         origin_id="thought::7::rumination::1000",
         intent_type="thought_action",
