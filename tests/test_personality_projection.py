@@ -133,7 +133,7 @@ def test_unified_personality_contract_exposes_shared_descriptor_and_trace():
 def test_unified_personality_contract_falls_back_to_neutral_defaults_when_missing_inputs():
     descriptor, trace = build_personality_contract(source_path="active_speech_generation")
 
-    assert descriptor.persona_text_summary == "温柔、忠诚、有情感"
+    assert descriptor.persona_text_summary == "20岁女大学生、平时可爱、有点腹黑、没有分寸"
     assert descriptor.fallback_state.projection_missing is True
     assert descriptor.fallback_state.default_values_used is True
     assert descriptor.fallback_state.degradation_reason == "projection_missing,traits_missing"

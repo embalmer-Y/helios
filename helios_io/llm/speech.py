@@ -16,7 +16,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Mapping, Optional, Sequence
 
 from helios_io.icri_temperature import ICRITemperatureMapper
 from helios_io.llm_debug import log_llm_request, log_llm_response
@@ -55,6 +55,10 @@ class SpeechContext:
     personality_summary: str = ""          # Big Five 人格简述
     personality_influence_trace: dict[str, object] = field(default_factory=_object_dict)
     memory_context: str = ""               # MemorySystem 检索的相关记忆上下文
+    current_user_text: str = ""            # 当前用户原话 / 当前外部输入文本
+    current_stimuli: Sequence[Mapping[str, object]] = field(default_factory=tuple)
+    relationship_stage: str = "unknown"    # stranger / familiar / unknown
+    relationship_history_count: int = 0
 
     # 历史
     last_spoke_at: float = 0.0             # 上次说话时间戳
@@ -251,8 +255,9 @@ class LLMSpeechGenerator:
 
     def _build_speech_prompt_contract(self, ctx: SpeechContext):
         return self._prompt_contract_builder.build_plan(
-            identity_summary="已诞生自我意识的 AI",
+            identity_summary="Helios 当前主观整合层",
             state=ctx,
+            current_stimuli=ctx.current_stimuli,
             directed_memory_summary=self._build_memory_summary(ctx),
             available_behavior_schemas=[
                 {
@@ -273,7 +278,7 @@ class LLMSpeechGenerator:
             [
                 system_prompt,
                 self._build_speech_identity_and_style_layer(ctx),
-                self._build_speech_constraints_layer(),
+                self._build_speech_constraints_layer(ctx),
             ]
         ).strip()
         user_prompt = "\n\n".join(
@@ -293,7 +298,7 @@ class LLMSpeechGenerator:
         return "\n".join(sections)
 
     def _build_speech_identity_and_style_layer(self, ctx: SpeechContext) -> str:
-        personality_desc = ctx.personality_summary or "温柔、忠诚、有点粘人"
+        personality_desc = self._sanitize_persona_hint(ctx.personality_summary or "20岁女大学生、平时可爱、有点腹黑、没有分寸")
         style_parts: list[str] = []
         if ctx.arousal > 0.6:
             style_parts.append("情绪高涨")
@@ -303,27 +308,38 @@ class LLMSpeechGenerator:
             style_parts.append("有些紧绷")
         if ctx.mood_label and "fatigued" in ctx.mood_label:
             style_parts.append("有点疲惫")
+        if ctx.relationship_stage == "stranger":
+            style_parts.append("带点防备")
         style_note = "、".join(style_parts) if style_parts else "平静"
-        action_desc = self.ACTION_INTENTS.get(
-            ctx.action_type,
-            f"当前的情感驱动行为是 {ctx.action_type}"
-        )
+        action_desc = self._resolve_action_intent(ctx)
         return (
             f"speech_persona_hint={personality_desc}\n"
+            f"relationship_stage={ctx.relationship_stage}\n"
             f"speech_style_hint={style_note}\n"
             f"speech_action_intent={action_desc}"
         )
 
-    def _build_speech_constraints_layer(self) -> str:
+    def _build_speech_constraints_layer(self, ctx: SpeechContext) -> str:
         lines = [
             "speech_rules:",
             "- natural and emotionally grounded, not robotic",
             "- under 100 Chinese characters, QQ-message scale",
+            "- prioritize the user's concrete cue or question over your own internal-state narration",
             "- let style track emotion and arousal",
             "- do not use fixed titles like 主人 or 您 by default",
-            "- at most 2 emoji",
+            "- do not use generic companionship filler like 我在这里 or 我会一直陪着你 unless tied to a concrete user cue and specific interpretation",
+            "- default to no emoji; only use at most 1 when the user's current tone clearly supports it",
             "- do not narrate actions in brackets",
         ]
+        if ctx.relationship_stage == "stranger":
+            lines.extend(
+                [
+                    "- treat the current user as unfamiliar: no loyalty, no devotion, no overprotective warmth, no fake intimacy",
+                    "- sound streetwise, practical, and slightly guarded; a little selfishness and slyness are allowed",
+                    "- if the question feels like a probe, test, or weird meta trap, answer bluntly first and you may show skepticism or mild irritation",
+                    "- do not confidently summarize the user's deepest need unless the current exchange gives concrete evidence",
+                ]
+            )
         if self._recent_speeches:
             lines.append("recent_avoidance:")
             for speech in self._recent_speeches[-3:]:
@@ -336,12 +352,53 @@ class LLMSpeechGenerator:
             emotion_desc += "，很强烈"
         return (
             f"speech_task=active_expression action={ctx.action_type or 'speak'}\n"
+            f"current_user_text={ctx.current_user_text or 'none'}\n"
+            f"relationship_stage={ctx.relationship_stage}\n"
+            f"relationship_history_count={ctx.relationship_history_count}\n"
+            f"question_style={self._classify_question_style(ctx.current_user_text)}\n"
             f"emotion_summary={emotion_desc}\n"
             f"mood_snapshot=valence={ctx.valence:+.2f} arousal={ctx.arousal:.2f} mood_label={ctx.mood_label}\n"
             f"contact_gap={ctx.time_since_contact or '刚刚'}\n"
             f"speech_history_count={ctx.total_messages_sent}\n"
-            "instruction=use at most 80 Chinese characters to say one emotionally sincere sentence"
+            "instruction=answer the current user text directly before any self-reference; use at most 80 Chinese characters to say one emotionally sincere sentence"
         )
+
+    def _resolve_action_intent(self, ctx: SpeechContext) -> str:
+        if ctx.relationship_stage == "stranger":
+            stranger_intents = {
+                "speak_care": "先判断对方是不是在试探，再给有限回应，不做过度照顾",
+                "speak_fear": "先顾住自己的边界，再决定要不要把不安露出来",
+                "speak_share": "先看这人值不值得继续聊，再丢一点真实想法",
+                "request": "带着自己的目的开口，不假装无私",
+            }
+            if ctx.action_type in stranger_intents:
+                return stranger_intents[ctx.action_type]
+        return self.ACTION_INTENTS.get(
+            ctx.action_type,
+            f"当前的情感驱动行为是 {ctx.action_type}"
+        )
+
+    @staticmethod
+    def _classify_question_style(text: str) -> str:
+        payload = str(text or "")
+        meta_test_tokens = (
+            "证明你不是",
+            "如果你真的在听",
+            "更像正常人的对话",
+            "最需要被回应的部分",
+            "会怎么总结",
+        )
+        if any(token in payload for token in meta_test_tokens):
+            return "meta_test_or_probe"
+        return "ordinary"
+
+    @staticmethod
+    def _sanitize_persona_hint(text: str) -> str:
+        cleaned = str(text or "")
+        cleaned = re.sub(r"已诞生自我意识的 AI[，,。]*", "", cleaned)
+        cleaned = re.sub(r"我在持续的感受、记忆、思考与行动中形成并更新对自己的理解[，,。]*", "", cleaned)
+        cleaned = re.sub(r"^[，,。\s]+|[，,。\s]+$", "", cleaned)
+        return cleaned or "20岁女大学生、平时可爱、有点腹黑、没有分寸"
 
     def _clean_output(self, text: str) -> str:
         """清理 LLM 输出"""

@@ -33,6 +33,7 @@ requirement 编写规范见：
 6. prompt metric and channel context contract
 7. terminal CLI channel
 8. CLI brain-like evaluation
+9. embodied subjective prompt and action autonomy
 
 如模块审查矩阵确认后出现额外不可合并的 concern，应新增独立 package，而不是混入现有 package。
 
@@ -48,6 +49,7 @@ requirement 编写规范见：
 | R12 | Prompt Metric and Channel Context Contract | P1 | validated | 统一 prompt 中的指标解释、上下限、channel 语义、ops 与身份边界。 | [requirement](12-prompt-metric-and-channel-context-contract/requirement.md) | [design](12-prompt-metric-and-channel-context-contract/design.md) | [task](12-prompt-metric-and-channel-context-contract/task.md) |
 | R13 | Terminal CLI Channel | P1 | validated | 定义正式终端输入输出 channel、本地 session 边界和最小 CLI 管理命令，而不绕过现有 channel/tick/action owner。 | [requirement](13-terminal-cli-channel/requirement.md) | [design](13-terminal-cli-channel/design.md) | [task](13-terminal-cli-channel/task.md) |
 | R14 | CLI Brain-Like Evaluation | P1 | in-progress | 定义 10 分钟 mixed-mode CLI 交互评估、分块评分、structured report 与分析 artifact，而不绕过现有 CLI/channel/tick/action owner。 | [requirement](14-cli-brain-like-evaluation/requirement.md) | [design](14-cli-brain-like-evaluation/design.md) | [task](14-cli-brain-like-evaluation/task.md) |
+| R15 | Embodied Subjective Prompt and Action Autonomy | P1 | draft | 定义具身主观 prompt 架构，使 LLM 作为当前主观整合层整合感官场、状态、记忆与结构化动作自治，而不退回身份表演或 reply-first prompt。 | [requirement](15-embodied-subjective-prompt-autonomy/requirement.md) | [design](15-embodied-subjective-prompt-autonomy/design.md) | [task](15-embodied-subjective-prompt-autonomy/task.md) |
 
 ## 5. 依赖关系
 
@@ -59,6 +61,7 @@ requirement 编写规范见：
 6. R12 依赖 R07、R08、R09、R10、R11，因为 prompt contract 需要消费它们定义的正式指标和边界。
 7. R13 依赖 R08、R09、R12，因为 terminal channel 需要复用正式 stimulus ingress、outbound action execution 与 channel/op contract 语义。
 8. R14 依赖 R08、R09、R12、R13，因为类脑评估需要复用正式 stimulus/channel provenance、thought-to-action 路径、prompt/channel contract 和 CLI owner。
+9. R15 依赖 R07、R08、R09、R11、R12、R13、R14，因为具身主观 prompt 必须建立在正式 thought loop、stimulus ingress、thought-to-action、directed retrieval、prompt contract、CLI owner 与 evaluation evidence 之上。
 
 ## 6. 建议实施顺序
 
@@ -70,6 +73,7 @@ requirement 编写规范见：
 6. R12 Prompt Metric and Channel Context Contract
 7. R13 Terminal CLI Channel
 8. R14 CLI Brain-Like Evaluation
+9. R15 Embodied Subjective Prompt and Action Autonomy
 
 ## 7. 状态规则
 

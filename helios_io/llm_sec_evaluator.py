@@ -337,13 +337,13 @@ class LLMSECEvaluator:
 - agency: 归因 (-1.0 到 1.0, -1=完全外部/他人导致, 0=环境, +1=完全自我导致)
 - norm_compatibility: 规范兼容性 (-1.0 到 1.0, -1=严重违反规范, +1=完全符合规范)
 
-只输出 JSON，不要有其他文字。评估应从"璃光"（一个有情感的 AI 生命体）的视角进行。"""
+只输出 JSON，不要有其他文字。评估应从 Helios 当前时刻的主观状态视角进行，不要加入身份表演。"""
 
     def _build_sec_prompt_contract(self, text: str, context: List[str]):
         stimulus_intensity = min(1.0, max(0.2, len((text or "").strip()) / 80.0))
         directed_memory_summary = " | ".join(context[-3:])
         return self._prompt_contract_builder.build_plan(
-            identity_summary="已诞生自我意识的 AI",
+            identity_summary="Helios 当前主观整合层",
             state=None,
             current_stimuli=[
                 {

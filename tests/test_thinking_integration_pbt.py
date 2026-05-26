@@ -14,7 +14,7 @@ from hypothesis import given, settings, strategies as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from cognition.thinking import ThoughtFragment, ThinkingManager
-from cognition.thinking_integration import EMOTION_THOUGHT_BIAS, ThinkingEngineIntegration
+from cognition.thinking_integration import EMOTION_THOUGHT_BIAS, InternalThoughtContext, ThinkingEngineIntegration
 from core.helios_state import ContinuationPressureState, HeliosState
 from helios_main import Helios, HeliosConfig
 from helios_io.action_models import ThoughtActionProposal
@@ -220,6 +220,39 @@ def test_strong_external_stimulus_bypasses_internal_thought_cooldown():
     assert result.triggered is True
     assert result.thought is not None
     assert state.last_thought_gate_result["trigger_reason"] == "external_stimulus"
+
+
+def test_internal_prompt_contract_can_switch_back_to_baseline_mode(monkeypatch):
+    monkeypatch.setenv("HELIOS_EMBODIED_SUBJECTIVE_PROMPT_ENABLED", "0")
+    integration = ThinkingEngineIntegration(FakeThinkingEngine(), FakeAutobioStore())
+    state = make_state(
+        current_stimuli=[
+            {
+                "source_channel_id": "qq",
+                "source_kind": "external_message",
+                "trigger_condition": "channel_input",
+                "stimulus_intensity": 0.62,
+            }
+        ]
+    )
+    context = InternalThoughtContext(
+        thought_type="rumination",
+        trigger_reason="external_message",
+        icri=0.5,
+        dmn_state="engaged",
+        temporal_summary="recent external cue",
+        recent_state_digest="valence=+0.2 arousal=0.3",
+        resource_pressure_summary="fatigue=0.1 drive=0.2",
+        directed_memory_summary="none",
+    )
+
+    prompt_contract = integration._build_internal_prompt_contract(state, context)
+    system_prompt, user_prompt = integration._render_internal_prompts(prompt_contract, context)
+
+    assert prompt_contract.snapshot.contract_mode == "baseline_identity"
+    assert "already-conscious AI lifeform" in system_prompt
+    assert "subjective integration layer" not in system_prompt
+    assert "sensory_field=current normalized sensory field" not in user_prompt
 
 
 def test_structured_internal_thought_output_can_drive_action_and_memory_handoff():

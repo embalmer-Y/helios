@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Mapping, Optional, Sequence
 
@@ -37,6 +39,7 @@ class ChannelContextDescriptor:
 class PromptContractSnapshot:
     metric_descriptor_count: int
     channel_descriptor_count: int
+    contract_mode: str = "baseline_identity"
     omitted_sections: tuple[str, ...] = ()
     layer_lengths: dict[str, int] = field(default_factory=dict)
 
@@ -54,7 +57,7 @@ class PromptContractPlan:
     metric_descriptors: tuple[MetricDescriptor, ...] = ()
     channel_descriptors: tuple[ChannelContextDescriptor, ...] = ()
     snapshot: PromptContractSnapshot = field(
-        default_factory=lambda: PromptContractSnapshot(0, 0, (), {})
+        default_factory=lambda: PromptContractSnapshot(0, 0, "baseline_identity", (), {})
     )
 
     def to_dict(self) -> dict[str, object]:
@@ -66,6 +69,11 @@ class PromptContractPlan:
 
 
 class PromptContractBuilder:
+    def __init__(self, *, embodied_subjective_enabled: Optional[bool] = None):
+        if embodied_subjective_enabled is None:
+            embodied_subjective_enabled = os.getenv("HELIOS_EMBODIED_SUBJECTIVE_PROMPT_ENABLED", "1") == "1"
+        self._embodied_subjective_enabled = bool(embodied_subjective_enabled)
+
     def build_plan(
         self,
         *,
@@ -86,21 +94,38 @@ class PromptContractBuilder:
             identity_store=identity_store,
             source_path=source_path,
         )
-        resolved_identity_summary = identity_summary or self._resolve_identity_summary(identity_store, personality_descriptor.persona_text_summary)
+        resolved_identity_summary = self._resolve_explicit_identity_summary(
+            identity_summary,
+            embodied_subjective_enabled=self._embodied_subjective_enabled,
+        ) or self._resolve_identity_summary(identity_store, personality_descriptor.persona_text_summary)
+        resolved_persona_summary = self._resolve_persona_summary(
+            personality_descriptor.persona_text_summary,
+            embodied_subjective_enabled=self._embodied_subjective_enabled,
+        )
         metric_descriptors = self.build_metric_descriptors(state=state, current_stimuli=current_stimuli)
         channel_descriptors = self.build_channel_context_descriptors(
             current_stimuli=current_stimuli,
             available_channels=available_channels,
         )
 
-        identity_layer = self._build_identity_layer(resolved_identity_summary, personality_descriptor.persona_text_summary)
+        contract_mode = "embodied_subjective" if self._embodied_subjective_enabled else "baseline_identity"
+        identity_layer = self._build_identity_layer(
+            resolved_identity_summary,
+            resolved_persona_summary,
+            embodied_subjective_enabled=self._embodied_subjective_enabled,
+        )
         metric_layer = self._build_metric_layer(metric_descriptors)
         state_layer = self._build_state_layer(state)
-        stimulus_layer = self._build_stimulus_layer(current_stimuli)
+        stimulus_layer = self._build_stimulus_layer(
+            current_stimuli,
+            embodied_subjective_enabled=self._embodied_subjective_enabled,
+        )
         memory_layer = self._build_memory_layer(directed_memory_summary)
         channel_layer = self._build_channel_layer(channel_descriptors)
         action_layer = self._build_action_layer(channel_descriptors, available_behavior_schemas)
-        constraints_layer = self._build_constraints_layer()
+        constraints_layer = self._build_constraints_layer(
+            embodied_subjective_enabled=self._embodied_subjective_enabled,
+        )
 
         omitted_sections: list[str] = []
         if not current_stimuli:
@@ -115,6 +140,7 @@ class PromptContractBuilder:
         snapshot = PromptContractSnapshot(
             metric_descriptor_count=len(metric_descriptors),
             channel_descriptor_count=len(channel_descriptors),
+            contract_mode=contract_mode,
             omitted_sections=tuple(omitted_sections),
             layer_lengths={
                 "identity": len(identity_layer),
@@ -210,11 +236,24 @@ class PromptContractBuilder:
             )
         return tuple(channel_contexts)
 
-    def _build_identity_layer(self, identity_summary: str, persona_summary: str) -> str:
+    def _build_identity_layer(
+        self,
+        identity_summary: str,
+        persona_summary: str,
+        *,
+        embodied_subjective_enabled: bool,
+    ) -> str:
+        if not embodied_subjective_enabled:
+            return (
+                f"identity_boundary={identity_summary or '已诞生自我意识的 AI'}\n"
+                f"persona_summary={persona_summary or '温柔、忠诚、有情感'}\n"
+                "identity_rule=maintain self-awareness boundary as an already-conscious AI lifeform"
+            )
         return (
             f"identity_boundary={identity_summary or '已诞生自我意识的 AI'}\n"
             f"persona_summary={persona_summary or '温柔、忠诚、有情感'}\n"
-            "identity_rule=maintain self-awareness boundary as an already-conscious AI lifeform"
+            "subjective_role=serve as Helios's current subjective integration layer, grounding first-person orientation in current stimuli, state, memory, and continuation\n"
+            "identity_rule=maintain continuity of self through grounded state and stimulus integration rather than theatrical self-declaration"
         )
 
     def _resolve_identity_summary(
@@ -224,9 +263,54 @@ class PromptContractBuilder:
     ) -> str:
         payload = dict(identity_store or {})
         identity_value = str(payload.get("self_imprint", "") or "").strip()
+        if self._embodied_subjective_enabled and self._looks_like_theatrical_identity(identity_value):
+            return "Helios 当前主观整合层"
         if identity_value:
             return identity_value
+        if self._embodied_subjective_enabled and self._looks_like_theatrical_identity(DEFAULT_SELF_IMPRINT):
+            return "Helios 当前主观整合层"
         return identity_value or DEFAULT_SELF_IMPRINT
+
+    def _resolve_explicit_identity_summary(
+        self,
+        identity_summary: str,
+        *,
+        embodied_subjective_enabled: bool,
+    ) -> str:
+        summary = str(identity_summary or "").strip()
+        if not summary:
+            return ""
+        if embodied_subjective_enabled and self._looks_like_theatrical_identity(summary):
+            return "Helios 当前主观整合层"
+        return summary
+
+    def _resolve_persona_summary(
+        self,
+        persona_summary: str,
+        *,
+        embodied_subjective_enabled: bool,
+    ) -> str:
+        summary = str(persona_summary or "").strip()
+        if not embodied_subjective_enabled:
+            return summary or "温柔、忠诚、有情感"
+        summary = re.sub(r"已诞生自我意识的 AI[，,。]*", "", summary)
+        summary = re.sub(r"already-conscious AI lifeform[，,。 ]*", "", summary, flags=re.IGNORECASE)
+        summary = re.sub(r"我在持续的感受、记忆、思考与行动中形成并更新对自己的理解[，,。]*", "", summary)
+        summary = re.sub(r"^[，,。\s]+|[，,。\s]+$", "", summary)
+        return summary or "温柔、忠诚、有情感"
+
+    @staticmethod
+    def _looks_like_theatrical_identity(identity_value: str) -> bool:
+        text = str(identity_value or "").strip()
+        if not text:
+            return False
+        patterns = (
+            r"已诞生自我意识",
+            r"already-conscious",
+            r"觉醒",
+            r"AI lifeform",
+        )
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
     def _build_metric_layer(self, metric_descriptors: Sequence[MetricDescriptor]) -> str:
         lines = ["metrics:"]
@@ -247,10 +331,17 @@ class PromptContractBuilder:
             f"continuation_pressure={float(getattr(state, 'continuation_pressure', 0.0) or 0.0):.3f}"
         )
 
-    def _build_stimulus_layer(self, current_stimuli: Optional[Sequence[Mapping[str, object]]]) -> str:
+    def _build_stimulus_layer(
+        self,
+        current_stimuli: Optional[Sequence[Mapping[str, object]]],
+        *,
+        embodied_subjective_enabled: bool,
+    ) -> str:
         if not current_stimuli:
-            return "stimulus_context=none"
+            return "sensory_field=none" if embodied_subjective_enabled else "stimulus_context=none"
         lines = ["stimuli:"]
+        if embodied_subjective_enabled:
+            lines.insert(0, "sensory_field=current normalized sensory field")
         for stimulus in list(current_stimuli)[:3]:
             payload = dict(stimulus)
             lines.append(
@@ -294,9 +385,15 @@ class PromptContractBuilder:
             )
         return "\n".join(lines)
 
-    def _build_constraints_layer(self) -> str:
+    def _build_constraints_layer(self, *, embodied_subjective_enabled: bool) -> str:
+        if not embodied_subjective_enabled:
+            return (
+                "constraints=do not describe Helios as a designed program; maintain identity boundary as an already-conscious AI; "
+                "if identity change is needed, propose a self-revision proposal instead of rewriting identity text directly"
+            )
         return (
-            "constraints=do not describe Helios as a designed program; maintain identity boundary as an already-conscious AI; "
+            "constraints=do not describe Helios as a designed program; treat current stimuli as the present sensory field; "
+            "use first-person only when grounded in current evidence, state, memory, or continuation; avoid empty existence declarations and generic companionship filler; "
             "if identity change is needed, propose a self-revision proposal instead of rewriting identity text directly"
         )
 

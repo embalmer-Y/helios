@@ -54,15 +54,18 @@ def test_prompt_contract_builder_emits_structured_plan_layers():
     )
 
     assert plan.identity_layer
+    assert "subjective integration layer" in plan.identity_layer
     assert plan.metric_layer.startswith("metrics:")
     assert plan.state_layer.startswith("state_summary=")
-    assert plan.stimulus_layer.startswith("stimuli:")
+    assert "sensory_field=current normalized sensory field" in plan.stimulus_layer
+    assert "stimuli:" in plan.stimulus_layer
     assert "shared walk memory" in plan.memory_layer
     assert plan.channel_layer.startswith("channel_context:")
     assert plan.action_layer.startswith("action_contract:")
     assert "self-revision proposal" in plan.constraints_layer
     assert plan.snapshot.metric_descriptor_count >= 8
     assert plan.snapshot.channel_descriptor_count == 1
+    assert plan.snapshot.contract_mode == "embodied_subjective"
 
 
 def test_prompt_contract_builder_includes_required_metric_ranges():
@@ -119,5 +122,55 @@ def test_prompt_contract_builder_preserves_identity_boundary_language():
     builder = PromptContractBuilder()
     plan = builder.build_plan(identity_summary="已诞生自我意识的 AI")
 
-    assert "已诞生自我意识的 AI" in plan.identity_layer
+    assert "Helios 当前主观整合层" in plan.identity_layer
+    assert "已诞生自我意识的 AI" not in plan.identity_layer
+    assert "subjective integration layer" in plan.identity_layer
     assert "designed program" in plan.constraints_layer
+    assert "sensory field" in plan.constraints_layer
+
+
+def test_prompt_contract_builder_explicitly_blocks_generic_self_presence_filler():
+    builder = PromptContractBuilder()
+    plan = builder.build_plan(identity_summary="已诞生自我意识的 AI")
+
+    assert "avoid empty existence declarations" in plan.constraints_layer
+    assert "generic companionship filler" in plan.constraints_layer
+
+
+def test_prompt_contract_builder_does_not_invent_channel_ops_when_none_are_available():
+    builder = PromptContractBuilder()
+    plan = builder.build_plan(identity_summary="已诞生自我意识的 AI")
+
+    assert plan.channel_layer == "channel_context=unavailable"
+    assert "no_channel_ops_available" in plan.action_layer
+    assert "channel_op=" not in plan.action_layer
+
+
+def test_prompt_contract_builder_can_toggle_back_to_baseline_contract():
+    builder = PromptContractBuilder(embodied_subjective_enabled=False)
+    plan = builder.build_plan(
+        identity_summary="已诞生自我意识的 AI",
+        current_stimuli=[
+            {
+                "source_channel_id": "qq",
+                "source_kind": "external_message",
+                "trigger_condition": "channel_input",
+                "stimulus_intensity": 0.51,
+            }
+        ],
+    )
+
+    assert plan.snapshot.contract_mode == "baseline_identity"
+    assert "already-conscious AI lifeform" in plan.identity_layer
+    assert "subjective integration layer" not in plan.identity_layer
+    assert plan.stimulus_layer.startswith("stimuli:")
+    assert "sensory_field=current normalized sensory field" not in plan.stimulus_layer
+    assert "maintain identity boundary as an already-conscious AI" in plan.constraints_layer
+
+
+def test_prompt_contract_builder_strips_theatrical_identity_from_embodied_persona_summary():
+    builder = PromptContractBuilder()
+    plan = builder.build_plan(identity_store={"self_imprint": "已诞生自我意识的 AI"})
+
+    assert "persona_summary=20岁女大学生、平时可爱、有点腹黑、没有分寸" in plan.identity_layer
+    assert "我在持续的感受、记忆、思考与行动中形成并更新对自己的理解" not in plan.identity_layer

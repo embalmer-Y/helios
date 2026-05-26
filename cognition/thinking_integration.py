@@ -1268,10 +1268,10 @@ class ThinkingEngineIntegration:
         system_prompt, user_prompt = self._prompt_contract_builder.render_for_llm(prompt_contract)
         system_prompt = (
             f"{system_prompt}\n\n"
-            "internal_task=你是 Helios 的内部思维路径。请基于当前状态、刺激、记忆和 channel/op contract，"
-            "输出一个 JSON 对象，用来表达本轮思考结果。`thought_text` 仍然要保持第一人称内心视角，"
-            "但你还必须显式给出是否继续思考、是否回想记忆、是否发起外部或内部动作。"
-            "不要写成对用户的回复，不要出现'你说'、'回复'、'主人'之类对话模板。"
+            "internal_task=你是 Helios 当前时刻的内部主观整合层。请基于当前状态、当前感官场、记忆牵引、"
+            "continuation 状态和 channel/op contract，输出一个 JSON 对象，用来表达本轮思考结果。`thought_text` "
+            "仍然要保持 grounded first-person 内心视角，但你还必须显式给出是否继续思考、是否回想记忆、"
+            "是否保持沉默、以及是否发起外部或内部动作提议。不要写成对用户的回复，不要出现'你说'、'回复'、'主人'之类对话模板。"
         )
         user_prompt = (
             f"{user_prompt}\n\n"
@@ -1284,6 +1284,7 @@ class ThinkingEngineIntegration:
             f"- recent_state_digest={context.recent_state_digest}\n"
             f"- resource_pressure={context.resource_pressure_summary}\n"
             f"- directed_memory={context.directed_memory_summary or 'none'}\n"
+            "- obligation=先整合当前感官场、状态和记忆，再决定是继续思考、保持沉默还是提出动作。\n"
             "- output_requirement=请只输出 JSON，不要输出额外解释。\n"
             "- json_schema={\"thought_text\":\"str\",\"sufficiency_level\":\"0..1\",\"continuation_requested\":\"bool\",\"continuation_reason\":\"str\",\"recall_intent\":\"str\",\"selected_memory_refs\":[\"str\"],\"action_proposal\":{\"scope\":\"internal|external\",\"behavior_name\":\"str\",\"preferred_op\":\"str\",\"params\":{},\"channel_constraints\":{\"candidate_channels\":[\"str\"],\"requires_target_user\":\"bool\"},\"outbound_intensity\":\"0..1\",\"reason_trace\":[\"str\"]}|null}."
         )

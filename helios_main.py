@@ -2349,6 +2349,28 @@ class Helios:
                 source_path="active_speech_generation",
             )
 
+            current_stimuli = tuple(getattr(state, "current_stimuli", None) or ())
+            current_user_text = ""
+            current_user_id = ""
+            for stimulus in reversed(current_stimuli):
+                payload = dict(dict(stimulus).get("payload", {}) or {})
+                text = str(payload.get("text", "") or "").strip()
+                user_id = str(payload.get("user_id", "") or "").strip()
+                if text:
+                    current_user_text = text
+                if user_id:
+                    current_user_id = user_id
+                if current_user_text and current_user_id:
+                    break
+
+            relationship_history_count = 0
+            if current_user_id:
+                try:
+                    relationship_history_count = len(self.response_pipeline.get_history(current_user_id))
+                except Exception as exc:
+                    self.log.debug("读取关系历史失败: %s", exc)
+            relationship_stage = "stranger" if relationship_history_count < 3 else "familiar"
+
             ctx = SpeechContext(
                 dominant_emotion=state.dominant_system or "SEEKING",
                 emotion_intensity=abs(state.valence),
@@ -2361,6 +2383,10 @@ class Helios:
                 time_since_contact=time_desc,
                 recent_memory=recent_memory,
                 memory_context=memory_context,
+                current_user_text=current_user_text,
+                current_stimuli=current_stimuli,
+                relationship_stage=relationship_stage,
+                relationship_history_count=relationship_history_count,
                 personality_summary=personality_descriptor.persona_text_summary,
                 personality_influence_trace=personality_trace.to_dict(),
                 total_messages_sent=self.speech.total_generated,

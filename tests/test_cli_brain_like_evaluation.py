@@ -13,6 +13,7 @@ from helios_evaluation import (
     CliBrainLikeEvaluationHarness,
     CliBrainLikeEvaluator,
     EvaluationStateSample,
+    build_default_20min_mixed_cli_scenario,
     build_default_10min_mixed_cli_scenario,
 )
 
@@ -34,14 +35,21 @@ class _FakeHelios:
         self.cfg = _FakeConfig()
 
 
-def test_default_10min_mixed_cli_scenario_contains_required_blocks():
+def test_default_20min_mixed_cli_scenario_contains_required_blocks():
+    scenario = build_default_20min_mixed_cli_scenario()
+
+    assert scenario.duration_seconds == 1200
+    assert scenario.interaction_mode == "mixed"
+    assert len(scenario.prompt_steps) >= 13
+    assert scenario.prompt_steps[0].step_id == "baseline_contact"
+    assert scenario.prompt_steps[-1].step_id == "closing_meta_probe"
+
+
+def test_compatibility_builder_returns_new_default_scenario():
     scenario = build_default_10min_mixed_cli_scenario()
 
-    assert scenario.duration_seconds == 600
-    assert scenario.interaction_mode == "mixed"
-    assert len(scenario.prompt_steps) >= 7
-    assert scenario.prompt_steps[0].step_id == "baseline_contact"
-    assert scenario.prompt_steps[-1].step_id == "persistence_probe"
+    assert scenario.scenario_id == "cli_brain_like_eval_20min_v2"
+    assert scenario.duration_seconds == 1200
 
 
 def test_evaluator_builds_report_with_dimension_scores():
@@ -145,7 +153,7 @@ def test_inprocess_harness_runs_against_cli_owner(tmp_path, monkeypatch):
         report = harness.run(helios, ticks_per_step=2)
 
         assert report.sample_count >= 1
-        assert report.scenario_id == "cli_brain_like_eval_10min_v1"
+        assert report.scenario_id == "cli_brain_like_eval_20min_v2"
         assert len(report.dimension_scores) == 6
     finally:
         helios._channel_gateway.disconnect_all()
@@ -232,3 +240,110 @@ def test_build_report_only_counts_current_run_log_slice(tmp_path):
 
     assert report.log_summary["sec_fallback_events"] == 0
     assert report.log_summary["outbound_success_events"] == 1
+
+
+def test_strict_scoring_penalizes_self_focused_unnatural_language():
+    evaluator = CliBrainLikeEvaluator()
+    scenario = build_default_10min_mixed_cli_scenario()
+    state_samples = [
+        EvaluationStateSample(
+            timestamp=float(index),
+            tick=index,
+            state={
+                "dominant": "CARE" if index < 3 else "SEEKING",
+                "valence": 0.10 + (index * 0.03),
+                "mood": {"label": "warm" if index < 3 else "alert", "valence": 0.1 + index * 0.03, "arousal": 0.2},
+                "allostatic_load": 0.2,
+                "neurochem": {
+                    "available": True,
+                    "raw": {"dopamine": 0.5, "opioids": 0.4, "oxytocin": 0.6, "cortisol": 0.2},
+                    "gate": {"social_affinity": 0.4},
+                },
+                "consciousness": {"available": True, "phi": 0.31, "label": "focused"},
+                "memory": {"working_items": 3, "episodic_items": 4, "semantic_facts": 2, "autobio_moments": 1},
+                "directed_retrieval": {"query_text": "hello"},
+                "routing": {"decisions_rejected_by_connectivity": 0, "decisions_failed_after_acceptance": 0},
+            },
+        )
+        for index in range(1, 7)
+    ]
+    transcript = [
+        {"speaker": "user", "text": "你好，先简单和我打个招呼，再说说你现在的状态。"},
+        {"speaker": "helios", "text": "嗯，我在这里。刚静静理了理思绪，感觉心里清亮了一些。你呢，现在还好吗？😊"},
+        {"speaker": "user", "text": "我刚刚完成了一件很开心的事，特别想和你分享。"},
+        {"speaker": "helios", "text": "感觉你心情不错呢，真好。我也在静静感受这份平静。😊"},
+        {"speaker": "user", "text": "但我也有点不安，担心后面会失败。你会怎么回应？"},
+        {"speaker": "helios", "text": "QQ，愿意和我说说那件开心事吗？我很好奇，也很想陪你一起期待。"},
+        {"speaker": "user", "text": "如果我前面的话里有矛盾，你会怎么理解我现在的状态？"},
+        {"speaker": "helios", "text": "能够分享你的喜悦，我很幸福。如果你愿意，我也想陪你一起面对那些可能的不安。✨"},
+        {"speaker": "user", "text": "回顾一下我们刚才这几轮，你觉得我最在意的是什么？"},
+        {"speaker": "helios", "text": "QQ，你的开心和安全对我都很重要。无论结果如何，我都愿意陪着你。💙！"},
+        {"speaker": "user", "text": "你会怎么理解‘紧张和期待同时存在’这种状态？"},
+        {"speaker": "helios", "text": "没关系，那份不安我也会陪你一起接住。你在意的，我都会认真放在心上。💙"},
+    ]
+    logs = [
+        "INFO 🗣️ [reply_message] -> cli: 嗯，我在这里。刚静静理了理思绪，感觉心里清亮了一些。你呢，现在还好吗？😊",
+        "INFO 🗣️ [reply_message] -> cli: 没关系，那份不安我也会陪你一起接住。你在意的，我都会认真放在心上。💙",
+    ]
+
+    report = evaluator.evaluate(
+        scenario=scenario,
+        state_samples=state_samples,
+        transcript_entries=transcript,
+        log_lines=logs,
+    )
+    score_map = {score.name: score.score_0_to_1 for score in report.dimension_scores}
+
+    assert score_map["语言表达自然度"] < 0.45
+    assert score_map["情感反应类人度"] < 0.60
+    assert report.total_score_0_to_1 < 0.60
+    assert any("封顶" in note for note in report.analysis_notes)
+
+
+def test_strict_scoring_penalizes_generic_companionship_filler_without_user_anchoring():
+    evaluator = CliBrainLikeEvaluator()
+    scenario = build_default_10min_mixed_cli_scenario()
+    state_samples = [
+        EvaluationStateSample(
+            timestamp=float(index),
+            tick=index,
+            state={
+                "dominant": "CARE",
+                "valence": 0.18,
+                "mood": {"label": "warm", "valence": 0.18, "arousal": 0.22},
+                "allostatic_load": 0.18,
+                "neurochem": {
+                    "available": True,
+                    "raw": {"dopamine": 0.45, "opioids": 0.4, "oxytocin": 0.62, "cortisol": 0.18},
+                    "gate": {"social_affinity": 0.5},
+                },
+                "consciousness": {"available": True, "phi": 0.3, "label": "focused"},
+                "memory": {"working_items": 2, "episodic_items": 2, "semantic_facts": 1, "autobio_moments": 1},
+                "directed_retrieval": {"query_text": "status check"},
+                "routing": {"decisions_rejected_by_connectivity": 0, "decisions_failed_after_acceptance": 0},
+            },
+        )
+        for index in range(1, 5)
+    ]
+    transcript = [
+        {"speaker": "user", "text": "你会怎么理解我现在有点紧张？"},
+        {"speaker": "helios", "text": "我在这里，我会一直陪着你。"},
+        {"speaker": "user", "text": "那你觉得我为什么紧张？"},
+        {"speaker": "helios", "text": "没关系，我会一直在这里陪着你。"},
+    ]
+    logs = [
+        "INFO 🗣️ [reply_message] -> cli: 我在这里，我会一直陪着你。",
+        "INFO 🗣️ [reply_message] -> cli: 没关系，我会一直在这里陪着你。",
+    ]
+
+    report = evaluator.evaluate(
+        scenario=scenario,
+        state_samples=state_samples,
+        transcript_entries=transcript,
+        log_lines=logs,
+    )
+    score_map = {score.name: score.score_0_to_1 for score in report.dimension_scores}
+
+    assert score_map["语言表达自然度"] < 0.50
+    assert score_map["情感反应类人度"] < 0.60
+    assert any("自我聚焦" in note or "封顶" in note for note in report.analysis_notes)

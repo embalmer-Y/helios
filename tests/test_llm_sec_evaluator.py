@@ -208,6 +208,14 @@ class TestLLMSECEvaluator:
         # The actual message being evaluated should also be in the prompt
         assert "你好" in user_prompt
 
+    def test_sec_system_prompt_avoids_identity_theater_language(self):
+        evaluator = LLMSECEvaluator(api_key="fake_key")
+
+        prompt = evaluator._system_prompt()
+
+        assert "有情感的 AI 生命体" not in prompt
+        assert "主观状态视角" in prompt
+
     def test_successful_llm_parse(self):
         """On successful LLM response, should parse SEC features."""
         evaluator = LLMSECEvaluator(api_key="fake_key")

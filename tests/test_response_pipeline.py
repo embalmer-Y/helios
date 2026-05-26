@@ -419,7 +419,8 @@ class TestGenerateReply:
             channel_modality="text",
         )
 
-        assert "你是璃光" in plan.identity_layer
+        assert "兼容性表达层" in plan.identity_layer
+        assert "不重新定义主体身份" in plan.identity_layer
         assert "人格倾向" in plan.persona_layer
         assert "任务解释" in plan.task_layer
         assert plan.snapshot.identity_summary_length > 0

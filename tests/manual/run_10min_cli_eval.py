@@ -16,12 +16,12 @@ from helios_evaluation import CliBrainLikeEvaluationHarness
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the default CLI brain-like evaluation scaffold")
-    parser.add_argument("--duration", type=int, default=600, help="Wall-clock duration in seconds")
+    parser.add_argument("--duration", type=int, default=1200, help="Wall-clock duration in seconds")
     parser.add_argument("--sample-interval", type=float, default=15.0, help="Sampling interval in seconds")
     parser.add_argument(
         "--report-prefix",
         type=str,
-        default="tests/reports/cli_brain_like_eval_10min",
+        default="tests/reports/cli_brain_like_eval_20min",
         help="Output path prefix for JSON/Markdown reports",
     )
     args = parser.parse_args()

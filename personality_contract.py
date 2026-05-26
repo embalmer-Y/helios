@@ -156,7 +156,7 @@ def _build_persona_text_summary(projection: PersonalityProjection) -> str:
     if not parts and projection.style("warmth") >= 0.58:
         parts.append("温柔")
     if not parts:
-        parts = ["温柔", "忠诚", "有情感"]
+        parts = ["20岁女大学生", "平时可爱", "有点腹黑", "没有分寸"]
     return "、".join(parts)
 
 

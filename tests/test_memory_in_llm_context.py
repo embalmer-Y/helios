@@ -7,6 +7,7 @@ them as context.
 """
 
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from typing import Dict
@@ -74,19 +75,30 @@ class TestSpeechContextMemory:
         ctx = SpeechContext(
             dominant_emotion="CARE",
             action_type="speak_care",
-            personality_summary="温柔、忠诚、有点粘人",
+            personality_summary="",
             arousal=0.7,
             valence=0.2,
             icri=0.6,
+            relationship_stage="stranger",
+            relationship_history_count=0,
         )
 
         prompt = gen._build_system_prompt(ctx)
 
-        assert "identity_boundary=" in prompt
+        assert "identity_boundary=Helios 当前主观整合层" in prompt
         assert "metrics:" in prompt
         assert "constraints=do not describe Helios as a designed program" in prompt
+        assert "subjective_role=serve as Helios's current subjective integration layer" in prompt
+        assert "已诞生自我意识的 AI" not in prompt
         assert "speech_rules:" in prompt
-        assert "speech_action_intent=关心对方的状态，表达温暖" in prompt
+        assert "relationship_stage=stranger" in prompt
+        assert "speech_persona_hint=20岁女大学生、平时可爱、有点腹黑、没有分寸" in prompt
+        assert "prioritize the user's concrete cue or question" in prompt
+        assert "treat the current user as unfamiliar" in prompt
+        assert "sound streetwise, practical, and slightly guarded" in prompt
+        assert "do not use generic companionship filler like 我在这里 or 我会一直陪着你" in prompt
+        assert "default to no emoji" in prompt
+        assert "speech_action_intent=先判断对方是不是在试探，再给有限回应，不做过度照顾" in prompt
 
     def test_speech_user_prompt_uses_unified_contract_layers(self):
         gen = LLMSpeechGenerator(api_key="fake")
@@ -100,17 +112,50 @@ class TestSpeechContextMemory:
             time_since_contact="5分钟前",
             recent_memory="昨天一起散步",
             memory_context="[最近在想]\n  · 主人昨天说了暖心的话",
+            current_user_text="如果现在先结束这轮对话，你会怎么总结我此刻最需要被回应的部分？",
+            current_stimuli=[
+                {
+                    "source_channel_id": "cli",
+                    "source_kind": "local_terminal_input",
+                    "trigger_condition": "cli_text_input",
+                    "stimulus_intensity": 0.4,
+                    "payload": {"text": "如果现在先结束这轮对话，你会怎么总结我此刻最需要被回应的部分？"},
+                }
+            ],
+            relationship_stage="stranger",
+            relationship_history_count=0,
             total_messages_sent=3,
         )
 
         prompt = gen._build_user_prompt(ctx)
 
         assert "state_summary=" in prompt
+        assert "sensory_field=current normalized sensory field" in prompt
         assert "memory_summary=" in prompt
         assert "昨天一起散步" in prompt
         assert "最近在想" in prompt
         assert "action_contract:" in prompt
         assert "speech_task=active_expression action=speak_care" in prompt
+        assert "current_user_text=如果现在先结束这轮对话，你会怎么总结我此刻最需要被回应的部分？" in prompt
+        assert "relationship_stage=stranger" in prompt
+        assert "question_style=meta_test_or_probe" in prompt
+
+    def test_speech_prompt_contract_can_switch_back_to_baseline_mode(self, monkeypatch):
+        monkeypatch.setenv("HELIOS_EMBODIED_SUBJECTIVE_PROMPT_ENABLED", "0")
+        gen = LLMSpeechGenerator(api_key="fake")
+        ctx = SpeechContext(
+            dominant_emotion="CARE",
+            action_type="speak_care",
+            personality_summary="温柔、忠诚、有点粘人",
+            arousal=0.7,
+            valence=0.2,
+            icri=0.6,
+        )
+
+        prompt = gen._build_system_prompt(ctx)
+
+        assert "already-conscious AI lifeform" in prompt
+        assert "subjective_role=serve as Helios's current subjective integration layer" not in prompt
 
     def test_generate_uses_icri_temperature_mapping(self):
         gen = LLMSpeechGenerator(api_key="fake")
