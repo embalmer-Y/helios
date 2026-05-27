@@ -258,6 +258,37 @@ class TestQQChannelStateAndEvaluation:
 
         assert triggers == {"CARE": 0.7}
 
+    def test_management_op_get_config_snapshot(self):
+        q = queue.Queue()
+        client = MagicMock()
+        client.is_connected.return_value = False
+        channel = QQChannel(q, qq_client=client)
+
+        result = channel.execute_management_op("get_config")
+
+        assert result.success is True
+        assert result.payload["snapshot"]["poll_when_disconnected"] is True
+
+    def test_pause_blocks_send_until_resume(self):
+        q = queue.Queue()
+        client = MagicMock()
+        client.is_connected.return_value = True
+        client.send_c2c.return_value = True
+        channel = QQChannel(q, qq_client=client)
+        channel.connect()
+        channel.execute_management_op("pause")
+
+        blocked = channel.send(
+            ChannelMessage(channel_id="qq", user_id="u1", text="reply", timestamp=1.0, direction="outbound")
+        )
+        channel.execute_management_op("resume")
+        allowed = channel.send(
+            ChannelMessage(channel_id="qq", user_id="u1", text="reply", timestamp=1.0, direction="outbound")
+        )
+
+        assert blocked is False
+        assert allowed is True
+
     def test_evaluate_message_prefers_precomputed_event_triggers(self):
         q = queue.Queue()
         client = MagicMock()

@@ -133,6 +133,7 @@ class HeliosState:
     current_behavior: str = ""
 
     # Hardware IO status
+    channel_availability: Dict[str, bool] = field(default_factory=dict)
     tts_available: bool = False
     stt_available: bool = False
     vision_available: bool = False
@@ -152,6 +153,7 @@ class HeliosState:
 
     def __post_init__(self):
         self._sync_continuation_fields()
+        self._sync_channel_availability_fields()
 
     def _sync_continuation_fields(self):
         if self.continuation.active or self.continuation.level > 0.0 or self.continuation.reason:
@@ -168,6 +170,22 @@ class HeliosState:
         self.continuation_pressure = normalized.level
         self.continuation_reason = normalized.reason
 
+    def _sync_channel_availability_fields(self):
+        normalized = {
+            str(channel_id): bool(is_available)
+            for channel_id, is_available in dict(self.channel_availability or {}).items()
+        }
+        if not normalized:
+            normalized = {
+                "tts": bool(self.tts_available),
+                "stt": bool(self.stt_available),
+                "vision": bool(self.vision_available),
+            }
+        self.channel_availability = normalized
+        self.tts_available = normalized.get("tts", False)
+        self.stt_available = normalized.get("stt", False)
+        self.vision_available = normalized.get("vision", False)
+
     def set_continuation(self, continuation: ContinuationPressureState):
         self.continuation = ContinuationPressureState.from_payload(continuation.to_dict())
         self.continuation_pressure = self.continuation.level
@@ -178,3 +196,6 @@ class HeliosState:
 
     def continuation_payload(self) -> Dict[str, object]:
         return self.continuation.to_dict()
+
+    def is_channel_available(self, channel_id: str) -> bool:
+        return bool(self.channel_availability.get(str(channel_id), False))

@@ -228,4 +228,67 @@ class TestCLIChannelState:
 
         assert descriptor.channel_id == "cli"
         assert any(op.name == "send" for op in descriptor.supported_ops)
-        assert {op.name for op in descriptor.management_ops} >= {"connect", "disconnect", "help", "quit", "state", "history"}
+        assert {op.name for op in descriptor.management_ops} >= {"init", "deinit", "connect", "disconnect", "pause", "resume", "suspend", "unsuspend", "get_config", "update_config", "health_check", "help", "quit", "state", "history"}
+
+    def test_execute_management_op_get_and_update_config(self):
+        channel = CLIChannel(stdout_writer=CaptureWriter())
+
+        get_result = channel.execute_management_op("get_config")
+        update_result = channel.execute_management_op("update_config", {"config": {"session_name": "session-b", "command_prefix": "!"}})
+
+        assert get_result.success is True
+        assert get_result.payload["snapshot"]["session_name"] == "local_cli"
+        assert update_result.success is True
+        assert update_result.payload["snapshot"]["session_name"] == "session-b"
+        assert update_result.payload["snapshot"]["command_prefix"] == "!"
+
+    def test_execute_management_op_rejects_runtime_user_id_mutation(self):
+        channel = CLIChannel(stdout_writer=CaptureWriter())
+
+        result = channel.execute_management_op("update_config", {"config": {"user_id": "other-user"}})
+
+        assert result.success is False
+        assert result.error_code == "config_validation_failed"
+        assert "user_id is immutable at runtime" in result.payload["validation_errors"]
+
+    def test_pause_and_resume_change_cli_status(self):
+        channel = CLIChannel(stdout_writer=CaptureWriter())
+        channel.execute_management_op("init")
+        channel.connect()
+
+        pause_result = channel.execute_management_op("pause")
+        resume_result = channel.execute_management_op("resume")
+
+        assert pause_result.success is True
+        assert pause_result.status == ChannelStatus.PAUSED.value
+        assert resume_result.success is True
+        assert channel.get_status() == ChannelStatus.CONNECTED
+
+    def test_suspend_blocks_send_until_unsuspend(self):
+        writer = CaptureWriter()
+        channel = CLIChannel(stdout_writer=writer)
+        channel.connect()
+        channel.execute_management_op("suspend")
+
+        blocked = channel.send(
+            ChannelMessage(
+                channel_id="cli",
+                user_id="local-user",
+                text="reply",
+                timestamp=1.0,
+                direction="outbound",
+            )
+        )
+        channel.execute_management_op("unsuspend")
+        allowed = channel.send(
+            ChannelMessage(
+                channel_id="cli",
+                user_id="local-user",
+                text="reply",
+                timestamp=1.0,
+                direction="outbound",
+            )
+        )
+
+        assert blocked is False
+        assert allowed is True

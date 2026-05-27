@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Sequence
 
+from helios_io.channel import ChannelStatus
+
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, float(value)))
@@ -743,17 +745,13 @@ class CliBrainLikeEvaluationHarness:
         self._evaluator = CliBrainLikeEvaluator()
 
     def run(self, helios: Any, *, ticks_per_step: int = 4) -> EvaluationReport:
-        if not bool(getattr(helios, "_cli_channel", None)):
+        cli_channel = getattr(helios, "get_runtime_channel", lambda _channel_id: None)("cli")
+        if cli_channel is None:
             raise ValueError("Helios instance does not expose a CLI channel for evaluation")
 
         samples: list[EvaluationStateSample] = []
         log_start_offset = self._current_log_offset(helios)
-        cli_channel = helios._cli_channel
-        if hasattr(cli_channel, "connect") and getattr(cli_channel, "get_status", lambda: None)() != "connected":
-            try:
-                cli_channel.connect()
-            except Exception:
-                pass
+        self._ensure_cli_connected(helios, cli_channel)
 
         for step in self.scenario.prompt_steps:
             cli_channel.submit_input(step.prompt)
@@ -783,18 +781,14 @@ class CliBrainLikeEvaluationHarness:
         sample_interval_seconds: float | None = None,
         heartbeat: Callable[[str], None] | None = None,
     ) -> EvaluationReport:
-        if not bool(getattr(helios, "_cli_channel", None)):
+        cli_channel = getattr(helios, "get_runtime_channel", lambda _channel_id: None)("cli")
+        if cli_channel is None:
             raise ValueError("Helios instance does not expose a CLI channel for evaluation")
 
         duration = int(duration_seconds or self.scenario.duration_seconds)
         sample_interval = float(sample_interval_seconds or self.scenario.sample_interval_seconds)
         log_start_offset = self._current_log_offset(helios)
-        cli_channel = helios._cli_channel
-        if hasattr(cli_channel, "connect"):
-            try:
-                cli_channel.connect()
-            except Exception:
-                pass
+        self._ensure_cli_connected(helios, cli_channel)
 
         worker = threading.Thread(target=helios.start, daemon=True)
         worker.start()
@@ -878,6 +872,26 @@ class CliBrainLikeEvaluationHarness:
             state_samples=samples,
             log_start_offset=log_start_offset,
         )
+
+    @staticmethod
+    def _ensure_cli_connected(helios: Any, cli_channel: Any) -> None:
+        status = getattr(cli_channel, "get_status", lambda: None)()
+        if status in {ChannelStatus.CONNECTED, ChannelStatus.PAUSED, ChannelStatus.SUSPENDED, "connected", "paused", "suspended"}:
+            return
+
+        gateway = getattr(helios, "_channel_gateway", None)
+        if gateway is not None and hasattr(gateway, "execute_management_op"):
+            try:
+                gateway.execute_management_op("cli", "connect")
+                return
+            except Exception:
+                pass
+
+        if hasattr(cli_channel, "connect"):
+            try:
+                cli_channel.connect()
+            except Exception:
+                pass
 
     def _build_report(
         self,

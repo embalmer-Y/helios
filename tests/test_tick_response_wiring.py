@@ -174,10 +174,12 @@ class TestCLIChannelBootstrap:
         h = Helios(config)
         try:
             descriptors = h._channel_gateway.get_channel_descriptors()
+            cli_channel = h.get_runtime_channel("cli")
 
             assert "cli" in descriptors
             assert descriptors["cli"].display_name == "Terminal CLI Channel"
-            assert h._cli_channel.is_available is True
+            assert cli_channel is not None
+            assert cli_channel.is_available is True
         finally:
             h._channel_gateway.disconnect_all()
             for handler in list(h.log.handlers):
@@ -204,9 +206,10 @@ class TestCLIChannelBootstrap:
         h = Helios(config)
         try:
             descriptors = h._channel_gateway.get_channel_descriptors()
+            cli_channel = h.get_runtime_channel("cli")
 
             assert "cli" not in descriptors
-            assert h._cli_channel.is_available is False
+            assert cli_channel is None
         finally:
             h._channel_gateway.disconnect_all()
             for handler in list(h.log.handlers):
@@ -234,6 +237,7 @@ class TestCLIChannelBootstrap:
 
         h = Helios(config)
         try:
+            cli_channel = h.get_runtime_channel("cli")
             h.sec_evaluator.evaluate = MagicMock(return_value={
                 "goal_relevance": 0.2,
                 "novelty": 0.1,
@@ -243,7 +247,8 @@ class TestCLIChannelBootstrap:
             h.regulation.generate_action_proposals = MagicMock(return_value=[])
             h.response_pipeline.record_exchange = MagicMock()
 
-            h._cli_channel.submit_input("hello helios")
+            assert cli_channel is not None
+            cli_channel.submit_input("hello helios")
             h._tick()
 
             assert h.sec_evaluator.evaluate.call_count == 2
@@ -279,6 +284,7 @@ class TestCLIChannelBootstrap:
 
         h = Helios(config)
         try:
+            cli_channel = h.get_runtime_channel("cli")
             h.sec_evaluator.evaluate = MagicMock(return_value={
                 "goal_relevance": 0.2,
                 "novelty": 0.1,
@@ -288,12 +294,13 @@ class TestCLIChannelBootstrap:
             h.thinking_integration.generate = MagicMock(return_value=make_thought_cycle_result(triggered=False))
             h.regulation.generate_action_proposals = MagicMock(return_value=[])
 
-            h._cli_channel.submit_input("/help")
+            assert cli_channel is not None
+            cli_channel.submit_input("/help")
             h._tick()
 
             h.sec_evaluator.evaluate.assert_not_called()
             h.response_pipeline.record_exchange.assert_not_called()
-            results = h._cli_channel.get_command_results()
+            results = cli_channel.get_command_results()
             assert len(results) == 1
             assert results[0].command_name == "help"
             assert results[0].handled is True
@@ -325,6 +332,7 @@ class TestCLIChannelBootstrap:
 
         h = Helios(config)
         try:
+            cli_channel = h.get_runtime_channel("cli")
             h.sec_evaluator.evaluate = MagicMock(return_value={
                 "goal_relevance": 0.2,
                 "novelty": 0.1,
@@ -334,7 +342,8 @@ class TestCLIChannelBootstrap:
             h.regulation.generate_action_proposals = MagicMock(return_value=[])
             h.response_pipeline.record_exchange = MagicMock()
 
-            h._cli_channel.submit_input("hello helios")
+            assert cli_channel is not None
+            cli_channel.submit_input("hello helios")
             h._tick()
 
             assert h.cfg.QQ_TARGET_ID == ""

@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import queue
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from ..channel import BidirectionalChannel, ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, ChannelStatus
+from ..channel import BidirectionalChannel, ChannelConfigFieldDescriptor, ChannelConfigSnapshot, ChannelDescriptor, ChannelManagementResult, ChannelMessage, ChannelOpDescriptor, ChannelStatus
 from ..expression_modulation import modulate_outbound_expression
 from .inbound_text_annotation import annotate_inbound_text_message, evaluate_text_triggers
 
@@ -75,9 +75,11 @@ class QQChannel(BidirectionalChannel):
             self._qq_client = qq_client
         self._sec_evaluator = sec_evaluator
         self._reconnector = WebSocketReconnector()
-        self._status = ChannelStatus.DISCONNECTED
+        self._status = ChannelStatus.UNINITIALIZED
         self._last_connected = False
         self._manual_disconnect = False
+        self._paused = False
+        self._suspended = False
 
     def _client(self):
         if self._qq_client_getter is not None:
@@ -113,13 +115,26 @@ class QQChannel(BidirectionalChannel):
                 ),
             ],
             management_ops=[
+                ChannelOpDescriptor("init", "management", "Initialize the QQ channel runtime state."),
+                ChannelOpDescriptor("deinit", "management", "Deinitialize the QQ channel runtime state."),
                 ChannelOpDescriptor("connect", "management", "Connect the QQ websocket client."),
                 ChannelOpDescriptor("disconnect", "management", "Disconnect the QQ websocket client."),
+                ChannelOpDescriptor("pause", "management", "Pause QQ inbound/outbound handling while preserving registration."),
+                ChannelOpDescriptor("resume", "management", "Resume QQ activity after pause."),
+                ChannelOpDescriptor("suspend", "management", "Suspend QQ channel activity."),
+                ChannelOpDescriptor("unsuspend", "management", "Unsuspend QQ channel activity."),
+                ChannelOpDescriptor("get_config", "management", "Return the QQ channel config snapshot."),
+                ChannelOpDescriptor("update_config", "management", "Update mutable QQ channel config fields.", input_schema={"config": "dict"}, output_schema={"snapshot": "ChannelConfigSnapshot"}),
+                ChannelOpDescriptor("health_check", "management", "Return the QQ channel health snapshot."),
             ],
             startup_requirements=["qq_client available"],
             shutdown_requirements=["qq client stop when present"],
             health_signals=["is_connected", "get_status", "reconnect_attempts"],
             ack_schema={"success": "bool", "delivery": "best_effort"},
+            config_fields=[
+                ChannelConfigFieldDescriptor("poll_when_disconnected", "Whether inbound queue polling is allowed while the websocket is disconnected.", required=True, mutable_at_runtime=True, default_value=True, schema_hint="bool"),
+                ChannelConfigFieldDescriptor("sec_evaluator_enabled", "Whether inbound SEC annotation is active for QQ inbound text.", required=True, mutable_at_runtime=True, default_value=True, schema_hint="bool"),
+            ],
             limitations=["Current output support is text-only."],
         )
 
@@ -128,6 +143,8 @@ class QQChannel(BidirectionalChannel):
         return self._status
 
     def poll(self) -> List[ChannelMessage]:
+        if self._paused or self._suspended:
+            return []
         messages: List[ChannelMessage] = []
         while True:
             try:
@@ -140,7 +157,7 @@ class QQChannel(BidirectionalChannel):
 
     def send(self, message: ChannelMessage) -> bool:
         client = self._client()
-        if not self.is_connected():
+        if not self.is_connected() or self._paused or self._suspended:
             return False
 
         metadata = dict(message.metadata)
@@ -211,8 +228,12 @@ class QQChannel(BidirectionalChannel):
         client = self._client()
         if client is None:
             return
+        if self._status == ChannelStatus.UNINITIALIZED:
+            self._status = ChannelStatus.INITIALIZED
         if not self.is_connected() and hasattr(client, "start"):
             self._manual_disconnect = False
+            self._paused = False
+            self._suspended = False
             self._status = ChannelStatus.CONNECTING
             client.start()
 
@@ -226,6 +247,82 @@ class QQChannel(BidirectionalChannel):
         self._manual_disconnect = True
         self._status = ChannelStatus.DISCONNECTED
         self._last_connected = False
+        self._paused = False
+        self._suspended = False
+
+    def get_config_snapshot(self) -> ChannelConfigSnapshot:
+        return ChannelConfigSnapshot(
+            channel_id=self.channel_id,
+            status=self.get_status().value,
+            config_values={
+                "poll_when_disconnected": bool(getattr(self, "poll_when_disconnected", True)),
+                "sec_evaluator_enabled": self._sec_evaluator is not None,
+            },
+            mutable_fields=["poll_when_disconnected", "sec_evaluator_enabled"],
+            validation_errors=[],
+        )
+
+    def update_config(self, updates: Optional[Dict[str, Any]] = None) -> ChannelConfigSnapshot:
+        updates = dict(updates or {})
+        errors: List[str] = []
+        if "poll_when_disconnected" in updates:
+            self.poll_when_disconnected = bool(updates["poll_when_disconnected"])
+        if "sec_evaluator_enabled" in updates:
+            desired = bool(updates["sec_evaluator_enabled"])
+            if desired and self._sec_evaluator is None:
+                errors.append("sec_evaluator cannot be enabled when no evaluator is configured")
+            if not desired:
+                self._sec_evaluator = None
+        snapshot = self.get_config_snapshot()
+        if errors:
+            return ChannelConfigSnapshot(snapshot.channel_id, snapshot.status, snapshot.config_values, snapshot.mutable_fields, errors)
+        return snapshot
+
+    def health_check(self) -> Dict[str, Any]:
+        return {
+            "channel_id": self.channel_id,
+            "status": self.get_status().value,
+            "connected": self.is_connected(),
+            "paused": self._paused,
+            "suspended": self._suspended,
+            "reconnect_attempts": self._reconnector.attempt_count,
+        }
+
+    def execute_management_op(self, op_name: str, payload: Optional[Dict[str, Any]] = None) -> ChannelManagementResult:
+        payload = dict(payload or {})
+        if op_name == "init":
+            if self._status == ChannelStatus.UNINITIALIZED:
+                self._status = ChannelStatus.INITIALIZED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "QQ channel initialized.")
+        if op_name == "deinit":
+            self.disconnect()
+            self._status = ChannelStatus.DEINITIALIZED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "QQ channel deinitialized.")
+        if op_name == "pause":
+            self._paused = True
+            self._status = ChannelStatus.PAUSED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "QQ channel paused.")
+        if op_name == "resume":
+            self._paused = False
+            self._status = ChannelStatus.CONNECTED if self._last_connected else ChannelStatus.INITIALIZED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "QQ channel resumed.")
+        if op_name == "suspend":
+            self._suspended = True
+            self._status = ChannelStatus.SUSPENDED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "QQ channel suspended.")
+        if op_name == "unsuspend":
+            self._suspended = False
+            self._status = ChannelStatus.CONNECTED if self._last_connected else ChannelStatus.INITIALIZED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "QQ channel unsuspended.")
+        if op_name == "get_config":
+            snapshot = self.get_config_snapshot()
+            return ChannelManagementResult(self.channel_id, op_name, True, snapshot.status, payload={"snapshot": dict(snapshot.config_values), "validation_errors": list(snapshot.validation_errors)})
+        if op_name == "update_config":
+            snapshot = self.update_config(dict(payload.get("config", {}) or {}))
+            return ChannelManagementResult(self.channel_id, op_name, not snapshot.validation_errors, snapshot.status, payload={"snapshot": dict(snapshot.config_values), "validation_errors": list(snapshot.validation_errors)}, error_code="config_validation_failed" if snapshot.validation_errors else "")
+        if op_name == "health_check":
+            return ChannelManagementResult(self.channel_id, op_name, True, self.get_status().value, payload=self.health_check())
+        return super().execute_management_op(op_name, payload)
 
     @staticmethod
     def _client_reconnect_attempts(client) -> int:

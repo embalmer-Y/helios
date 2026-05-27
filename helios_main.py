@@ -24,7 +24,7 @@ import signal
 import logging
 import threading
 import queue
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -90,13 +90,17 @@ from core.helios_state import ContinuationPressureState, HeliosState
 from core.temporal_dynamics import TemporalDynamics, TemporalUpdate
 from core.tick_guard import TickGuard
 from behavior_registry import RuntimeBehaviorCatalog
-from helios_io.channel import ChannelMessage, ChannelStatus
+from helios_io.channel import ChannelManagementResult, ChannelMessage, ChannelStatus, InputChannel, OutputChannel
 from helios_io.channel_gateway import ChannelGateway
 from personality_contract import build_personality_contract
 
 # ── Passive Reply Pipeline ──
 from helios_io.icri_temperature import ICRITemperatureMapper
 from helios_io.llm_sec_evaluator import LLMSECEvaluator
+from helios_io.optional_channel_bootstrap import (
+    OptionalChannelRuntime,
+    build_default_optional_channel_runtime,
+)
 from helios_io.planning import ExecutionPlanner, PolicyEvaluator
 from helios_io.response_pipeline import ResponsePipeline
 from helios_io.routing_policy import RoutingPreferencePolicy
@@ -169,6 +173,11 @@ class HeliosConfig:
     CLI_ENABLED: bool = os.getenv("HELIOS_CLI_ENABLED", "0") == "1"
     CLI_USER_ID: str = os.getenv("HELIOS_CLI_USER_ID", "local_operator")
     CLI_SESSION_NAME: str = os.getenv("HELIOS_CLI_SESSION_NAME", "local_cli")
+    OPTIONAL_CHANNEL_BOOTSTRAP_IDS: tuple[str, ...] = tuple(
+        channel_id.strip()
+        for channel_id in os.getenv("HELIOS_OPTIONAL_CHANNEL_BOOTSTRAP_IDS", "tts,cli,stt,vision").split(",")
+        if channel_id.strip()
+    )
     TTS_ENABLED: bool = os.getenv("HELIOS_TTS_ENABLED", "1") == "1"
     STT_ENABLED: bool = os.getenv("HELIOS_STT_ENABLED", "1") == "1"
     VISION_ENABLED: bool = os.getenv("HELIOS_VISION_ENABLED", "1") == "1"
@@ -275,7 +284,7 @@ class Helios:
             base_url=self.cfg.LLM_BASE_URL,
             model=self.cfg.LLM_MODEL,
             memory_write_enabled=self.cfg.INTERNAL_THINK_AUTOBIO_WRITE,
-            available_channels_provider=lambda: self._channel_gateway.get_channel_descriptors(),
+            available_channels_provider=lambda: self._channel_gateway.get_runtime_snapshot().descriptors,
             available_behavior_schema_provider=lambda: self._build_internal_thought_behavior_schemas(),
         )
         self.thinking_integration.ICRI_THRESHOLD = self.cfg.INTERNAL_THINK_ICRI_THRESHOLD
@@ -337,8 +346,7 @@ class Helios:
             qq_client=lambda: self.qq,
             sec_evaluator=_KeywordSECEvaluator(),
         )
-        self._channel_gateway.register_channel(self._qq_channel)
-        self._channel_gateway.register_evaluator("qq", self._qq_channel)
+        self._channel_gateway.register_runtime_channel(self._qq_channel, connect=False)
         self._event_sources.append(self._channel_gateway)
         
         # InternalDriveSource — maps dominant drive urgency to Panksepp triggers
@@ -374,36 +382,20 @@ class Helios:
         )
 
         # ── Multimodal channels (Requirement 30, 31, 32) ──
-        self._tts_channel = TTSChannel(
-            access_key=self.cfg.ALI_ACCESS_KEY,
-            access_secret=self.cfg.ALI_SECRET_KEY,
-            app_key=self.cfg.ALI_APP_KEY,
-            enabled=self.cfg.TTS_ENABLED,
-        )
-        self._cli_channel = CLIChannel(
-            user_id=self.cfg.CLI_USER_ID,
-            session_name=self.cfg.CLI_SESSION_NAME,
-            enabled=self.cfg.CLI_ENABLED,
-            input_stream=sys.stdin if self.cfg.CLI_ENABLED and bool(getattr(sys.stdin, "isatty", lambda: False)()) else None,
+        self.optional_channels: OptionalChannelRuntime = build_default_optional_channel_runtime(
+            cfg=self.cfg,
             state_provider=self.get_state,
             history_provider=lambda user_id, conversation_key: self.response_pipeline.get_history(
                 user_id,
-                conversation_key=conversation_key,
+                conversation_key=conversation_key or "",
             ),
             sec_evaluator=self.sec_evaluator,
+            selected_channel_ids=self.cfg.OPTIONAL_CHANNEL_BOOTSTRAP_IDS,
+            register_runtime_channel=self.register_runtime_channel,
+            runtime_channel_active=self._channel_gateway.has_channel,
+            deregister_runtime_channel=lambda channel_id, disconnect: self.deregister_runtime_channel(channel_id, disconnect=disconnect),
+            bootstrap_logger=self.log,
         )
-        self._stt_channel = STTChannel(
-            access_key=self.cfg.ALI_ACCESS_KEY,
-            access_secret=self.cfg.ALI_SECRET_KEY,
-            app_key=self.cfg.ALI_APP_KEY,
-            enabled=self.cfg.STT_ENABLED,
-            sec_evaluator=self.sec_evaluator,
-        )
-        self._vision_channel = VisionChannel(
-            capture_interval=self.cfg.VISION_CAPTURE_INTERVAL,
-            enabled=self.cfg.VISION_ENABLED,
-        )
-        self._register_optional_channels()
 
         # ── Behavior execution abstraction (Requirement 29) ──
         self.behavior_executor = BehaviorExecutor()
@@ -1020,6 +1012,11 @@ class Helios:
     def _tick_once(self):
         """单次心跳"""
         self.tick_count += 1
+        optional_channel_snapshot = self.optional_channels.get_runtime_snapshot()
+        optional_channel_availability = {
+            channel_id: channel_id in optional_channel_snapshot.runtime_active_channel_ids
+            for channel_id in optional_channel_snapshot.spec_ids
+        }
 
         state = HeliosState(
             tick=self.tick_count,
@@ -1034,9 +1031,7 @@ class Helios:
             identity_snapshot=self.identity_store.to_dict() if self.identity_store is not None else {},
             drive_dominant=getattr(self, '_last_drive_dominant', ''),
             drive_urgency=getattr(self, '_last_drive_urgency', 0.0),
-            tts_available=bool(getattr(self._tts_channel, "is_available", False)),
-            stt_available=bool(getattr(self._stt_channel, "is_available", False)),
-            vision_available=bool(getattr(self._vision_channel, "is_available", False)),
+            channel_availability=optional_channel_availability,
             rss_mb=self.stability_monitor.rss_mb,
             uptime_hours=self.stability_monitor.uptime_hours,
             continuation_pressure=self.continuation_pressure,
@@ -1360,10 +1355,11 @@ class Helios:
                 reply = None
                 rendered_reply = None
                 rendered_expression_profile = None
+                channel_runtime_snapshot = self._channel_gateway.get_runtime_snapshot()
                 ranked_reply_channels = self.routing_policy.rank_reply_channels(
                     message=msg,
-                    channel_descriptors=self._channel_gateway.get_channel_descriptors(),
-                    channel_statuses=self._channel_gateway.get_channel_status(),
+                    channel_descriptors=channel_runtime_snapshot.descriptors,
+                    channel_statuses=channel_runtime_snapshot.statuses,
                     qq_target_id=self.cfg.QQ_TARGET_ID,
                     personality_projection=getattr(state, "personality_projection", None),
                 )
@@ -1412,11 +1408,12 @@ class Helios:
                         text[:120],
                     )
                 for proposal in interaction_proposals:
+                    channel_runtime_snapshot = self._channel_gateway.get_runtime_snapshot()
                     decision = self.execution_planner.plan(
                         proposal,
                         self._current_behavior_specs(),
-                        self._channel_gateway.get_channel_descriptors(),
-                        self._channel_gateway.get_channel_status(),
+                        channel_runtime_snapshot.descriptors,
+                        channel_runtime_snapshot.statuses,
                     )
                     self._log_decision_summary("Passive", proposal, decision)
                     if not decision.accepted:
@@ -1496,11 +1493,12 @@ class Helios:
                 [proposal.behavior_name for proposal in thought_action_proposals],
             )
         for proposal in thought_action_proposals:
+            channel_runtime_snapshot = self._channel_gateway.get_runtime_snapshot()
             decision = self.execution_planner.plan(
                 proposal,
                 self._current_behavior_specs(),
-                self._channel_gateway.get_channel_descriptors(),
-                self._channel_gateway.get_channel_status(),
+                channel_runtime_snapshot.descriptors,
+                channel_runtime_snapshot.statuses,
             )
             self._log_decision_summary("ThoughtBridge", proposal, decision)
             if decision.accepted:
@@ -1524,19 +1522,23 @@ class Helios:
             )
             self._record_policy_rejection(proposal, decision)
 
+        def _resolve_active_channels(action: str) -> list[str]:
+            channel_runtime_snapshot = self._channel_gateway.get_runtime_snapshot()
+            return self.routing_policy.rank_active_channels(
+                action=action,
+                channel_descriptors=channel_runtime_snapshot.descriptors,
+                channel_statuses=channel_runtime_snapshot.statuses,
+                qq_target_id=self.cfg.QQ_TARGET_ID,
+                personality_projection=state.personality_projection,
+            )
+
         active_proposals = self.regulation.generate_action_proposals(
             panksepp=state.panksepp or {},
             valence=state.valence,
             hour_of_day=hour,
             tick=state.tick,
             timestamp=state.timestamp,
-            candidate_channel_resolver=lambda action: self.routing_policy.rank_active_channels(
-                action=action,
-                channel_descriptors=self._channel_gateway.get_channel_descriptors(),
-                channel_statuses=self._channel_gateway.get_channel_status(),
-                qq_target_id=self.cfg.QQ_TARGET_ID,
-                personality_projection=state.personality_projection,
-            ),
+            candidate_channel_resolver=_resolve_active_channels,
             params={"tick": state.tick, "target_user_id": self.cfg.QQ_TARGET_ID},
             drive_urgency=self._last_drive_urgency,
             drive_dominant=self._last_drive_dominant,
@@ -1569,11 +1571,12 @@ class Helios:
             self.log.debug("Active trigger candidates: none")
         if not active_accepted:
             for proposal in active_proposals:
+                channel_runtime_snapshot = self._channel_gateway.get_runtime_snapshot()
                 decision = self.execution_planner.plan(
                     proposal,
                     self._current_behavior_specs(),
-                    self._channel_gateway.get_channel_descriptors(),
-                    self._channel_gateway.get_channel_status(),
+                    channel_runtime_snapshot.descriptors,
+                    channel_runtime_snapshot.statuses,
                 )
                 self._log_decision_summary("Active", proposal, decision)
                 if decision.accepted:
@@ -1608,11 +1611,12 @@ class Helios:
             else:
                 self.log.debug("Preconscious fallback not fired: reason=no_preconscious_proposals")
             for proposal in preconscious_proposals:
+                channel_runtime_snapshot = self._channel_gateway.get_runtime_snapshot()
                 decision = self.execution_planner.plan(
                     proposal,
                     self._current_behavior_specs(),
-                    self._channel_gateway.get_channel_descriptors(),
-                    self._channel_gateway.get_channel_status(),
+                    channel_runtime_snapshot.descriptors,
+                    channel_runtime_snapshot.statuses,
                 )
                 self._log_decision_summary("Preconscious", proposal, decision)
                 if decision.accepted:
@@ -1891,7 +1895,7 @@ class Helios:
                 )
                 return False
 
-        channel_status = self._channel_gateway.get_channel_status().get(resolved_channel, ChannelStatus.ERROR)
+        channel_status = self._channel_gateway.get_runtime_snapshot().statuses.get(resolved_channel, ChannelStatus.ERROR)
         if channel_status != ChannelStatus.CONNECTED:
             self.decisions_failed_after_acceptance += 1
             self.log.warning(
@@ -2269,23 +2273,25 @@ class Helios:
         )
         state.last_identity_revision_trace = record.to_dict()
 
-    def _register_optional_channels(self):
-        active: list[str] = []
-        dormant: list[str] = []
+    def get_runtime_channel(self, channel_id: str) -> InputChannel | OutputChannel | None:
+        return self._channel_gateway.get_channel(channel_id)
 
-        for channel in [self._cli_channel, self._tts_channel, self._stt_channel, self._vision_channel]:
-            if bool(getattr(channel, "is_available", False)):
-                channel.connect()
-                self._channel_gateway.register_channel(channel)
-                if hasattr(channel, "evaluate_message"):
-                    self._channel_gateway.register_evaluator(channel.channel_id, channel)
-                active.append(channel.channel_id)
-            else:
-                dormant.append(channel.channel_id)
+    def register_runtime_channel(
+        self,
+        channel: InputChannel | OutputChannel,
+        *,
+        connect: bool = True,
+        evaluator: object | None = None,
+    ) -> ChannelManagementResult:
+        return self._channel_gateway.register_runtime_channel(
+            channel,
+            connect=connect,
+            evaluator=evaluator,
+        )
 
-        self.log.debug("Active optional channels: %s", ", ".join(active) if active else "none")
-        self.log.debug("Dormant optional channels: %s", ", ".join(dormant) if dormant else "none")
-    
+    def deregister_runtime_channel(self, channel_id: str, *, disconnect: bool = True) -> ChannelManagementResult:
+        return self._channel_gateway.deregister_runtime_channel(channel_id, disconnect=disconnect)
+
     def _generate_speech(self, action: str, state: Optional[HeliosState] = None) -> str:
         """
         生成自然语言话语
@@ -2525,6 +2531,8 @@ class Helios:
         mood = self.mood.get_snapshot()
         traits = self.personality._trait_dict()
         autobio_stats = self.autobio.get_statistics()
+        optional_channel_snapshot = self.optional_channels.get_runtime_snapshot()
+        bootstrap_summary = optional_channel_snapshot.last_bootstrap_summary
         
         # Requirement 23.3: Expose memory statistics through get_state()
         mem_stats = self.memory_system.get_stats()
@@ -2598,6 +2606,18 @@ class Helios:
             "thought_cycle": dict(self.last_thought_cycle_result),
             "directed_retrieval": dict(self.last_directed_retrieval_trace),
             "internal_thought": dict(self.last_internal_thought_trace),
+            "optional_channels": {
+                "factory_ids": list(optional_channel_snapshot.factory_ids),
+                "spec_ids": list(optional_channel_snapshot.spec_ids),
+                "runtime_active_channel_ids": list(optional_channel_snapshot.runtime_active_channel_ids),
+                "bootstrap_summary": {
+                    "active_channel_ids": list(bootstrap_summary.active_channel_ids),
+                    "dormant_channel_ids": list(bootstrap_summary.dormant_channel_ids),
+                    "failed_channel_ids": list(bootstrap_summary.failed_channel_ids),
+                }
+                if bootstrap_summary is not None
+                else None,
+            },
             "regulation": self.regulation.get_state(),
             "preconscious": self.preconscious_policy.get_observability_snapshot(),
             "routing": {

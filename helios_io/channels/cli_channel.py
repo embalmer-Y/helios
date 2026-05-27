@@ -10,8 +10,9 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from ..channel import BidirectionalChannel, ChannelDescriptor, ChannelMessage, ChannelOpDescriptor, ChannelStatus
+from ..channel import BidirectionalChannel, ChannelConfigFieldDescriptor, ChannelConfigSnapshot, ChannelDescriptor, ChannelManagementResult, ChannelMessage, ChannelOpDescriptor, ChannelStatus
 from ..expression_modulation import modulate_outbound_expression
+from ..optional_channel_contract import OptionalChannelBootstrapFactory, OptionalChannelBootstrapSpec
 from .inbound_text_annotation import annotate_inbound_text_message, evaluate_text_triggers
 
 log = logging.getLogger("helios.helios_io.channels.cli_channel")
@@ -68,12 +69,16 @@ class CLIChannel(BidirectionalChannel):
         self._banner_enabled = bool(banner_enabled)
         self._queue: queue.Queue[str] = queue.Queue()
         self._command_results: List[CLICommandResult] = []
-        self._status = ChannelStatus.DISCONNECTED
+        self._status = ChannelStatus.UNINITIALIZED
         self._shutdown_requested = False
+        self._paused = False
+        self._suspended = False
+        self._pre_suspend_status = ChannelStatus.UNINITIALIZED
         self._reader_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._render_lock = threading.Lock()
 
+        self._optional_channel_bootstrap_factory = None
     @property
     def channel_id(self) -> str:
         return self._channel_id
@@ -110,8 +115,17 @@ class CLIChannel(BidirectionalChannel):
                 ),
             ],
             management_ops=[
+                ChannelOpDescriptor("init", "management", "Initialize the local CLI channel without starting I/O."),
+                ChannelOpDescriptor("deinit", "management", "Deinitialize the local CLI channel and stop I/O."),
                 ChannelOpDescriptor("connect", "management", "Activate the local CLI channel."),
                 ChannelOpDescriptor("disconnect", "management", "Disconnect the local CLI channel."),
+                ChannelOpDescriptor("pause", "management", "Pause terminal input/output processing while keeping the session registered."),
+                ChannelOpDescriptor("resume", "management", "Resume terminal input/output processing after a pause."),
+                ChannelOpDescriptor("suspend", "management", "Suspend terminal channel activity without forgetting config."),
+                ChannelOpDescriptor("unsuspend", "management", "Unsuspend the terminal channel and restore activity eligibility."),
+                ChannelOpDescriptor("get_config", "management", "Return the current CLI channel config snapshot."),
+                ChannelOpDescriptor("update_config", "management", "Update mutable CLI channel config fields.", input_schema={"config": "dict"}, output_schema={"snapshot": "ChannelConfigSnapshot"}),
+                ChannelOpDescriptor("health_check", "management", "Return a health snapshot for the CLI channel."),
                 ChannelOpDescriptor("help", "management", "Show supported CLI commands."),
                 ChannelOpDescriptor("quit", "management", "Request orderly shutdown from the CLI."),
                 ChannelOpDescriptor("state", "management", "Render a controlled local state summary."),
@@ -121,6 +135,13 @@ class CLIChannel(BidirectionalChannel):
             shutdown_requirements=["reader thread stop signal", "local CLI status transition"],
             health_signals=["get_status", "shutdown_requested", "queued_input_count"],
             ack_schema={"success": "bool", "delivery": "best_effort"},
+            config_fields=[
+                ChannelConfigFieldDescriptor("user_id", "Local CLI user identity.", required=True, mutable_at_runtime=False, default_value="local_operator", schema_hint="str"),
+                ChannelConfigFieldDescriptor("session_name", "Conversation/session key for the local CLI channel.", required=True, mutable_at_runtime=True, default_value="local_cli", schema_hint="str"),
+                ChannelConfigFieldDescriptor("command_prefix", "Command prefix recognized as local management input.", required=True, mutable_at_runtime=True, default_value="/", schema_hint="str"),
+                ChannelConfigFieldDescriptor("enable_commands", "Whether local management commands are enabled.", required=True, mutable_at_runtime=True, default_value=True, schema_hint="bool"),
+                ChannelConfigFieldDescriptor("banner_enabled", "Whether connect/init renders the startup banner.", required=True, mutable_at_runtime=True, default_value=True, schema_hint="bool"),
+            ],
             limitations=["Current CLI support is text-only.", "Management commands are local and do not enter the cognitive stimulus path."],
         )
 
@@ -128,6 +149,8 @@ class CLIChannel(BidirectionalChannel):
         self._queue.put(str(text or ""))
 
     def poll(self) -> List[ChannelMessage]:
+        if self._status in {ChannelStatus.PAUSED, ChannelStatus.SUSPENDED, ChannelStatus.DISCONNECTED, ChannelStatus.DEINITIALIZED}:
+            return []
         messages: List[ChannelMessage] = []
         while True:
             try:
@@ -158,7 +181,7 @@ class CLIChannel(BidirectionalChannel):
         return messages
 
     def send(self, message: ChannelMessage) -> bool:
-        if not self.is_connected():
+        if not self.is_connected() or self._paused or self._suspended:
             return False
 
         metadata = dict(message.metadata)
@@ -178,6 +201,8 @@ class CLIChannel(BidirectionalChannel):
         return self._status == ChannelStatus.CONNECTED
 
     def connect(self) -> None:
+        if self._status == ChannelStatus.UNINITIALIZED:
+            self._status = ChannelStatus.INITIALIZED
         if not self.is_available:
             self._status = ChannelStatus.DISCONNECTED
             return
@@ -185,6 +210,8 @@ class CLIChannel(BidirectionalChannel):
             return
         self._stop_event.clear()
         self._shutdown_requested = False
+        self._paused = False
+        self._suspended = False
         self._status = ChannelStatus.CONNECTED
         if self._banner_enabled:
             self._write_lines(self._render_banner())
@@ -199,6 +226,129 @@ class CLIChannel(BidirectionalChannel):
             self._reader_thread.join(timeout=0.1)
             if not self._reader_thread.is_alive():
                 self._reader_thread = None
+
+    def get_config_snapshot(self) -> ChannelConfigSnapshot:
+        return ChannelConfigSnapshot(
+            channel_id=self.channel_id,
+            status=self._status.value,
+            config_values={
+                "user_id": self._user_id,
+                "session_name": self._session_name,
+                "command_prefix": self._command_prefix,
+                "enable_commands": self._enable_commands,
+                "banner_enabled": self._banner_enabled,
+                "enabled": self.is_available,
+            },
+            mutable_fields=["session_name", "command_prefix", "enable_commands", "banner_enabled", "enabled"],
+            validation_errors=[],
+        )
+
+    def update_config(self, updates: Optional[Dict[str, Any]] = None) -> ChannelConfigSnapshot:
+        updates = dict(updates or {})
+        errors: List[str] = []
+        if "user_id" in updates and str(updates["user_id"]) != self._user_id:
+            errors.append("user_id is immutable at runtime")
+        if "session_name" in updates:
+            session_name = str(updates["session_name"] or "").strip()
+            if session_name:
+                self._session_name = session_name
+            else:
+                errors.append("session_name must be non-empty")
+        if "command_prefix" in updates:
+            command_prefix = str(updates["command_prefix"] or "").strip()
+            if command_prefix:
+                self._command_prefix = command_prefix
+            else:
+                errors.append("command_prefix must be non-empty")
+        if "enable_commands" in updates:
+            self._enable_commands = bool(updates["enable_commands"])
+        if "banner_enabled" in updates:
+            self._banner_enabled = bool(updates["banner_enabled"])
+        if "enabled" in updates:
+            self.is_available = bool(updates["enabled"])
+        snapshot = self.get_config_snapshot()
+        if errors:
+            return ChannelConfigSnapshot(
+                channel_id=snapshot.channel_id,
+                status=snapshot.status,
+                config_values=snapshot.config_values,
+                mutable_fields=snapshot.mutable_fields,
+                validation_errors=errors,
+            )
+        return snapshot
+
+    def health_check(self) -> Dict[str, Any]:
+        return {
+            "channel_id": self.channel_id,
+            "status": self._status.value,
+            "connected": self.is_connected(),
+            "paused": self._paused,
+            "suspended": self._suspended,
+            "queued_input_count": self._queue.qsize(),
+            "shutdown_requested": self._shutdown_requested,
+        }
+
+    def execute_management_op(self, op_name: str, payload: Optional[Dict[str, Any]] = None) -> ChannelManagementResult:
+        payload = dict(payload or {})
+        if op_name == "init":
+            if self._status in {ChannelStatus.CONNECTED, ChannelStatus.INITIALIZED, ChannelStatus.PAUSED, ChannelStatus.SUSPENDED}:
+                return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel already initialized.")
+            self._status = ChannelStatus.INITIALIZED
+            self._paused = False
+            self._suspended = False
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel initialized.")
+        if op_name == "deinit":
+            self.disconnect()
+            self._paused = False
+            self._suspended = False
+            self._status = ChannelStatus.DEINITIALIZED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel deinitialized.")
+        if op_name == "connect":
+            self.connect()
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel connected.")
+        if op_name == "disconnect":
+            self.disconnect()
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel disconnected.")
+        if op_name == "pause":
+            self._paused = True
+            if self._status == ChannelStatus.CONNECTED:
+                self._status = ChannelStatus.PAUSED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel paused.")
+        if op_name == "resume":
+            self._paused = False
+            if self._status == ChannelStatus.PAUSED:
+                self._status = ChannelStatus.CONNECTED if self.is_available else ChannelStatus.INITIALIZED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel resumed.")
+        if op_name == "suspend":
+            self._pre_suspend_status = self._status
+            self._suspended = True
+            self._status = ChannelStatus.SUSPENDED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel suspended.")
+        if op_name == "unsuspend":
+            self._suspended = False
+            if self._pre_suspend_status == ChannelStatus.CONNECTED and self.is_available and not self._paused:
+                self._status = ChannelStatus.CONNECTED
+            else:
+                self._status = self._pre_suspend_status if self._pre_suspend_status != ChannelStatus.SUSPENDED else ChannelStatus.INITIALIZED
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, "CLI channel unsuspended.")
+        if op_name == "get_config":
+            snapshot = self.get_config_snapshot()
+            return ChannelManagementResult(self.channel_id, op_name, True, snapshot.status, payload={"snapshot": dict(snapshot.config_values), "validation_errors": list(snapshot.validation_errors)})
+        if op_name == "update_config":
+            snapshot = self.update_config(dict(payload.get("config", {}) or {}))
+            return ChannelManagementResult(
+                self.channel_id,
+                op_name,
+                success=not snapshot.validation_errors,
+                status=snapshot.status,
+                message="CLI channel config updated." if not snapshot.validation_errors else "CLI channel config update failed validation.",
+                payload={"snapshot": dict(snapshot.config_values), "validation_errors": list(snapshot.validation_errors)},
+                error_code="config_validation_failed" if snapshot.validation_errors else "",
+            )
+        if op_name == "health_check":
+            health = self.health_check()
+            return ChannelManagementResult(self.channel_id, op_name, True, self._status.value, payload=health)
+        return super().execute_management_op(op_name, payload)
 
     def get_command_results(self) -> List[CLICommandResult]:
         return list(self._command_results)
@@ -359,3 +509,26 @@ class CLIChannel(BidirectionalChannel):
         normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
         parts = normalized.split("\n")
         return parts if parts else [""]
+
+
+def build_cli_bootstrap_factory(
+    *,
+    cfg: object,
+    state_provider: Optional[Callable[[], Mapping[str, Any] | Any]] = None,
+    history_provider: Optional[Callable[[str, str], Any]] = None,
+    sec_evaluator: object | None = None,
+    input_stream=None,
+) -> OptionalChannelBootstrapFactory:
+    return lambda: OptionalChannelBootstrapSpec(
+        channel_id="cli",
+        factory=CLIChannel,
+        payload={
+            "user_id": getattr(cfg, "CLI_USER_ID", "user"),
+            "session_name": getattr(cfg, "CLI_SESSION_NAME", "terminal"),
+            "enabled": bool(getattr(cfg, "CLI_ENABLED", False)),
+            "input_stream": input_stream,
+            "state_provider": state_provider,
+            "history_provider": history_provider,
+            "sec_evaluator": sec_evaluator,
+        },
+    )

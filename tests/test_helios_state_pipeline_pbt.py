@@ -108,6 +108,11 @@ def test_no_thought_tick_retains_forward_propagated_state_without_passive_fallba
             assert forwarded_state.temporal_state is not None
             assert 0.0 <= forwarded_state.boredom <= 1.0
             assert 0.0 <= forwarded_state.restoration_level <= 1.0
+            assert isinstance(forwarded_state.channel_availability, dict)
+            assert forwarded_state.channel_availability.get("tts", False) == forwarded_state.tts_available
+            assert forwarded_state.channel_availability.get("stt", False) == forwarded_state.stt_available
+            assert forwarded_state.channel_availability.get("vision", False) == forwarded_state.vision_available
+            assert forwarded_state.is_channel_available("tts") == forwarded_state.tts_available
             helios.response_pipeline.generate_reply.assert_not_called()
         finally:
             for handler in list(helios.log.handlers):
