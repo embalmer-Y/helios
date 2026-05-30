@@ -86,13 +86,14 @@ from temporal_gate import build_temporal_gate
 from core.event_source import EventSource
 from core.separation_source import SeparationAnxietySource
 from core.drive_source import InternalDriveSource
-from core.helios_state import ContinuationPressureState, HeliosState
+from core.helios_state import ContinuationPressureState, HeliosState, ProactiveObservabilityState
 from core.temporal_dynamics import TemporalDynamics, TemporalUpdate
 from core.tick_guard import TickGuard
 from behavior_registry import RuntimeBehaviorCatalog
 from helios_io.channel import ChannelManagementResult, ChannelMessage, ChannelStatus, InputChannel, OutputChannel
 from helios_io.channel_gateway import ChannelGateway
 from personality_contract import build_personality_contract
+from personality_projection import resolve_personality_projection
 
 # ── Passive Reply Pipeline ──
 from helios_io.icri_temperature import ICRITemperatureMapper
@@ -249,6 +250,7 @@ class Helios:
         self.memory_system = MemorySystem(
             working_capacity=15,
             episodic_capacity=500,
+            autobiographical_store=self.autobio,
         )
         
         # ── Load persisted state after all subsystems are initialized ──
@@ -301,6 +303,17 @@ class Helios:
         self.last_thought_gate_result: dict[str, object] = {}
         self.last_directed_retrieval_trace: dict[str, object] = {}
         self.last_identity_revision_trace: dict[str, object] = {}
+        self.last_proactive_state: dict[str, object] = ProactiveObservabilityState().to_dict()
+        self.proactive_counters: dict[str, int] = {
+            "ticks_evaluated": 0,
+            "ticks_with_drive": 0,
+            "proactive_thought_sessions": 0,
+            "mixed_thought_sessions": 0,
+            "proposal_count": 0,
+            "accepted_decisions": 0,
+            "policy_rejections": 0,
+            "suppressed_ticks": 0,
+        }
         
         # ── QQ Bot 客户端 (G4 v2: 独立 WebSocket) ──
         self.qq: Optional[QQBotClient] = None
@@ -1041,6 +1054,7 @@ class Helios:
             last_thought_cycle_result=dict(self.last_thought_cycle_result),
             current_stimuli=list(self.current_stimuli),
             last_thought_gate_result=dict(self.last_thought_gate_result),
+            proactive=ProactiveObservabilityState.from_payload(self.last_proactive_state),
         )
         self.last_rss_mb = state.rss_mb
         self.last_uptime_hours = state.uptime_hours
@@ -1154,7 +1168,12 @@ class Helios:
         self.last_continuation_state = dict(getattr(state, "continuation_payload", lambda: {})() or {})
         self.last_recall_intent = str(getattr(state, "last_recall_intent", "") or "")
         self.last_memory_handoff = dict(getattr(state, "last_memory_handoff", {}) or {})
-        self.last_thought_cycle_result = dict(getattr(state, "last_thought_cycle_result", {}) or {})
+        thought_cycle_payload = dict(getattr(state, "last_thought_cycle_result", {}) or {})
+        if not thought_cycle_payload:
+            thought_cycle_payload = self._coerce_thought_cycle_result_payload(thought_result)
+            if thought_cycle_payload:
+                state.last_thought_cycle_result = dict(thought_cycle_payload)
+        self.last_thought_cycle_result = thought_cycle_payload
         self.last_thought_gate_result = dict(getattr(state, "last_thought_gate_result", {}) or {})
         self.last_directed_retrieval_trace = dict(getattr(state, "last_directed_retrieval_trace", {}) or {})
         if bool(getattr(thought_result, "triggered", False)) and self.phi_engine:
@@ -1422,7 +1441,7 @@ class Helios:
                             proposal.behavior_name,
                             decision.rejection_reason,
                         )
-                        self._record_policy_rejection(proposal, decision)
+                        self._record_policy_rejection(state=state, proposal=proposal, decision=decision)
                         continue
 
                     self.log.debug(
@@ -1486,6 +1505,9 @@ class Helios:
         hour = datetime.now().hour
         dominant_emotions = [name for name, _score in sorted((state.panksepp or {}).items(), key=lambda item: -item[1])[:3]]
         active_accepted = False
+        active_stage = ""
+        active_accepted_decision: Optional[ActionDecision] = None
+        active_rejection_decision: Optional[ActionDecision] = None
         if thought_action_proposals:
             self.log.debug(
                 "Thought bridge candidates: count=%d types=%s",
@@ -1513,6 +1535,7 @@ class Helios:
                 state.last_action = decision.behavior_name
                 self.limb_bridge.enqueue_decision(decision)
                 active_accepted = True
+                active_stage = "thought_bridge"
                 break
             self.log.debug(
                 "Thought bridge proposal rejected: type=%s reason=%s channel=%s",
@@ -1520,7 +1543,7 @@ class Helios:
                 decision.rejection_reason,
                 decision.selected_channel_id,
             )
-            self._record_policy_rejection(proposal, decision)
+            self._record_policy_rejection(state=state, proposal=proposal, decision=decision)
 
         def _resolve_active_channels(action: str) -> list[str]:
             channel_runtime_snapshot = self._channel_gateway.get_runtime_snapshot()
@@ -1591,6 +1614,8 @@ class Helios:
                     state.last_action = decision.behavior_name
                     self.limb_bridge.enqueue_decision(decision)
                     active_accepted = True
+                    active_stage = "active"
+                    active_accepted_decision = decision
                     break
                 else:
                     self.log.debug(
@@ -1599,7 +1624,8 @@ class Helios:
                         decision.rejection_reason,
                         decision.selected_channel_id,
                     )
-                    self._record_policy_rejection(proposal, decision)
+                    active_rejection_decision = decision
+                    self._record_policy_rejection(state=state, proposal=proposal, decision=decision)
 
         if not active_accepted:
             if preconscious_proposals:
@@ -1630,7 +1656,7 @@ class Helios:
                     state.last_action = decision.behavior_name
                     self.limb_bridge.enqueue_decision(decision)
                     break
-                self._record_policy_rejection(proposal, decision)
+                self._record_policy_rejection(state=state, proposal=proposal, decision=decision)
                 self.preconscious_policy.on_decision_rejected(proposal, decision)
                 self.log.debug("Preconscious proposal rejected: %s", decision.rejection_reason)
                 state.last_preconscious_trace = self.preconscious_policy.get_observability_snapshot()
@@ -1640,6 +1666,18 @@ class Helios:
         state.current_behavior = self.behavior_executor.current.action if self.behavior_executor.current else ""
         state.last_preconscious_trace = self.preconscious_policy.get_observability_snapshot()
         self.last_preconscious_trace = dict(state.last_preconscious_trace)
+        state.proactive = ProactiveObservabilityState.from_payload(
+            self._build_proactive_observability(
+                state=state,
+                assessment=assessment,
+                active_proposals=active_proposals,
+                active_stage=active_stage,
+                accepted_decision=active_accepted_decision,
+                rejection_decision=active_rejection_decision,
+            )
+        )
+        self.last_proactive_state = state.proactive.to_dict()
+        self._update_proactive_counters(self.last_proactive_state, self.last_thought_cycle_result)
 
         if self.tick_count % 100 == 0:
             if not self.stability_monitor.check_memory():
@@ -1760,13 +1798,53 @@ class Helios:
         outbound_text = str(params.get("outbound_text", "") or "")
         outbound_metadata = dict(params.get("outbound_metadata", {}) or {})
         target_user_id = str(params.get("target_user_id", "") or "")
+        self.log.debug(
+            "owner_path_node=executor_enter action=%s channel_id=%s proposal_id=%s decision_id=%s source_type=%s origin_type=%s outbound_text_present=%s target_user_id_present=%s",
+            action,
+            channel_id,
+            command.proposal_id if command is not None else "",
+            command.decision_id if command is not None else "",
+            str((command.provenance if command is not None else {}).get("source_type", "") or ""),
+            str((command.provenance if command is not None else {}).get("origin_type", "") or ""),
+            bool(outbound_text.strip()),
+            bool(target_user_id.strip()),
+        )
         state.pending_rendered_reply = None
         if command is not None:
+            command_nested_provenance = dict(command.provenance.get("provenance", {}) or {})
             outbound_metadata.setdefault("op_name", command.op_name)
             outbound_metadata.setdefault("normalized_intensity", float(getattr(command, "normalized_intensity", 0.0) or 0.0))
             outbound_metadata.setdefault("outbound_intensity", float(getattr(command, "normalized_intensity", 0.0) or 0.0))
             outbound_metadata.setdefault("origin_type", str(command.provenance.get("origin_type", "") or ""))
             outbound_metadata.setdefault("origin_id", str(command.provenance.get("origin_id", "") or ""))
+            outbound_metadata.setdefault(
+                "session_kind",
+                str(command.provenance.get("session_kind", command_nested_provenance.get("session_kind", "")) or ""),
+            )
+            outbound_metadata.setdefault(
+                "dominant_disposition",
+                str(
+                    command.provenance.get(
+                        "dominant_disposition",
+                        command_nested_provenance.get("dominant_disposition", ""),
+                    )
+                    or ""
+                ),
+            )
+            outbound_metadata.setdefault(
+                "trigger_sources",
+                [
+                    str(item)
+                    for item in list(
+                        command.provenance.get(
+                            "trigger_sources",
+                            command_nested_provenance.get("trigger_sources", []),
+                        )
+                        or []
+                    )
+                    if str(item)
+                ],
+            )
         if outbound_text:
             if not channel_id:
                 self.log.warning(
@@ -1796,6 +1874,42 @@ class Helios:
                     action,
                     channel_id,
                     str((command.params if command else {}).get("selected_op", "") or ""),
+                )
+                return False
+            command_provenance = dict(command.provenance or {}) if command is not None else {}
+            thought_origin_action = str(command_provenance.get("origin_type", "") or "") == "thought" or str(
+                command_provenance.get("source_type", "") or ""
+            ) == "thought_action_bridge"
+            if thought_origin_action and not outbound_text:
+                self.log.debug(
+                    "owner_path_node=executor_blocked action=%s proposal_id=%s decision_id=%s reason=missing_outbound_text owner_path=%s",
+                    action,
+                    command.proposal_id if command is not None else "",
+                    command.decision_id if command is not None else "",
+                    str(command_provenance.get("owner_path", "thought_action_bridge") or "thought_action_bridge"),
+                )
+                self.feedback_recorder.record_execution_consistency_failure(
+                    source_path=str(command_provenance.get("source_type", "thought_action_bridge") or "thought_action_bridge"),
+                    proposal_id=command.proposal_id if command is not None else "",
+                    decision_id=command.decision_id if command is not None else "",
+                    behavior_id=command.behavior_id if command is not None else "",
+                    channel_id=channel_id,
+                    behavior_name=action,
+                    op_name=command.op_name if command is not None else "",
+                    normalized_intensity=float(getattr(command, "normalized_intensity", 0.0) or 0.0) if command is not None else 0.0,
+                    provenance=command_provenance,
+                    payload={
+                        "reason": "missing_outbound_text",
+                        "rejection_reason": "missing_outbound_text",
+                        "owner_path": str(command_provenance.get("owner_path", "thought_action_bridge") or "thought_action_bridge"),
+                    },
+                )
+                self.log.warning(
+                    "Action execution rejected: behavior=%s selected_channel_id=%s selected_op=%s rejection_reason=missing_outbound_text owner_path=%s",
+                    action,
+                    channel_id,
+                    command.op_name if command is not None else "",
+                    str(command_provenance.get("owner_path", "thought_action_bridge") or "thought_action_bridge"),
                 )
                 return False
             text = self._generate_speech(action, state)
@@ -1839,6 +1953,16 @@ class Helios:
         metadata = metadata if isinstance(metadata, dict) else dict(metadata or {})
         resolved_channel = channel_id
         resolved_user_id = user_id
+        self.log.debug(
+            "owner_path_node=route_outbound_enter action=%s proposal_id=%s decision_id=%s channel_id=%s op_name=%s text_len=%d owner_path=%s",
+            action_label,
+            command.proposal_id if command else "",
+            command.decision_id if command else "",
+            resolved_channel,
+            getattr(command, "op_name", "") or str(metadata.get("op_name", "") or ""),
+            len(str(text or "")),
+            str((command.provenance if command else {}).get("owner_path", metadata.get("owner_path", "")) or ""),
+        )
 
         if not resolved_channel:
             self.log.warning(
@@ -1936,6 +2060,15 @@ class Helios:
         rendered_text = str(outbound_message.metadata.get("rendered_text", text) or text)
         expression_profile = dict(outbound_message.metadata.get("expression_profile", {}) or {})
         self._last_outbound_expression_profile = dict(expression_profile)
+        self.log.debug(
+            "owner_path_node=route_outbound_exit action=%s proposal_id=%s decision_id=%s channel_id=%s ok=%s rendered_text_present=%s",
+            action_label,
+            command.proposal_id if command else "",
+            command.decision_id if command else "",
+            resolved_channel,
+            ok,
+            bool(rendered_text.strip()),
+        )
         if ok:
             if resolved_channel == "qq":
                 self._last_master_contact = time.time()
@@ -1965,7 +2098,13 @@ class Helios:
         )
         return ok
 
-    def _record_policy_rejection(self, proposal: ActionProposal, decision: ActionDecision) -> None:
+    def _record_policy_rejection(
+        self,
+        *,
+        state: HeliosState,
+        proposal: ActionProposal,
+        decision: ActionDecision,
+    ) -> None:
         if self._is_connectivity_rejection(decision):
             self.decisions_rejected_by_connectivity += 1
         proposal_snapshot = dict(decision.proposal_snapshot or {})
@@ -1977,6 +2116,20 @@ class Helios:
             "origin_type": str(proposal.origin_type or proposal_provenance.get("origin_type", "") or ""),
             "source_type": str(proposal.source_type or proposal_provenance.get("source_type", "") or ""),
         }
+        if proposal.source_type == "thought_action_bridge":
+            self._record_thought_bridge_deferred_trace(
+                state=state,
+                proposal=proposal,
+                decision=decision,
+                merged_provenance=merged_provenance,
+            )
+        if proposal.source_type == "regulation" or str(merged_provenance.get("session_kind", "") or "") in {"proactive", "mixed"}:
+            self._record_proactive_deferred_memory_trace(
+                state=state,
+                proposal=proposal,
+                decision=decision,
+                merged_provenance=merged_provenance,
+            )
         self.feedback_recorder.record_policy_rejection(
             source_path=str(proposal.source_type or proposal.source_module or "policy"),
             proposal_id=proposal.proposal_id,
@@ -1996,6 +2149,376 @@ class Helios:
                 "proposal": proposal_snapshot,
             },
         )
+
+    def _record_thought_bridge_deferred_trace(
+        self,
+        *,
+        state: HeliosState,
+        proposal: ActionProposal,
+        decision: ActionDecision,
+        merged_provenance: dict[str, object],
+    ) -> None:
+        trigger_sources = [
+            str(item) for item in list(merged_provenance.get("trigger_sources", []) or []) if str(item)
+        ]
+        self.last_internal_thought_trace = {
+            **dict(self.last_internal_thought_trace),
+            "deferred": True,
+            "write_result": "deferred",
+            "output_destination": "internal_log,deferred_trace",
+            "policy_rejection_reason": str(decision.rejection_reason or ""),
+            "deferred_behavior": str(proposal.behavior_name or ""),
+            "deferred_requested_op": str(proposal.op_name or ""),
+            "deferred_candidate_channels": [str(item) for item in list(proposal.candidate_channels or []) if str(item)],
+            "session_kind": str(merged_provenance.get("session_kind", "") or self.last_internal_thought_trace.get("session_kind", "")),
+            "dominant_disposition": str(
+                merged_provenance.get("dominant_disposition", "")
+                or self.last_internal_thought_trace.get("dominant_disposition", "")
+                or ""
+            ),
+            "trigger_sources": trigger_sources or list(self.last_internal_thought_trace.get("trigger_sources", []) or []),
+            "deferred_provenance": {
+                "owner_path": str(merged_provenance.get("owner_path", "") or ""),
+                "origin_id": str(merged_provenance.get("origin_id", "") or ""),
+                "source_type": str(merged_provenance.get("source_type", "") or ""),
+            },
+            "policy_trace": dict(decision.policy_trace or {}),
+        }
+        state.last_internal_thought_trace = dict(self.last_internal_thought_trace)
+        self.last_thought_cycle_result = {
+            **dict(self.last_thought_cycle_result),
+            "deferred": True,
+            "policy_rejection_reason": str(decision.rejection_reason or ""),
+            "deferred_behavior": str(proposal.behavior_name or ""),
+            "deferred_requested_op": str(proposal.op_name or ""),
+            "session_kind": str(merged_provenance.get("session_kind", "") or self.last_thought_cycle_result.get("session_kind", "")),
+            "dominant_disposition": str(
+                merged_provenance.get("dominant_disposition", "")
+                or self.last_thought_cycle_result.get("dominant_disposition", "")
+                or ""
+            ),
+            "trigger_sources": trigger_sources or list(self.last_thought_cycle_result.get("trigger_sources", []) or []),
+            "deferred_provenance": {
+                "owner_path": str(merged_provenance.get("owner_path", "") or ""),
+                "origin_id": str(merged_provenance.get("origin_id", "") or ""),
+                "source_type": str(merged_provenance.get("source_type", "") or ""),
+            },
+        }
+        state.last_thought_cycle_result = dict(self.last_thought_cycle_result)
+
+    def _record_proactive_deferred_memory_trace(
+        self,
+        *,
+        state: HeliosState,
+        proposal: ActionProposal,
+        decision: ActionDecision,
+        merged_provenance: dict[str, object],
+    ) -> None:
+        trigger_sources: list[str] = []
+        for item in list(merged_provenance.get("trigger_sources", []) or []):
+            value = str(item or "")
+            if value and value not in trigger_sources:
+                trigger_sources.append(value)
+        source_type = str(merged_provenance.get("source_type", "") or proposal.source_type or "")
+        owner_path = str(merged_provenance.get("owner_path", "") or source_type or "policy")
+        session_kind = str(merged_provenance.get("session_kind", "") or ("proactive" if source_type == "regulation" else ""))
+        dominant_disposition = str(
+            merged_provenance.get("dominant_disposition", "")
+            or dict(getattr(state, "last_thought_cycle_result", {}) or {}).get("dominant_disposition", "")
+            or dict(getattr(state, "last_internal_thought_trace", {}) or {}).get("dominant_disposition", "")
+            or "defer"
+        )
+        narrative = (
+            f"Deferred {session_kind or source_type or 'active'} {dominant_disposition} intent: "
+            f"{str(proposal.behavior_name or 'unknown')} ({str(decision.rejection_reason or 'rejected')})"
+        )
+        moment = self.autobio.record(
+            panksepp=dict(getattr(state, "panksepp", {}) or {}),
+            valence=float(getattr(state, "valence", 0.0) or 0.0),
+            arousal=float(getattr(state, "arousal", 0.0) or 0.0),
+            dominant=str(getattr(state, "dominant_system", "") or getattr(state, "dominant", "") or ""),
+            phi=float(getattr(state, "icri", 0.0) or self.last_icri or 0.0),
+            mood_valence=float(getattr(state, "mood_valence", 0.0) or 0.0),
+            mood_arousal=float(getattr(state, "mood_arousal", 0.0) or 0.0),
+            mood_label=str(getattr(state, "mood_label", "") or ""),
+            allostatic_load=float(getattr(state, "allostatic_load", 0.0) or 0.0),
+            narrative=narrative,
+            event_trigger=",".join(trigger_sources[:3]) or str(decision.rejection_reason or owner_path or "deferred"),
+            cycle=int(getattr(state, "tick", 0) or 0),
+            source="proactive_deferred_trace",
+        )
+        self.feedback_recorder.record_memory_write(
+            source_path="proactive_deferred_trace",
+            memory_type="autobiographical",
+            memory_id=str(getattr(moment, "moment_id", "")),
+            summary=str(getattr(moment, "narrative", "") or narrative),
+            proposal_id=proposal.proposal_id,
+            decision_id=decision.decision_id,
+            behavior_id=str(decision.behavior_snapshot.get("behavior_id", "") or ""),
+            payload={
+                "source_type": source_type,
+                "owner_path": owner_path,
+                "origin_id": str(merged_provenance.get("origin_id", "") or ""),
+                "session_kind": session_kind,
+                "dominant_disposition": dominant_disposition,
+                "trigger_sources": list(trigger_sources),
+                "rejection_reason": str(decision.rejection_reason or ""),
+                "behavior_name": str(proposal.behavior_name or ""),
+                "requested_op": str(proposal.op_name or ""),
+                "candidate_channels": [str(item) for item in list(proposal.candidate_channels or []) if str(item)],
+                "tick": int(getattr(state, "tick", 0) or 0),
+            },
+        )
+        if self.identity_store is not None:
+            self.identity_governance.record_proactive_deferred_trace(
+                store=self.identity_store,
+                payload={
+                    "recorded_at_ts": time.time(),
+                    "tick": int(getattr(state, "tick", 0) or 0),
+                    "source_type": source_type,
+                    "owner_path": owner_path,
+                    "origin_id": str(merged_provenance.get("origin_id", "") or ""),
+                    "session_kind": session_kind,
+                    "dominant_disposition": dominant_disposition,
+                    "trigger_sources": list(trigger_sources),
+                    "rejection_reason": str(decision.rejection_reason or ""),
+                    "behavior_name": str(proposal.behavior_name or ""),
+                    "requested_op": str(proposal.op_name or ""),
+                    "candidate_channels": [str(item) for item in list(proposal.candidate_channels or []) if str(item)],
+                },
+            )
+            self.persistence.save_identity_store(self.identity_store)
+
+    def _build_proactive_observability(
+        self,
+        *,
+        state: HeliosState,
+        assessment: object,
+        active_proposals: list[ActionProposal],
+        active_stage: str,
+        accepted_decision: Optional[ActionDecision],
+        rejection_decision: Optional[ActionDecision],
+    ) -> dict[str, object]:
+        if assessment is None:
+            return ProactiveObservabilityState(
+                evaluated=False,
+                reason_summary="no_panksepp_state",
+                non_externalization_reason="no_panksepp_state",
+            ).to_dict()
+
+        candidates = list(getattr(assessment, "candidates", []) or [])
+        candidate_actions = [
+            str(getattr(candidate, "action_type", "") or "")
+            for candidate in candidates[:5]
+            if str(getattr(candidate, "action_type", "") or "")
+        ]
+        if not candidate_actions:
+            candidate_actions = [proposal.behavior_name for proposal in list(active_proposals or []) if proposal.behavior_name]
+
+        projection = resolve_personality_projection(projection=getattr(state, "personality_projection", None))
+        neurochem_gate = getattr(state, "neurochem_gate", None)
+        temporal_gate = getattr(state, "temporal_gate", None)
+
+        social_outward_pressure = max(
+            0.0,
+            min(
+                projection.social_initiation_bias * 0.28
+                + projection.expressivity_bias * 0.18
+                + float(getattr(neurochem_gate, "social_affinity", 0.0) or 0.0) * 0.32
+                + float(getattr(temporal_gate, "expression_window", 0.0) or 0.0) * 0.22,
+                1.5,
+            ),
+        )
+        exploration_pressure = max(
+            0.0,
+            min(
+                projection.novelty_bias * 0.26
+                + float(getattr(neurochem_gate, "exploration_bias", 0.0) or 0.0) * 0.36
+                + float(getattr(neurochem_gate, "initiative_bias", 0.0) or 0.0) * 0.12
+                + float(getattr(temporal_gate, "exploration_pressure", 0.0) or 0.0) * 0.26,
+                1.5,
+            ),
+        )
+        internal_reflection_pressure = max(
+            0.0,
+            min(
+                projection.persistence_bias * 0.18
+                + projection.style("introspection") * 0.22
+                + float(getattr(neurochem_gate, "soothing_bias", 0.0) or 0.0) * 0.24
+                + float(getattr(temporal_gate, "restorative_pull", 0.0) or 0.0) * 0.24
+                + float(getattr(neurochem_gate, "caution_bias", 0.0) or 0.0) * 0.12,
+                1.5,
+            ),
+        )
+        caution_pressure = max(
+            0.0,
+            min(
+                projection.style("caution") * 0.18
+                + float(getattr(neurochem_gate, "caution_bias", 0.0) or 0.0) * 0.52
+                + float(getattr(temporal_gate, "restorative_pull", 0.0) or 0.0) * 0.30,
+                1.5,
+            ),
+        )
+
+        drive_sources: list[str] = []
+        drive_dominant = str(getattr(assessment, "drive_dominant", "") or "")
+        if drive_dominant:
+            drive_sources.append(f"drive:{drive_dominant}")
+        dominant_system = str(getattr(state, "dominant_system", "") or "")
+        if dominant_system:
+            drive_sources.append(f"emotion:{dominant_system}")
+        if float(getattr(state, "boredom", 0.0) or 0.0) >= 0.2:
+            drive_sources.append("temporal:boredom")
+        if float(getattr(state, "novelty_hunger", 0.0) or 0.0) >= 0.2:
+            drive_sources.append("temporal:novelty_hunger")
+        if float(getattr(neurochem_gate, "initiative_bias", 0.0) or 0.0) >= 0.2:
+            drive_sources.append("neurochem:initiative")
+        if float(getattr(neurochem_gate, "exploration_bias", 0.0) or 0.0) >= 0.2:
+            drive_sources.append("neurochem:exploration")
+        if projection.initiative_bias >= 0.1:
+            drive_sources.append("personality:initiative")
+        if projection.social_initiation_bias >= 0.1:
+            drive_sources.append("personality:social")
+        if projection.style("introspection") >= 0.45:
+            drive_sources.append("personality:introspection")
+
+        wants_regulation = bool(getattr(assessment, "wants_regulation", False))
+        reason_summary = str(getattr(assessment, "reason_summary", "") or "")
+        non_externalization_reason = ""
+        policy_rejection_reason = ""
+        deferred = False
+        accepted = active_stage == "active" and accepted_decision is not None
+
+        if wants_regulation and not accepted:
+            decision_reason = ""
+            if rejection_decision is not None:
+                decision_reason = str(getattr(rejection_decision, "rejection_reason", "") or "")
+            if decision_reason:
+                non_externalization_reason = decision_reason
+                policy_rejection_reason = decision_reason
+                deferred = True
+            elif active_stage == "thought_bridge":
+                non_externalization_reason = "preempted_by_thought_bridge"
+                deferred = True
+            elif not active_proposals:
+                non_externalization_reason = "no_generated_proposals"
+                deferred = True
+        elif not wants_regulation:
+            non_externalization_reason = reason_summary or "not_selected"
+
+        dominant_disposition = ""
+        if accepted and str(getattr(accepted_decision, "selected_channel_id", "") or ""):
+            dominant_disposition = "externalize"
+        elif policy_rejection_reason:
+            dominant_disposition = "defer"
+        elif str(getattr(assessment, "selected_action", "") or "") in {"browse", "search", "learn"}:
+            dominant_disposition = "explore"
+        elif str(getattr(assessment, "selected_action", "") or "") in {"reflect", "idle", "check_system"}:
+            dominant_disposition = "reflect"
+        else:
+            disposition_scores = {
+                "externalize": social_outward_pressure,
+                "explore": exploration_pressure,
+                "reflect": internal_reflection_pressure,
+                "defer": caution_pressure + (0.12 if deferred else 0.0),
+            }
+            dominant_disposition = max(disposition_scores.items(), key=lambda item: item[1])[0]
+
+        recommended_actions = list(candidate_actions)
+        if not recommended_actions:
+            recommended_actions = {
+                "externalize": ["speak_share", "reply_message"],
+                "explore": ["browse", "search", "learn"],
+                "reflect": ["reflect", "check_system"],
+                "defer": [str(getattr(assessment, "selected_action", "") or "")],
+            }.get(dominant_disposition, [])
+        recommended_actions = [item for item in recommended_actions if item]
+
+        return ProactiveObservabilityState(
+            evaluated=True,
+            drive_score=float(getattr(assessment, "selected_score", 0.0) or 0.0),
+            drive_dominant=str(getattr(assessment, "drive_dominant", "") or ""),
+            drive_urgency=float(getattr(assessment, "drive_urgency", 0.0) or 0.0),
+            drive_sources=drive_sources,
+            wants_regulation=wants_regulation,
+            selected_action=str(getattr(assessment, "selected_action", "") or ""),
+            selected_score=float(getattr(assessment, "selected_score", 0.0) or 0.0),
+            reason_summary=reason_summary,
+            candidate_count=max(len(active_proposals or []), len(candidate_actions)),
+            candidate_actions=candidate_actions,
+            recommended_actions=recommended_actions,
+            dominant_emotions=[
+                str(item) for item in list(getattr(assessment, "dominant_emotions", []) or [])[:3] if str(item)
+            ],
+            deviation_sources=[
+                str(name) for name, _score in list(getattr(assessment, "deviations", []) or [])[:3] if str(name)
+            ],
+            dominant_disposition=dominant_disposition,
+            social_outward_pressure=social_outward_pressure,
+            exploration_pressure=exploration_pressure,
+            internal_reflection_pressure=internal_reflection_pressure,
+            caution_pressure=caution_pressure,
+            accepted=accepted,
+            accepted_behavior=str(getattr(accepted_decision, "behavior_name", "") or "") if accepted else "",
+            selected_channel_id=str(getattr(accepted_decision, "selected_channel_id", "") or "") if accepted else "",
+            non_externalization_reason=non_externalization_reason,
+            policy_rejection_reason=policy_rejection_reason,
+            deferred=deferred,
+        ).to_dict()
+
+    def _coerce_thought_cycle_result_payload(self, thought_result: object) -> dict[str, object]:
+        if thought_result is None:
+            return {}
+        to_state_payload = getattr(thought_result, "to_state_payload", None)
+        if callable(to_state_payload):
+            payload = to_state_payload()
+            if isinstance(payload, dict):
+                return dict(payload)
+        if isinstance(thought_result, dict):
+            return dict(thought_result)
+
+        payload: dict[str, object] = {}
+        for key in (
+            "triggered",
+            "trigger_reason",
+            "session_kind",
+            "dominant_disposition",
+            "thought_type",
+        ):
+            value = getattr(thought_result, key, None)
+            if value not in (None, ""):
+                payload[key] = value
+        trigger_sources = list(getattr(thought_result, "trigger_sources", []) or [])
+        if trigger_sources:
+            payload["trigger_sources"] = [str(item) for item in trigger_sources if str(item)]
+        action_proposal = getattr(thought_result, "action_proposal", None)
+        if isinstance(action_proposal, dict):
+            payload["action_proposal"] = dict(action_proposal)
+        return payload
+
+    def _update_proactive_counters(
+        self,
+        proactive_state: dict[str, object],
+        thought_cycle_result: Optional[dict[str, object]] = None,
+    ) -> None:
+        thought_cycle = dict(thought_cycle_result or {})
+        if thought_cycle.get("triggered"):
+            if thought_cycle.get("session_kind") == "proactive":
+                self.proactive_counters["proactive_thought_sessions"] += 1
+            elif thought_cycle.get("session_kind") == "mixed":
+                self.proactive_counters["mixed_thought_sessions"] += 1
+        if not proactive_state.get("evaluated"):
+            return
+        self.proactive_counters["ticks_evaluated"] += 1
+        if proactive_state.get("wants_regulation"):
+            self.proactive_counters["ticks_with_drive"] += 1
+        self.proactive_counters["proposal_count"] += int(proactive_state.get("candidate_count", 0) or 0)
+        if proactive_state.get("accepted"):
+            self.proactive_counters["accepted_decisions"] += 1
+        if proactive_state.get("policy_rejection_reason"):
+            self.proactive_counters["policy_rejections"] += 1
+        if proactive_state.get("wants_regulation") and not proactive_state.get("accepted") and proactive_state.get("non_externalization_reason"):
+            self.proactive_counters["suppressed_ticks"] += 1
 
     def _finalize_passive_reply_decision(
         self,
@@ -2107,6 +2630,31 @@ class Helios:
         origin_id = str(thought_action.origin_thought_id or getattr(thought_result, "thought_id", "") or "")
         thought_type = str(thought_action.thought_type or getattr(thought_result, "thought_type", "") or "")
         reason_trace = [str(item) for item in list(thought_action.reason_trace or []) if str(item)]
+        session_kind = str(
+            getattr(thought_result, "session_kind", "")
+            or dict(getattr(state, "last_thought_cycle_result", {}) or {}).get("session_kind", "")
+            or dict(getattr(state, "last_thought_gate_result", {}) or {}).get("session_kind", "")
+            or "reactive"
+        )
+        dominant_disposition = str(
+            getattr(thought_result, "dominant_disposition", "")
+            or dict(getattr(state, "last_thought_cycle_result", {}) or {}).get("dominant_disposition", "")
+            or dict(getattr(state, "last_thought_gate_result", {}) or {}).get("dominant_disposition", "")
+            or dict(getattr(state, "last_internal_thought_trace", {}) or {}).get("dominant_disposition", "")
+            or getattr(getattr(state, "proactive", None), "dominant_disposition", "")
+            or ""
+        )
+        trigger_sources = [
+            str(item)
+            for item in list(
+                getattr(thought_result, "trigger_sources", None)
+                or dict(getattr(state, "last_thought_cycle_result", {}) or {}).get("trigger_sources", [])
+                or dict(getattr(state, "last_thought_gate_result", {}) or {}).get("trigger_sources", [])
+                or dict(getattr(state, "last_internal_thought_trace", {}) or {}).get("trigger_sources", [])
+                or []
+            )
+            if str(item)
+        ]
         outbound_intensity = max(0.0, min(1.0, float(thought_action.outbound_intensity or 0.0)))
         score = max(0.0, min(1.0, float(thought_action.score or 0.0)))
 
@@ -2135,6 +2683,9 @@ class Helios:
                 "thought_type": thought_type,
                 "requested_op": thought_action.preferred_op,
                 "scope": thought_action.scope,
+                "session_kind": session_kind,
+                "dominant_disposition": dominant_disposition,
+                "trigger_sources": trigger_sources,
                 "reason_trace": reason_trace,
                 "source_type": "thought_action_bridge",
             },
@@ -2170,6 +2721,16 @@ class Helios:
         if current is None:
             return
 
+        self.log.debug(
+            "owner_path_node=executor_dispatch action=%s proposal_id=%s decision_id=%s channel_id=%s op_name=%s source_type=%s",
+            current.action,
+            current.proposal_id,
+            current.decision_id,
+            current.channel_id,
+            current.op_name,
+            str(current.provenance.get("source_type", "") or ""),
+        )
+
         success = self._handle_action(
             current.action,
             state,
@@ -2186,6 +2747,15 @@ class Helios:
         )
 
     def _on_behavior_result(self, command: BehaviorCommand, result: dict[str, object]):
+        self.log.debug(
+            "owner_path_node=executor_result action=%s proposal_id=%s decision_id=%s success=%s tick=%s source_type=%s",
+            command.action,
+            command.proposal_id,
+            command.decision_id,
+            bool(result.get("success", False)),
+            int(result.get("tick", 0) or 0),
+            str(command.provenance.get("source_type", "") or ""),
+        )
         feedback = self.feedback_recorder.record_command_result(
             command,
             result,
@@ -2564,6 +3134,23 @@ class Helios:
                 "current_revision": str(getattr(self.identity_store, "current_revision", "") or ""),
                 "revision_history_len": len(getattr(self.identity_store, "revision_history", []) or []),
                 "latest_revision": dict(self.last_identity_revision_trace),
+                "proactive_deferred_trace_count": int(
+                    dict(getattr(self.identity_store, "identity_metadata", {}) or {})
+                    .get("proactive_deferred_trace_summary", {})
+                    .get("total_deferred_traces", 0)
+                    or 0
+                ),
+                "latest_proactive_deferred_trace": dict(
+                    dict(getattr(self.identity_store, "identity_metadata", {}) or {})
+                    .get("proactive_deferred_trace_summary", {})
+                    .get("latest_trace", {})
+                    or {}
+                ),
+                "proactive_governance_signal": dict(
+                    dict(getattr(self.identity_store, "identity_metadata", {}) or {})
+                    .get("proactive_governance_signal", {})
+                    or {}
+                ),
             },
             "autobio_moments": autobio_stats.get("total_moments", 0),
             "autobio_chapters": autobio_stats.get("total_chapters", 0),
@@ -2606,6 +3193,11 @@ class Helios:
             "thought_cycle": dict(self.last_thought_cycle_result),
             "directed_retrieval": dict(self.last_directed_retrieval_trace),
             "internal_thought": dict(self.last_internal_thought_trace),
+            "proactive": {
+                **dict(self.last_proactive_state),
+                "counters": dict(self.proactive_counters),
+            },
+            "sec_evaluator": self.sec_evaluator.get_state() if hasattr(self.sec_evaluator, "get_state") else {},
             "optional_channels": {
                 "factory_ids": list(optional_channel_snapshot.factory_ids),
                 "spec_ids": list(optional_channel_snapshot.spec_ids),

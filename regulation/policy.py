@@ -224,6 +224,15 @@ class RegulationPolicy:
         initiative_component = projection.initiative_bias * 0.12
         neurochem_behavior_bias = gate.bias_for_behavior(action_type) if gate is not None else 0.0
         temporal_behavior_bias = time_gate.bias_for_behavior(action_type) if time_gate is not None else 0.0
+        dominant_disposition = self._resolve_dominant_disposition(action_type)
+        trigger_sources = self._build_trigger_sources(
+            drive_dominant=drive_dominant,
+            dominant_emotions=dominant_emotions,
+            dominant_disposition=dominant_disposition,
+            projection=projection,
+            gate=gate,
+            time_gate=time_gate,
+        )
         final_score = clamp(score + behavior_bias * 0.22 + initiative_component + neurochem_behavior_bias + temporal_behavior_bias, 0.0, 1.5)
 
         modalities = ["internal"]
@@ -286,6 +295,9 @@ class RegulationPolicy:
             candidate_channels=ranked_channels,
             parameters=dict(params or {}),
             provenance={
+                "session_kind": "proactive",
+                "dominant_disposition": dominant_disposition,
+                "trigger_sources": trigger_sources,
                 "drive_dominant": drive_dominant,
                 "drive_urgency": float(drive_urgency),
                 "recent_action": recent_action,
@@ -297,6 +309,55 @@ class RegulationPolicy:
             created_at_tick=tick,
             created_at_ts=time.time() if timestamp is None else float(timestamp),
         )
+
+    @staticmethod
+    def _resolve_dominant_disposition(action_type: str) -> str:
+        if action_type in {"browse", "search", "learn"}:
+            return "explore"
+        if action_type in {"reflect", "check_system", "idle"}:
+            return "reflect"
+        if action_type.startswith("speak_") or action_type in {"request", "intimate"}:
+            return "externalize"
+        return "defer"
+
+    @staticmethod
+    def _build_trigger_sources(
+        *,
+        drive_dominant: str,
+        dominant_emotions: Sequence[str] | None,
+        dominant_disposition: str,
+        projection,
+        gate,
+        time_gate,
+    ) -> list[str]:
+        sources: list[str] = []
+        if drive_dominant:
+            sources.append(f"drive:{drive_dominant}")
+        for emotion in list(dominant_emotions or [])[:2]:
+            if emotion:
+                sources.append(f"emotion:{emotion}")
+        if dominant_disposition:
+            sources.append(f"disposition:{dominant_disposition}")
+        if getattr(projection, "initiative_bias", 0.0) >= 0.1:
+            sources.append("personality:initiative")
+        if getattr(projection, "social_initiation_bias", 0.0) >= 0.1:
+            sources.append("personality:social")
+        if getattr(projection, "novelty_bias", 0.0) >= 0.1:
+            sources.append("personality:novelty")
+        if gate is not None and float(getattr(gate, "initiative_bias", 0.0) or 0.0) >= 0.2:
+            sources.append("neurochem:initiative")
+        if gate is not None and float(getattr(gate, "exploration_bias", 0.0) or 0.0) >= 0.2:
+            sources.append("neurochem:exploration")
+        if time_gate is not None and float(getattr(time_gate, "exploration_pressure", 0.0) or 0.0) >= 0.2:
+            sources.append("temporal:exploration_pressure")
+        if time_gate is not None and float(getattr(time_gate, "restorative_pull", 0.0) or 0.0) >= 0.2:
+            sources.append("temporal:restorative_pull")
+
+        deduped: list[str] = []
+        for source in sources:
+            if source not in deduped:
+                deduped.append(source)
+        return deduped
 
     def propose(
         self,

@@ -96,6 +96,17 @@ class TestLLMSECEvaluator:
         assert evaluator.fallback_count == 1
         assert evaluator.llm_successes == 0
 
+    def test_explicit_empty_api_key_does_not_fall_back_to_env(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "env-key-should-not-be-used")
+
+        evaluator = LLMSECEvaluator(api_key="")
+
+        assert evaluator._api_key == ""
+        result = evaluator.evaluate("想你了")
+        assert result["pleasantness"] > 0.0
+        assert evaluator.fallback_count == 1
+        assert evaluator.llm_successes == 0
+
     def test_context_truncated_to_last_3(self):
         """Only the last 3 context messages should be included."""
         evaluator = LLMSECEvaluator(api_key="test_key")
@@ -207,6 +218,9 @@ class TestLLMSECEvaluator:
         assert "之前的对话3" in user_prompt
         # The actual message being evaluated should also be in the prompt
         assert "你好" in user_prompt
+        assert call_args.kwargs["reasoning_effort"] == "low"
+        assert call_args.kwargs["response_format"] == {"type": "json_object"}
+        assert call_args.kwargs["max_tokens"] == 480
 
     def test_sec_system_prompt_avoids_identity_theater_language(self):
         evaluator = LLMSECEvaluator(api_key="fake_key")
@@ -251,6 +265,17 @@ class TestLLMSECEvaluator:
 ```'''
         result = evaluator._parse_sec_response(raw)
         assert result["novelty"] == pytest.approx(0.5, abs=0.01)
+
+    def test_parse_partial_json_recovers_known_sec_fields(self):
+        evaluator = LLMSECEvaluator(api_key="fake_key")
+        raw = '{"novelty": 0.61, "pleasantness": -0.25, "goal_relevance": 0.72'
+
+        result = evaluator._parse_sec_response(raw)
+
+        assert result["novelty"] == pytest.approx(0.61, abs=0.01)
+        assert result["pleasantness"] == pytest.approx(-0.25, abs=0.01)
+        assert result["goal_relevance"] == pytest.approx(0.72, abs=0.01)
+        assert result["goal_congruence"] == pytest.approx(0.0, abs=0.01)
 
     def test_values_clamped_to_valid_range(self):
         """Out-of-range values from LLM should be clamped."""

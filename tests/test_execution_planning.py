@@ -336,6 +336,11 @@ def test_execution_planner_accepts_thought_origin_external_behavior_and_normaliz
         op_name="send",
         op_params={"outbound_metadata": {"origin_type": "thought"}},
         outbound_intensity=1.4,
+        provenance={
+            "session_kind": "proactive",
+            "dominant_disposition": "externalize",
+            "trigger_sources": ["drive:curiosity", "disposition:externalize"],
+        },
     )
     behavior = BehaviorSpec(
         behavior_id="b-4c",
@@ -362,6 +367,10 @@ def test_execution_planner_accepts_thought_origin_external_behavior_and_normaliz
     assert decision.normalized_intensity == 1.0
     assert decision.validated_params["target_user_id"] == "master"
     assert decision.validated_params["outbound_metadata"]["origin_type"] == "thought"
+    assert decision.policy_trace["session_kind"] == "proactive"
+    assert decision.policy_trace["dominant_disposition"] == "externalize"
+    assert decision.policy_trace["trigger_sources"] == ["drive:curiosity", "disposition:externalize"]
+    assert decision.proposal_snapshot["provenance"]["session_kind"] == "proactive"
 
 
 def test_execution_planner_rejects_requested_op_when_channel_does_not_support_it():

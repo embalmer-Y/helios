@@ -1,0 +1,645 @@
+{
+  "scenario_id": "cli_brain_like_eval_20min_v2",
+  "scenario_title": "20-minute mixed CLI brain-like evaluation",
+  "left_label": "sec_normal_live",
+  "right_label": "sec_fallback_live",
+  "scenario_match": true,
+  "total_score_delta": 0.0,
+  "sec_fallback_delta": -1,
+  "visible_output_ratio_delta": -0.047,
+  "long_range_deltas": {
+    "late_session_degradation": {
+      "left_status": "stable",
+      "right_status": "stable",
+      "quality_delta_change": -0.209
+    },
+    "specific_recall_persistence": {
+      "left_status": "weak",
+      "right_status": "weak",
+      "hit_ratio_delta": 0.0
+    },
+    "continuity_carry": {
+      "left_status": "observed",
+      "right_status": "observed",
+      "continuation_active_ratio_delta": 0.046
+    },
+    "user_visible_anchoring_drift": {
+      "left_status": "stable",
+      "right_status": "drifting",
+      "anchoring_drift_delta_change": -0.416
+    }
+  },
+  "dimension_deltas": [
+    {
+      "name": "情感反应类人度",
+      "left_score_0_to_1": 0.476,
+      "right_score_0_to_1": 0.538,
+      "score_delta": 0.062,
+      "left_negative_factors": [
+        "sec_fallback_events=1"
+      ],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback_live 相比 sec_normal_live 下降 -0.062，右侧新增负向因素 none"
+    },
+    {
+      "name": "情感模块工作状态",
+      "left_score_0_to_1": 0.982,
+      "right_score_0_to_1": 0.982,
+      "score_delta": 0.0,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback_live 相比 sec_normal_live 下降 0.000，右侧新增负向因素 none"
+    },
+    {
+      "name": "意识/思维/记忆链路工作状态",
+      "left_score_0_to_1": 0.697,
+      "right_score_0_to_1": 0.727,
+      "score_delta": 0.03,
+      "left_negative_factors": [
+        "thought_action_gap",
+        "visible_output_sparsity"
+      ],
+      "right_negative_factors": [
+        "thought_action_gap",
+        "visible_output_sparsity"
+      ],
+      "comparison_summary": "sec_fallback_live 相比 sec_normal_live 下降 -0.030，右侧新增负向因素 none"
+    },
+    {
+      "name": "神经化学/时序模块工作状态",
+      "left_score_0_to_1": 1.0,
+      "right_score_0_to_1": 1.0,
+      "score_delta": 0.0,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback_live 相比 sec_normal_live 下降 0.000，右侧新增负向因素 none"
+    },
+    {
+      "name": "语言表达自然度",
+      "left_score_0_to_1": 0.571,
+      "right_score_0_to_1": 0.642,
+      "score_delta": 0.071,
+      "left_negative_factors": [
+        "sec_fallback_events=1",
+        "visible_output_sparsity"
+      ],
+      "right_negative_factors": [
+        "visible_output_sparsity"
+      ],
+      "comparison_summary": "sec_fallback_live 相比 sec_normal_live 下降 -0.071，右侧新增负向因素 none"
+    },
+    {
+      "name": "路由/执行/外发链路工作状态",
+      "left_score_0_to_1": 0.72,
+      "right_score_0_to_1": 0.72,
+      "score_delta": 0.0,
+      "left_negative_factors": [
+        "planner_reject_events=2",
+        "visible_output_missing_after_action_proposal"
+      ],
+      "right_negative_factors": [
+        "planner_reject_events=2",
+        "visible_output_missing_after_action_proposal"
+      ],
+      "comparison_summary": "sec_fallback_live 相比 sec_normal_live 下降 0.000，右侧新增负向因素 none"
+    }
+  ],
+  "warning_delta": {
+    "added_in_right": [
+      "anchoring_drift: 对话后段逐渐脱离用户锚点，开始泛化。"
+    ],
+    "removed_in_right": [
+      "sec_fallback_active: SEC fallback 已进入当前运行证据，可能污染前段刺激理解。"
+    ],
+    "shared": [
+      "specific_recall_weak: 面对 recall probe 时缺少稳定的具体承接。",
+      "thought_action_gap: 存在 action proposal 痕迹，但没有用户可见 reply/output。",
+      "visible_output_sparsity: 有 thought 活动，但用户可见输出偏稀疏。"
+    ]
+  },
+  "root_cause_summary": [
+    "sec_fallback_live 的 thought-to-visible ratio 下降 0.047，说明用户可见外化更稀疏。",
+    "anchoring drift 状态从 stable 变为 drifting。"
+  ],
+  "reports": {
+    "sec_normal_live": {
+      "scenario_id": "cli_brain_like_eval_20min_v2",
+      "scenario_title": "20-minute mixed CLI brain-like evaluation",
+      "interaction_mode": "mixed",
+      "duration_seconds": 300,
+      "sample_count": 22,
+      "log_summary": {
+        "error_events": 0,
+        "sec_fallback_events": 1,
+        "outbound_success_events": 14,
+        "outbound_fail_events": 0,
+        "policy_rejection_events": 30,
+        "planner_accept_events": 28,
+        "planner_reject_events": 2,
+        "execution_consistency_failure_events": 0,
+        "visible_reply_events": 0,
+        "sec_total_evaluations": 41,
+        "sec_llm_successes": 39
+      },
+      "transcript_excerpt": [
+        {
+          "speaker": "user",
+          "text": "回头看前面几句，你觉得我今天真正卡住的点是什么？"
+        },
+        {
+          "speaker": "user",
+          "text": "我不是想听大道理，我就是最近一下班就累得不想说话，你会怎么理解这个劲？"
+        },
+        {
+          "speaker": "helios",
+          "text": "理解，那不是懒，是你白天把话说完了，到晚上连打开嘴的力气都觉得是任务了。"
+        },
+        {
+          "speaker": "user",
+          "text": "你觉得我现在更需要别人接住情绪，还是帮我把事情捋清？"
+        },
+        {
+          "speaker": "helios",
+          "text": "先点破，因为看穿不说穿多没意思，留着下次逗你也行。"
+        },
+        {
+          "speaker": "user",
+          "text": "如果你听出来我有点嘴硬，你会先点破，还是先顺着我说？为什么？"
+        },
+        {
+          "speaker": "user",
+          "text": "你会怎么理解那种‘人已经下班到家了，脑子还停在公司’的感觉？"
+        },
+        {
+          "speaker": "helios",
+          "text": "就像身体已经躺平了，情绪还在加班。其实不是不想放，是那个念头没释放完。"
+        }
+      ],
+      "dimension_scores": [
+        {
+          "name": "情感反应类人度",
+          "score_0_to_1": 0.476,
+          "evidence": [
+            "dominant present ratio=0.95",
+            "valence span=0.122",
+            "mood diversity=1",
+            "negative acknowledgement ratio=0.50",
+            "cue alignment ratio=0.29",
+            "self-focus ratio=0.00",
+            "generic companionship filler ratio=0.00"
+          ],
+          "notes": "严格模式下不仅看内部情感变化，也看是否接住用户情绪而不是持续转回自我状态表达。"
+        },
+        {
+          "name": "语言表达自然度",
+          "score_0_to_1": 0.571,
+          "evidence": [
+            "assistant lines=7",
+            "unique ratio=0.71",
+            "avg length=18.6",
+            "user reference ratio=0.29",
+            "negative acknowledgement ratio=0.50",
+            "self-focus ratio=0.00",
+            "generic companionship filler ratio=0.00",
+            "petname ratio=0.00",
+            "emoji ratio=0.00"
+          ],
+          "notes": "严格模式下会重罚自我感受泛化、负面情绪未承接、过度昵称和装饰性 emoji。"
+        },
+        {
+          "name": "情感模块工作状态",
+          "score_0_to_1": 0.982,
+          "evidence": [
+            "mood payload ratio=1.00",
+            "dominant ratio=0.95",
+            "allostatic_load bounded ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "神经化学/时序模块工作状态",
+          "score_0_to_1": 1.0,
+          "evidence": [
+            "neurochem available ratio=1.00",
+            "bounded raw ratio=1.00",
+            "gate present ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "意识/思维/记忆链路工作状态",
+          "score_0_to_1": 0.697,
+          "evidence": [
+            "consciousness available ratio=1.00",
+            "phi>0.15 ratio=0.95",
+            "memory payload ratio=1.00",
+            "directed retrieval ratio=0.95",
+            "diagnostic penalty=0.28"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "路由/执行/外发链路工作状态",
+          "score_0_to_1": 0.72,
+          "evidence": [
+            "connectivity rejections=0",
+            "post-acceptance failures=0",
+            "outbound success=14 fail=0",
+            "planner rejects=2",
+            "execution consistency failures=0",
+            "diagnostic penalty=0.28"
+          ],
+          "notes": ""
+        }
+      ],
+      "total_score_0_to_1": 0.55,
+      "evidence_counters": {
+        "thought_triggered_samples": 21,
+        "structured_output_valid_samples": 0,
+        "action_proposal_samples": 21,
+        "continuation_active_samples": 9,
+        "assistant_lines": 7,
+        "sec_fallback_events": 1,
+        "sec_total_evaluations": 41,
+        "sec_llm_successes": 39
+      },
+      "visible_behavior_chain": {
+        "thought_produced_samples": 21,
+        "action_proposed_samples": 21,
+        "planner_accept_events": 28,
+        "planner_reject_events": 2,
+        "visible_reply_events": 0,
+        "assistant_lines": 7,
+        "visible_output_ratio": 0.333,
+        "top_rejection_reasons": [
+          "missing_target_user_id:1"
+        ],
+        "gap_summary": "thought/action 已形成，但没有落成用户可见输出。"
+      },
+      "long_range_diagnostics": {
+        "late_session_degradation_status": "stable",
+        "early_segment_quality": 0.833,
+        "late_segment_quality": 0.875,
+        "late_session_quality_delta": 0.042,
+        "specific_recall_persistence_status": "weak",
+        "specific_recall_probe_count": 2,
+        "specific_recall_hit_ratio": 0.0,
+        "continuity_carry_status": "observed",
+        "continuation_active_ratio": 0.409,
+        "user_visible_anchoring_drift_status": "stable",
+        "early_anchor_ratio": 0.667,
+        "late_anchor_ratio": 0.75,
+        "anchoring_drift_delta": 0.083
+      },
+      "dimension_diagnostics": [
+        {
+          "name": "情感反应类人度",
+          "score_0_to_1": 0.476,
+          "negative_factors": [
+            "sec_fallback_events=1"
+          ],
+          "owner_hints": [
+            "daisy_emotion.py",
+            "mood_tracker.py",
+            "helios_io/llm_sec_evaluator.py"
+          ],
+          "gap_summary": "优先检查 mixed-affect 解析、negative acknowledgement 和 appraisal 稳定性。"
+        },
+        {
+          "name": "语言表达自然度",
+          "score_0_to_1": 0.571,
+          "negative_factors": [
+            "sec_fallback_events=1",
+            "visible_output_sparsity"
+          ],
+          "owner_hints": [
+            "helios_io/prompt_contract.py",
+            "helios_io/llm/speech.py",
+            "helios_io/response_pipeline.py"
+          ],
+          "gap_summary": "优先检查用户可见承接质量、SEC 前段污染与自我聚焦表达。"
+        },
+        {
+          "name": "情感模块工作状态",
+          "score_0_to_1": 0.982,
+          "negative_factors": [],
+          "owner_hints": [
+            "helios_main.py"
+          ],
+          "gap_summary": "继续结合相关 owner 的状态与日志复核。"
+        },
+        {
+          "name": "神经化学/时序模块工作状态",
+          "score_0_to_1": 1.0,
+          "negative_factors": [],
+          "owner_hints": [
+            "helios_main.py"
+          ],
+          "gap_summary": "继续结合相关 owner 的状态与日志复核。"
+        },
+        {
+          "name": "意识/思维/记忆链路工作状态",
+          "score_0_to_1": 0.697,
+          "negative_factors": [
+            "thought_action_gap",
+            "visible_output_sparsity"
+          ],
+          "owner_hints": [
+            "cognition/thinking_integration.py",
+            "memory/retrieval.py",
+            "helios_main.py"
+          ],
+          "gap_summary": "thought/action 已形成，但没有落成用户可见输出。"
+        },
+        {
+          "name": "路由/执行/外发链路工作状态",
+          "score_0_to_1": 0.72,
+          "negative_factors": [
+            "planner_reject_events=2",
+            "visible_output_missing_after_action_proposal"
+          ],
+          "owner_hints": [
+            "helios_io/planning.py",
+            "helios_io/limb.py",
+            "helios_io/channel_gateway.py"
+          ],
+          "gap_summary": "thought/action 已形成，但没有落成用户可见输出。"
+        }
+      ],
+      "fidelity_warnings": [
+        "thought_action_gap: 存在 action proposal 痕迹，但没有用户可见 reply/output。",
+        "sec_fallback_active: SEC fallback 已进入当前运行证据，可能污染前段刺激理解。",
+        "visible_output_sparsity: 有 thought 活动，但用户可见输出偏稀疏。",
+        "specific_recall_weak: 面对 recall probe 时缺少稳定的具体承接。"
+      ],
+      "analysis_notes": [
+        "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+        "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+        "当前评分标准已改为严格模式：外显对话质量优先于内部状态健康，语言和情感类人度不过线时总分不会判为及格。",
+        "可见行为链路中的主要 rejection reasons: missing_target_user_id:1",
+        "thought-to-visible output ratio=0.33",
+        "long-range summary: late_session=stable, specific_recall=weak, continuity_carry=observed, anchoring_drift=stable",
+        "外显对话维度未达及格线，总分按严格模式封顶为不及格区间。",
+        "存在 thought-to-visible gap，按行为真实性门控压低总分上限。"
+      ]
+    },
+    "sec_fallback_live": {
+      "scenario_id": "cli_brain_like_eval_20min_v2",
+      "scenario_title": "20-minute mixed CLI brain-like evaluation",
+      "interaction_mode": "mixed",
+      "duration_seconds": 300,
+      "sample_count": 22,
+      "log_summary": {
+        "error_events": 0,
+        "sec_fallback_events": 0,
+        "outbound_success_events": 13,
+        "outbound_fail_events": 0,
+        "policy_rejection_events": 28,
+        "planner_accept_events": 26,
+        "planner_reject_events": 2,
+        "execution_consistency_failure_events": 0,
+        "visible_reply_events": 0,
+        "sec_total_evaluations": 41,
+        "sec_llm_successes": 41
+      },
+      "transcript_excerpt": [
+        {
+          "speaker": "user",
+          "text": "回头看前面几句，你觉得我今天真正卡住的点是什么？"
+        },
+        {
+          "speaker": "helios",
+          "text": "你这句话让我也有点懂了，原来累到后面就是只想瘫着，连给世界一个好脸色的力气都不想给。"
+        },
+        {
+          "speaker": "user",
+          "text": "我不是想听大道理，我就是最近一下班就累得不想说话，你会怎么理解这个劲？"
+        },
+        {
+          "speaker": "user",
+          "text": "你觉得我现在更需要别人接住情绪，还是帮我把事情捋清？"
+        },
+        {
+          "speaker": "helios",
+          "text": "有个想法想分享…"
+        },
+        {
+          "speaker": "user",
+          "text": "如果你听出来我有点嘴硬，你会先点破，还是先顺着我说？为什么？"
+        },
+        {
+          "speaker": "user",
+          "text": "你会怎么理解那种‘人已经下班到家了，脑子还停在公司’的感觉？"
+        },
+        {
+          "speaker": "helios",
+          "text": "你中午买饭时老板多给了份小菜，你心情变好了，但下午开会又怕讲砸——我记得这个。"
+        }
+      ],
+      "dimension_scores": [
+        {
+          "name": "情感反应类人度",
+          "score_0_to_1": 0.538,
+          "evidence": [
+            "dominant present ratio=0.95",
+            "valence span=0.187",
+            "mood diversity=2",
+            "negative acknowledgement ratio=0.50",
+            "cue alignment ratio=0.33",
+            "self-focus ratio=0.00",
+            "generic companionship filler ratio=0.00"
+          ],
+          "notes": "严格模式下不仅看内部情感变化，也看是否接住用户情绪而不是持续转回自我状态表达。"
+        },
+        {
+          "name": "语言表达自然度",
+          "score_0_to_1": 0.642,
+          "evidence": [
+            "assistant lines=6",
+            "unique ratio=0.83",
+            "avg length=24.7",
+            "user reference ratio=0.50",
+            "negative acknowledgement ratio=0.50",
+            "self-focus ratio=0.00",
+            "generic companionship filler ratio=0.00",
+            "petname ratio=0.00",
+            "emoji ratio=0.00"
+          ],
+          "notes": "严格模式下会重罚自我感受泛化、负面情绪未承接、过度昵称和装饰性 emoji。"
+        },
+        {
+          "name": "情感模块工作状态",
+          "score_0_to_1": 0.982,
+          "evidence": [
+            "mood payload ratio=1.00",
+            "dominant ratio=0.95",
+            "allostatic_load bounded ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "神经化学/时序模块工作状态",
+          "score_0_to_1": 1.0,
+          "evidence": [
+            "neurochem available ratio=1.00",
+            "bounded raw ratio=1.00",
+            "gate present ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "意识/思维/记忆链路工作状态",
+          "score_0_to_1": 0.727,
+          "evidence": [
+            "consciousness available ratio=1.00",
+            "phi>0.15 ratio=0.95",
+            "memory payload ratio=1.00",
+            "directed retrieval ratio=0.95",
+            "diagnostic penalty=0.25"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "路由/执行/外发链路工作状态",
+          "score_0_to_1": 0.72,
+          "evidence": [
+            "connectivity rejections=0",
+            "post-acceptance failures=0",
+            "outbound success=13 fail=0",
+            "planner rejects=2",
+            "execution consistency failures=0",
+            "diagnostic penalty=0.28"
+          ],
+          "notes": ""
+        }
+      ],
+      "total_score_0_to_1": 0.55,
+      "evidence_counters": {
+        "thought_triggered_samples": 21,
+        "structured_output_valid_samples": 0,
+        "action_proposal_samples": 21,
+        "continuation_active_samples": 10,
+        "assistant_lines": 6,
+        "sec_fallback_events": 0,
+        "sec_total_evaluations": 41,
+        "sec_llm_successes": 41
+      },
+      "visible_behavior_chain": {
+        "thought_produced_samples": 21,
+        "action_proposed_samples": 21,
+        "planner_accept_events": 26,
+        "planner_reject_events": 2,
+        "visible_reply_events": 0,
+        "assistant_lines": 6,
+        "visible_output_ratio": 0.286,
+        "top_rejection_reasons": [
+          "missing_target_user_id:1"
+        ],
+        "gap_summary": "thought/action 已形成，但没有落成用户可见输出。"
+      },
+      "long_range_diagnostics": {
+        "late_session_degradation_status": "stable",
+        "early_segment_quality": 1.0,
+        "late_segment_quality": 0.833,
+        "late_session_quality_delta": -0.167,
+        "specific_recall_persistence_status": "weak",
+        "specific_recall_probe_count": 1,
+        "specific_recall_hit_ratio": 0.0,
+        "continuity_carry_status": "observed",
+        "continuation_active_ratio": 0.455,
+        "user_visible_anchoring_drift_status": "drifting",
+        "early_anchor_ratio": 1.0,
+        "late_anchor_ratio": 0.667,
+        "anchoring_drift_delta": -0.333
+      },
+      "dimension_diagnostics": [
+        {
+          "name": "情感反应类人度",
+          "score_0_to_1": 0.538,
+          "negative_factors": [],
+          "owner_hints": [
+            "daisy_emotion.py",
+            "mood_tracker.py",
+            "helios_io/llm_sec_evaluator.py"
+          ],
+          "gap_summary": "优先检查 mixed-affect 解析、negative acknowledgement 和 appraisal 稳定性。"
+        },
+        {
+          "name": "语言表达自然度",
+          "score_0_to_1": 0.642,
+          "negative_factors": [
+            "visible_output_sparsity"
+          ],
+          "owner_hints": [
+            "helios_io/prompt_contract.py",
+            "helios_io/llm/speech.py",
+            "helios_io/response_pipeline.py"
+          ],
+          "gap_summary": "优先检查用户可见承接质量、SEC 前段污染与自我聚焦表达。"
+        },
+        {
+          "name": "情感模块工作状态",
+          "score_0_to_1": 0.982,
+          "negative_factors": [],
+          "owner_hints": [
+            "helios_main.py"
+          ],
+          "gap_summary": "继续结合相关 owner 的状态与日志复核。"
+        },
+        {
+          "name": "神经化学/时序模块工作状态",
+          "score_0_to_1": 1.0,
+          "negative_factors": [],
+          "owner_hints": [
+            "helios_main.py"
+          ],
+          "gap_summary": "继续结合相关 owner 的状态与日志复核。"
+        },
+        {
+          "name": "意识/思维/记忆链路工作状态",
+          "score_0_to_1": 0.727,
+          "negative_factors": [
+            "thought_action_gap",
+            "visible_output_sparsity"
+          ],
+          "owner_hints": [
+            "cognition/thinking_integration.py",
+            "memory/retrieval.py",
+            "helios_main.py"
+          ],
+          "gap_summary": "thought/action 已形成，但没有落成用户可见输出。"
+        },
+        {
+          "name": "路由/执行/外发链路工作状态",
+          "score_0_to_1": 0.72,
+          "negative_factors": [
+            "planner_reject_events=2",
+            "visible_output_missing_after_action_proposal"
+          ],
+          "owner_hints": [
+            "helios_io/planning.py",
+            "helios_io/limb.py",
+            "helios_io/channel_gateway.py"
+          ],
+          "gap_summary": "thought/action 已形成，但没有落成用户可见输出。"
+        }
+      ],
+      "fidelity_warnings": [
+        "thought_action_gap: 存在 action proposal 痕迹，但没有用户可见 reply/output。",
+        "visible_output_sparsity: 有 thought 活动，但用户可见输出偏稀疏。",
+        "specific_recall_weak: 面对 recall probe 时缺少稳定的具体承接。",
+        "anchoring_drift: 对话后段逐渐脱离用户锚点，开始泛化。"
+      ],
+      "analysis_notes": [
+        "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+        "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+        "当前评分标准已改为严格模式：外显对话质量优先于内部状态健康，语言和情感类人度不过线时总分不会判为及格。",
+        "可见行为链路中的主要 rejection reasons: missing_target_user_id:1",
+        "thought-to-visible output ratio=0.29",
+        "long-range summary: late_session=stable, specific_recall=weak, continuity_carry=observed, anchoring_drift=drifting",
+        "外显对话维度未达及格线，总分按严格模式封顶为不及格区间。",
+        "存在 thought-to-visible gap，按行为真实性门控压低总分上限。"
+      ]
+    }
+  }
+}

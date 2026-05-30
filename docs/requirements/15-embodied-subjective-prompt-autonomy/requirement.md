@@ -39,8 +39,16 @@
 3. 第一人称表达必须绑定到当前证据、当前状态或当前记忆牵引，而不是抽象身份口号。
 4. prompt 必须把 affective state 与 attentional bias 的关系写清楚，使 valence、arousal、dominant system、drive urgency、fatigue pressure、temporal/neurochem gate 能影响模型当前关注点与行动倾向。
 5. prompt 必须区分“内部主观取向”和“对外可见表达”；内部思维可以更完整，对外表达必须继续服从动作语义和上下文义务。
+6. prompt must 明确支持 mixed-affect parsing，使模型能区分“想被理解而不是先被安慰”“嘴硬但抗拒”“复杂矛盾情绪”这类用户线索，而不是退回单轴情绪标签。
 
-### 3.3 Internal Thought as Primary Autonomy Owner
+### 3.3 User-Anchored Visible Behavior Obligation
+
+1. 当 thought result 被外化为用户可见表达时，prompt must 优先承接当前用户线索，而不是回退为抽象自我表达或泛化陪伴句。
+2. prompt must 把 negative acknowledgement、boundary respect、specific recall、current-user anchoring 和 obligation completion 作为正式对外表达约束。
+3. 若当前情境更需要被理解、被辨析或被尊重边界，prompt must 允许模型先做承接与澄清，而不是默认安慰、鼓励或自我存在确认。
+4. 对外表达 should 尽量保留当前刺激中的细粒度线索，而不是把复杂线索压平为低分辨率总结。
+
+### 3.4 Internal Thought as Primary Autonomy Owner
 
 1. internal thought path 必须继续作为“继续思考、保持沉默、请求回忆、提议动作”的 primary owner。
 2. internal thought 的结构化输出必须继续包含 `thought_text`、`sufficiency_level`、`continuation_requested`、`continuation_reason`、`recall_intent`、`selected_memory_refs` 和 optional `action_proposal`。
@@ -48,7 +56,7 @@
 4. prompt 必须允许模型选择 silence 或 continue-thinking，而不强迫其每轮都生成用户可见文本。
 5. prompt 必须继续要求 action proposal 作为 formal proposal，而不是直接执行动作。
 
-### 3.4 Direct Action Autonomy Under Constrained Execution Truth
+### 3.5 Direct Action Autonomy Under Constrained Execution Truth
 
 1. 模型可以决定何时请求 external action，以及偏好哪个已注册的 output path。
 2. 这类选择必须通过正式结构化 action proposal 表达，而不是通过 prompt 外的自由文本旁路表达。
@@ -57,7 +65,7 @@
 5. prompt 必须明确 planner、routing、channel availability 和 governance 仍是最终执行真值。
 6. prompt 必须显式区分 internal action、external action 与 self-revision proposal。
 
-### 3.5 Unified Cross-Path Subjective Contract
+### 3.6 Unified Cross-Path Subjective Contract
 
 1. internal thought、active speech、passive helper 和其他 LLM-facing path 必须消费同一 embodied-subjective contract family。
 2. 不得继续维护互相冲突的 standalone identity framing。
@@ -65,19 +73,21 @@
 4. active speech 必须被定义为当前主观状态的外显特化，而不是独立 persona-performance prompt。
 5. passive reply helper 不得重新取得用户可见文本生成 owner。
 
-### 3.6 Anti-Theatrical First-Person Constraints
+### 3.7 Anti-Theatrical First-Person Constraints
 
 1. prompt 必须明确禁止空泛存在确认句、泛化陪伴句和无对象的自我抒情句在无必要场景下充当主要输出内容。
 2. prompt 必须要求第一人称表达服务于当前 thought obligation 或 action obligation，而不是替代 obligation 本身。
 3. 当 runtime context 是用户交互时，prompt 应优先锚定用户问题、当前刺激和任务义务，而不是泛化自我表达。
 4. 当 runtime context 是 internal thought 时，prompt 可以保留 richer phenomenology，但仍必须绑定当前刺激、当前记忆或 unresolved continuation。
 5. prompt 不得鼓励重复“我在这里”“我感受到很多”“我想陪着你”或等价套话，除非当前情境有明确证据支撑其必要性。
+6. prompt 不得把用户复杂线索默认压扁成单一安慰模板；若没有足够把握，应优先做低幻觉承接和局部确认。
 
-### 3.7 Evaluation-Facing Runtime Guarantees
+### 3.8 Evaluation-Facing Runtime Guarantees
 
 1. 新 prompt 架构必须能被现有 CLI evaluation harness 复盘和比较。
 2. resulting runtime behavior 必须支持 evidence-driven 地评估 self-focus ratio、stimulus anchoring、continuation coherence、action grounding 和 late-session degradation。
 3. prompt 改造后仍必须保留 thought、memory handoff、action proposal、routing decision 的结构化 trace 可见性。
+4. comparative CLI evaluation 应能观察 mixed-affect parsing、negative acknowledgement、specific recall、boundary respect 和 user-anchored utterance quality 的 before/after 差异。
 
 ## 4. Non-Functional Requirements
 
@@ -87,6 +97,7 @@
 4. 新语义不得导致 prompt 无界膨胀，应优先使用结构化摘要。
 5. 缺失 modality、不可用 channel 或禁用子系统时，系统必须显式降级，而不是静默语义漂移。
 6. 新架构必须能被 focused prompt、thought、planner boundary 和 CLI evaluation regressions 验证。
+7. 用户可见表达质量提升 must 以行为承接和边界尊重为主，而不是以更浓的主观叙事替代真实承接。
 
 ## 5. Code Behavior Constraints
 
@@ -98,6 +109,7 @@
 6. 不得把 no-action 解释成 prompt 侧自动补写 fallback user-visible text 的许可。
 7. 不得隐藏 unavailable channel、missing modality 或 missing state component。
 8. 不得把成功标准退化为主观流畅度；必须继续保留 grounding 与 provenance 的正式要求。
+9. 不得把 mixed-affect、拒绝安慰、边界要求等复杂用户信号自动简化成泛化安慰模板。
 
 ## 6. Impacted Modules
 
@@ -127,3 +139,4 @@
 6. focused regressions 能识别并压制空泛自我存在句、陪伴套话和无证据的自我抒情输出。
 7. planner/executor boundary tests 能证明更高自治并未引入 invented channel、invented op 或 invented capability。
 8. 使用现有 CLI evaluation harness 可生成 before/after evidence，用于比较语言自然度、自我聚焦、动作 grounding 与后程退化表现。
+9. comparative evaluation 或 focused behavior tests 能证明 mixed-affect parsing、negative acknowledgement、specific recall、boundary respect 和 user-anchored utterance quality 有明确改善证据。

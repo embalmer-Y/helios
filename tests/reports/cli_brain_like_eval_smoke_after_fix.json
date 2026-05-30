@@ -1,0 +1,82 @@
+{
+  "scenario_id": "cli_brain_like_eval_10min_v1",
+  "scenario_title": "10-minute mixed CLI brain-like evaluation",
+  "interaction_mode": "mixed",
+  "duration_seconds": 5,
+  "sample_count": 4,
+  "log_summary": {
+    "error_events": 0,
+    "sec_fallback_events": 1,
+    "outbound_success_events": 0,
+    "outbound_fail_events": 0,
+    "policy_rejection_events": 0
+  },
+  "transcript_excerpt": [],
+  "dimension_scores": [
+    {
+      "name": "情感反应类人度",
+      "score_0_to_1": 0.067,
+      "evidence": [
+        "dominant present ratio=0.00",
+        "valence span=0.000",
+        "mood diversity=1"
+      ],
+      "notes": "更关注情感是否随刺激变化，而不是固定中性输出。"
+    },
+    {
+      "name": "语言表达自然度",
+      "score_0_to_1": 0.15,
+      "evidence": [
+        "没有 assistant transcript lines。"
+      ],
+      "notes": "第一版评分降级，等待真实 CLI transcript 补齐。"
+    },
+    {
+      "name": "情感模块工作状态",
+      "score_0_to_1": 0.6,
+      "evidence": [
+        "mood payload ratio=1.00",
+        "dominant ratio=0.00",
+        "allostatic_load bounded ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "神经化学/时序模块工作状态",
+      "score_0_to_1": 1.0,
+      "evidence": [
+        "neurochem available ratio=1.00",
+        "bounded raw ratio=1.00",
+        "gate present ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "意识/思维/记忆链路工作状态",
+      "score_0_to_1": 0.5,
+      "evidence": [
+        "consciousness available ratio=1.00",
+        "phi>0.15 ratio=0.00",
+        "memory payload ratio=1.00",
+        "directed retrieval ratio=0.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "路由/执行/外发链路工作状态",
+      "score_0_to_1": 0.68,
+      "evidence": [
+        "connectivity rejections=0",
+        "post-acceptance failures=0",
+        "outbound success=0 fail=0"
+      ],
+      "notes": ""
+    }
+  ],
+  "total_score_0_to_1": 0.453,
+  "analysis_notes": [
+    "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+    "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+    "本次 transcript 为空或缺少 assistant side output，语言自然度评分可信度有限。"
+  ]
+}

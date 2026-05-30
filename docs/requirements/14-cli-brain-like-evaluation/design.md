@@ -137,6 +137,7 @@ analysis_notes
 4. routing / execution consistency summary。
 5. log summary：error、fallback、outbound success/failure 等聚合结果。
 6. dimension score evidence 与总分输出结果。
+7. closeout-oriented bridge evidence fields：`action_explicit_samples`、`implicit_action_proposal_samples`、`equivalent_bridge_evidence_samples` 与对应 `r09_closeout.closeout_status`，用于区分“显式 action、implicit 但有 owner evidence、纯缺证据”三类 artifact。
 
 ## 9. Validation Strategy
 
@@ -146,3 +147,4 @@ analysis_notes
 4. focused runtime test 验证 `get_state()` 暴露 consciousness / neurochem 评估观测面。
 5. focused integration test 验证 in-process harness 能通过正式 CLI owner path 注入评估 prompt 并产出 report。
 6. 后续 manual/live validation 验证真实 10 分钟 CLI session 的 artifact 与评分结果。
+7. 当 evaluation artifact 被用于 R09 closeout 时，必须能把 `implicit_proposal_only` 与 `equivalent_bridge_evidence_observed` 区分开，避免把 heuristic thought-origin externalization 误判为 bridge evidence 缺失。

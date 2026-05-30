@@ -73,6 +73,7 @@
 3. focused test 验证 `get_state()` 的 consciousness / neurochem export。
 4. focused integration test 验证 in-process evaluation harness 使用正式 CLI owner path。
 5. 后续 live validation 验证真实 10 分钟 CLI artifact。
+6. 当 artifact 被 requirements closeout 复用时，validation 结论必须显式引用 `r09_closeout` 等 closeout-oriented 子摘要，而不是只看总分或 `visible_reply_events`。
 
 ## 6. Completion Criteria
 
@@ -83,3 +84,4 @@
 5. 评估报告能输出分块评分、总分与 evidence。
 6. focused tests 能验证评估骨架与新增 observability。
 7. 至少存在一条后续可执行的 runner 路径，用于真实 CLI 评估 closeout。
+8. 当 artifact 被用于 R09 closeout 时，report 必须能区分 `implicit_proposal_only` 与 `equivalent_bridge_evidence_observed`，否则不得作为 closeout 证据。

@@ -3,6 +3,7 @@
 from .cli_brain_like_evaluation import (
     CliBrainLikeEvaluationHarness,
     CliBrainLikeEvaluator,
+    EvaluationComparisonReport,
     EvaluationDimensionScore,
     EvaluationPromptStep,
     EvaluationReport,
@@ -10,12 +11,14 @@ from .cli_brain_like_evaluation import (
     EvaluationStateSample,
     build_default_20min_mixed_cli_scenario,
     build_default_10min_mixed_cli_scenario,
+    build_r09_focused_6min_cli_scenario,
     summarize_log_lines,
 )
 
 __all__ = [
     "CliBrainLikeEvaluationHarness",
     "CliBrainLikeEvaluator",
+    "EvaluationComparisonReport",
     "EvaluationDimensionScore",
     "EvaluationPromptStep",
     "EvaluationReport",
@@ -23,5 +26,6 @@ __all__ = [
     "EvaluationStateSample",
     "build_default_20min_mixed_cli_scenario",
     "build_default_10min_mixed_cli_scenario",
+    "build_r09_focused_6min_cli_scenario",
     "summarize_log_lines",
 ]

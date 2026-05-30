@@ -56,6 +56,7 @@
 1. 新增空泛自我存在句与陪伴套话的 focused regressions。
 2. 新增 stimulus anchoring、structured no-action 与 capability hallucination regressions。
 3. 新增 cross-path prompt semantics 的 focused regressions，防止 speech 与 thought 再次漂移。
+4. 新增 mixed-affect parsing、negative acknowledgement、specific recall、boundary respect 和 user-anchored utterance 相关 regressions。
 4. 验证：`tests/test_prompt_contract.py`、`tests/test_thinking_integration_pbt.py`、`tests/test_response_pipeline.py`、必要时补充 `tests/test_cli_brain_like_evaluation.py`。
 5. 完成定义：核心 regression risk 已被最小化覆盖。
 
@@ -64,6 +65,7 @@
 1. 使用现有 CLI evaluation harness 分别运行 baseline 模式与 embodied-subjective 模式。
 2. 比较语言自然度、自我聚焦、刺激锚定、动作 grounding 和 late-session degradation。
 3. 审查 thought-origin action request 是否仍然 grounded 且受治理约束。
+4. 将 mixed-affect parsing、negative acknowledgement、specific recall、boundary respect 和 user-visible line quality 作为显式对照观察项。
 4. 验证：生成 JSON/Markdown evaluation artifacts，并形成 closeout evidence。
 5. 完成定义：已有 evidence 支撑 keep / revise / revert 决策。
 

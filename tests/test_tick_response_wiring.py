@@ -10,6 +10,7 @@ Requirements: 7.3
 """
 
 import importlib.util
+import json
 import sys
 import time
 import queue
@@ -28,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from helios_main import Helios, HeliosConfig
 from helios_io.action_models import ActionDecision, ActionProposal, ThoughtActionProposal
 from helios_io.channel import ChannelDescriptor, ChannelOpDescriptor, ChannelStatus
+from helios_io.limb import BehaviorCommand
 from personality_contract import build_personality_contract
 
 
@@ -78,11 +80,23 @@ def make_output_descriptor(channel_id: str) -> ChannelDescriptor:
     )
 
 
-def make_thought_cycle_result(*, triggered: bool, thought=None, trigger_reason: str = "test", action_proposal=None):
+def make_thought_cycle_result(
+    *,
+    triggered: bool,
+    thought=None,
+    trigger_reason: str = "test",
+    action_proposal=None,
+    session_kind: str = "reactive",
+    dominant_disposition: str = "",
+    trigger_sources=None,
+):
     return SimpleNamespace(
         triggered=triggered,
         trigger_reason=trigger_reason,
         thought=thought,
+        session_kind=session_kind,
+        dominant_disposition=dominant_disposition,
+        trigger_sources=list(trigger_sources or []),
         action_proposal=action_proposal or {},
     )
 
@@ -553,6 +567,308 @@ class TestCLIChannelBootstrap:
         assert state["memory"]["public_tiers"][0]["tier_name"] == "short-term"
         assert "tier_snapshots" in state["memory"]
 
+    def test_get_state_exposes_proactive_snapshot_when_active_decision_is_accepted(self, helios_instance):
+        h = helios_instance
+
+        def _fake_active_proposals(**_kwargs):
+            h.regulation.last_assessment = SimpleNamespace(
+                wants_regulation=True,
+                selected_action="speak_care",
+                selected_score=0.72,
+                drive_dominant="social",
+                drive_urgency=0.63,
+                dominant_emotions=["CARE"],
+                deviations=[("CARE", 0.41)],
+                candidates=[SimpleNamespace(action_type="speak_care")],
+                reason_summary="selected=speak_care; score=0.720",
+            )
+            return [
+                ActionProposal(
+                    proposal_id="proposal::active::state::1",
+                    source_type="regulation",
+                    source_module="regulation_policy",
+                    intent_type="self_regulation",
+                    behavior_name="speak_care",
+                    score_bundle={"final": 0.72},
+                    candidate_channels=["qq"],
+                    parameters={"tick": 1, "target_user_id": "target_user"},
+                )
+            ]
+
+        h.cfg.QQ_TARGET_ID = "target_user"
+        h.preconscious_policy.propose = MagicMock(return_value=[])
+        h.thinking_integration.generate = MagicMock(return_value=make_thought_cycle_result(triggered=False))
+        h.regulation.generate_action_proposals = MagicMock(side_effect=_fake_active_proposals)
+        h.execution_planner.plan = MagicMock(return_value=ActionDecision(
+            decision_id="decision::active::1",
+            proposal_id="proposal::active::state::1",
+            behavior_name="speak_care",
+            selected_channel_id="qq",
+            selected_op="send",
+        ))
+        h.limb_bridge.enqueue_decision = MagicMock()
+        h._drain_behavior_executor = MagicMock()
+
+        h._tick()
+
+        proactive = h.get_state()["proactive"]
+        assert proactive["evaluated"] is True
+        assert proactive["wants_regulation"] is True
+        assert proactive["selected_action"] == "speak_care"
+        assert proactive["accepted"] is True
+        assert proactive["accepted_behavior"] == "speak_care"
+        assert proactive["selected_channel_id"] == "qq"
+        assert proactive["dominant_disposition"] == "externalize"
+        assert "drive:social" in proactive["drive_sources"]
+        assert proactive["social_outward_pressure"] >= 0.0
+        assert proactive["counters"]["accepted_decisions"] == 1
+
+    def test_get_state_exposes_proactive_non_externalization_reason_on_policy_rejection(self, helios_instance):
+        h = helios_instance
+
+        def _fake_active_proposals(**_kwargs):
+            h.regulation.last_assessment = SimpleNamespace(
+                wants_regulation=True,
+                selected_action="speak_care",
+                selected_score=0.68,
+                drive_dominant="social",
+                drive_urgency=0.59,
+                dominant_emotions=["CARE"],
+                deviations=[("CARE", 0.35)],
+                candidates=[SimpleNamespace(action_type="speak_care")],
+                reason_summary="selected=speak_care; score=0.680",
+            )
+            return [
+                ActionProposal(
+                    proposal_id="proposal::active::state::2",
+                    source_type="regulation",
+                    source_module="regulation_policy",
+                    intent_type="self_regulation",
+                    behavior_name="speak_care",
+                    score_bundle={"final": 0.68},
+                    candidate_channels=["qq"],
+                    parameters={"tick": 1, "target_user_id": "target_user"},
+                )
+            ]
+
+        h.cfg.QQ_TARGET_ID = "target_user"
+        h.preconscious_policy.propose = MagicMock(return_value=[])
+        h.thinking_integration.generate = MagicMock(return_value=make_thought_cycle_result(triggered=False))
+        h.regulation.generate_action_proposals = MagicMock(side_effect=_fake_active_proposals)
+        h.execution_planner.plan = MagicMock(return_value=ActionDecision(
+            decision_id="decision::active::2",
+            proposal_id="proposal::active::state::2",
+            behavior_name="speak_care",
+            rejection_reason="no_channel_available",
+        ))
+        h._record_policy_rejection = MagicMock()
+        h._drain_behavior_executor = MagicMock()
+
+        h._tick()
+
+        proactive = h.get_state()["proactive"]
+        assert proactive["evaluated"] is True
+        assert proactive["wants_regulation"] is True
+        assert proactive["accepted"] is False
+        assert proactive["non_externalization_reason"] == "no_channel_available"
+        assert proactive["policy_rejection_reason"] == "no_channel_available"
+        assert proactive["deferred"] is True
+        assert proactive["dominant_disposition"] == "defer"
+        assert proactive["recommended_actions"] == ["speak_care"]
+        assert proactive["counters"]["policy_rejections"] == 1
+
+    def test_regulation_policy_rejection_event_preserves_proactive_provenance(self, helios_instance):
+        h = helios_instance
+
+        proposal = h.regulation.build_action_proposal(
+            "speak_share",
+            score=0.68,
+            tick=1,
+            candidate_channels=["qq"],
+            params={"tick": 1, "target_user_id": "target_user"},
+            drive_dominant="social",
+            drive_urgency=0.59,
+            dominant_emotions=["CARE"],
+        )
+
+        h.cfg.QQ_TARGET_ID = "target_user"
+        h.preconscious_policy.propose = MagicMock(return_value=[])
+        h.thinking_integration.generate = MagicMock(return_value=make_thought_cycle_result(triggered=False))
+        h.regulation.generate_action_proposals = MagicMock(return_value=[proposal])
+        h.execution_planner.plan = MagicMock(return_value=ActionDecision(
+            decision_id="decision::active::proactive::reject",
+            proposal_id=proposal.proposal_id,
+            behavior_name=proposal.behavior_name,
+            rejection_reason="no_channel_available",
+            proposal_snapshot={
+                **proposal.__dict__,
+                "provenance": dict(proposal.provenance),
+            },
+        ))
+        h._drain_behavior_executor = MagicMock()
+
+        h._tick()
+
+        rejection_events = h.behavior_catalog.registry.list_feedback_events(event_kind="policy_rejection")
+        event = next(item for item in rejection_events if item.source_path == "regulation")
+        assert event.payload["session_kind"] == "proactive"
+        assert event.payload["dominant_disposition"] in {"externalize", "explore", "reflect", "defer"}
+        assert "drive:social" in event.payload["trigger_sources"]
+        memory_events = h.behavior_catalog.registry.list_feedback_events(source_path="proactive_deferred_trace")
+        memory_event = next(item for item in memory_events if item.event_kind == "memory_write")
+        assert memory_event.payload["session_kind"] == "proactive"
+        assert memory_event.payload["behavior_name"] == "speak_share"
+        assert any(moment.source == "proactive_deferred_trace" for moment in h.autobio.moments)
+        identity_state = h.get_state()["identity"]
+        assert identity_state["proactive_deferred_trace_count"] == 1
+        assert identity_state["latest_proactive_deferred_trace"]["behavior_name"] == "speak_share"
+        assert identity_state["proactive_governance_signal"]["pressure_level"] == "none"
+        identity_payload = json.loads((Path(h.cfg.DATA_DIR) / "identity_store.json").read_text(encoding="utf-8"))
+        assert identity_payload["identity_metadata"]["proactive_deferred_trace_summary"]["total_deferred_traces"] == 1
+        assert identity_payload["identity_metadata"]["proactive_governance_signal"]["pressure_level"] == "none"
+
+    def test_get_state_counts_proactive_thought_sessions_without_externalization(self, helios_instance):
+        h = helios_instance
+
+        h.preconscious_policy.propose = MagicMock(return_value=[])
+        h.thinking_integration.generate = MagicMock(
+            return_value=make_thought_cycle_result(
+                triggered=True,
+                trigger_reason="internal_drive",
+                session_kind="proactive",
+            )
+        )
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
+        h._drain_behavior_executor = MagicMock()
+
+        h._tick()
+
+        state = h.get_state()
+        assert state["proactive"]["counters"]["proactive_thought_sessions"] == 1
+        assert state["proactive"]["counters"]["mixed_thought_sessions"] == 0
+
+    def test_identity_revision_applies_governance_monitoring_before_backpressure(self, helios_instance):
+        h = helios_instance
+
+        for tick in range(1, 4):
+            h.identity_governance.record_proactive_deferred_trace(
+                store=h.identity_store,
+                payload={
+                    "recorded_at_ts": float(tick),
+                    "tick": tick,
+                    "source_type": "thought_action_bridge",
+                    "owner_path": "thought_action_bridge",
+                    "origin_id": f"thought::{tick}",
+                    "session_kind": "proactive",
+                    "dominant_disposition": "defer",
+                    "trigger_sources": ["temporal:boredom", "personality:initiative"],
+                    "rejection_reason": "no_channel_available",
+                    "behavior_name": "speak_share",
+                    "requested_op": "send",
+                    "candidate_channels": ["qq"],
+                },
+            )
+
+        proposal = h.identity_governance.build_proposal_from_payload(
+            {
+                "origin_thought_id": "thought::revision::1",
+                "revision_type": "personality_adjustment",
+                "requested_change": {"personality_baseline": {"openness": 1.05}},
+                "reason_trace": ["increase_openness"],
+                "confidence": 0.58,
+            }
+        )
+
+        record = h.identity_governance.apply_self_revision(store=h.identity_store, proposal=proposal)
+
+        assert record.result == "accepted"
+        assert "proactive_governance_monitoring" in record.reason_trace
+        assert "governance_pressure:monitor" in record.reason_trace
+        assert h.get_state()["identity"]["proactive_governance_signal"]["pressure_level"] == "monitor"
+        assert h.identity_store.current_revision == record.revision_id
+
+    def test_identity_revision_applies_governance_backpressure_after_repeated_deferred_traces(self, helios_instance):
+        h = helios_instance
+
+        for tick in range(1, 6):
+            h.identity_governance.record_proactive_deferred_trace(
+                store=h.identity_store,
+                payload={
+                    "recorded_at_ts": float(tick * 20),
+                    "tick": tick,
+                    "source_type": "thought_action_bridge",
+                    "owner_path": "thought_action_bridge",
+                    "origin_id": f"thought::{tick}",
+                    "session_kind": "proactive",
+                    "dominant_disposition": "defer",
+                    "trigger_sources": ["temporal:boredom", "personality:initiative"],
+                    "rejection_reason": "no_channel_available",
+                    "behavior_name": "speak_share",
+                    "requested_op": "send",
+                    "candidate_channels": ["qq"],
+                },
+            )
+
+        proposal = h.identity_governance.build_proposal_from_payload(
+            {
+                "origin_thought_id": "thought::revision::1",
+                "revision_type": "personality_adjustment",
+                "requested_change": {"personality_baseline": {"openness": 1.05}},
+                "reason_trace": ["increase_openness"],
+                "confidence": 0.58,
+            }
+        )
+
+        record = h.identity_governance.apply_self_revision(store=h.identity_store, proposal=proposal)
+
+        assert record.result == "rejected"
+        assert "proactive_governance_backpressure" in record.reason_trace
+        assert "governance_pressure:stabilize" in record.reason_trace
+        assert h.get_state()["identity"]["proactive_governance_signal"]["pressure_level"] == "stabilize"
+        assert h.identity_store.current_revision == "bootstrap"
+
+    def test_sparse_deferred_traces_do_not_escalate_to_stabilize_without_density(self, helios_instance):
+        h = helios_instance
+
+        for tick in range(1, 6):
+            h.identity_governance.record_proactive_deferred_trace(
+                store=h.identity_store,
+                payload={
+                    "recorded_at_ts": float(tick * 180),
+                    "tick": tick,
+                    "source_type": "thought_action_bridge",
+                    "owner_path": "thought_action_bridge",
+                    "origin_id": f"thought::sparse::{tick}",
+                    "session_kind": "proactive",
+                    "dominant_disposition": "defer",
+                    "trigger_sources": ["temporal:boredom", "personality:initiative"],
+                    "rejection_reason": "no_channel_available",
+                    "behavior_name": "speak_share",
+                    "requested_op": "send",
+                    "candidate_channels": ["qq"],
+                },
+            )
+
+        proposal = h.identity_governance.build_proposal_from_payload(
+            {
+                "origin_thought_id": "thought::revision::sparse",
+                "revision_type": "personality_adjustment",
+                "requested_change": {"personality_baseline": {"openness": 1.05}},
+                "reason_trace": ["increase_openness"],
+                "confidence": 0.58,
+            }
+        )
+
+        record = h.identity_governance.apply_self_revision(store=h.identity_store, proposal=proposal)
+        signal = h.get_state()["identity"]["proactive_governance_signal"]
+
+        assert record.result == "accepted"
+        assert "proactive_governance_monitoring" in record.reason_trace
+        assert "governance_pressure:monitor" in record.reason_trace
+        assert signal["pressure_level"] == "monitor"
+        assert signal["recent_trace_count"] == 5
+        assert signal["recent_trace_density_per_minute"] < 2.4
+
     def test_internal_thought_memory_writes_use_internal_thought_source_path(self, helios_instance):
         h = helios_instance
         h.cfg.INTERNAL_THINK_EPISODIC_WRITE = True
@@ -769,6 +1085,46 @@ class TestCLIChannelBootstrap:
         assert speech_ctx.personality_summary == expected_descriptor.persona_text_summary
         assert speech_ctx.personality_influence_trace == expected_trace.to_dict()
 
+    def test_thought_origin_speak_share_without_outbound_text_records_consistency_failure(self, helios_instance):
+        h = helios_instance
+        h.feedback_recorder.record_execution_consistency_failure = MagicMock()
+        h._route_outbound_text = MagicMock(return_value=True)
+        h.speech = MagicMock()
+        h.speech.generate = MagicMock(return_value="不该被调用")
+
+        command = BehaviorCommand(
+            priority=1,
+            name="thought-command",
+            action="speak_share",
+            behavior_id="behavior::thought::share",
+            params={"target_user_id": "user1"},
+            proposal_id="proposal::thought::1",
+            decision_id="decision::thought::1",
+            channel_id="qq",
+            op_name="send",
+            normalized_intensity=0.6,
+            provenance={
+                "source_type": "thought_action_bridge",
+                "origin_type": "thought",
+                "owner_path": "thought_action_bridge",
+            },
+        )
+
+        ok = h._handle_action(
+            "speak_share",
+            channel_id="qq",
+            params={"target_user_id": "user1"},
+            command=command,
+        )
+
+        assert ok is False
+        h.speech.generate.assert_not_called()
+        h._route_outbound_text.assert_not_called()
+        h.feedback_recorder.record_execution_consistency_failure.assert_called_once()
+        payload = h.feedback_recorder.record_execution_consistency_failure.call_args.kwargs["payload"]
+        assert payload["rejection_reason"] == "missing_outbound_text"
+        assert payload["owner_path"] == "thought_action_bridge"
+
     def test_preconscious_proposals_can_drive_internal_behavior_before_regulation(self, helios_instance):
         h = helios_instance
         h.preconscious_policy.propose = MagicMock(return_value=[
@@ -821,6 +1177,9 @@ class TestCLIChannelBootstrap:
                 score=0.68,
                 reason_trace=["trigger_reason=external_stimulus"],
             ),
+            session_kind="proactive",
+            dominant_disposition="externalize",
+            trigger_sources=["drive:curiosity", "disposition:externalize"],
         ))
         h.regulation.generate_action_proposals = MagicMock(return_value=[])
         h._generate_speech = MagicMock(return_value="我想把这个想法告诉你")
@@ -836,6 +1195,9 @@ class TestCLIChannelBootstrap:
         assert outbound.metadata["op_name"] == "send"
         assert outbound.metadata["origin_type"] == "thought"
         assert outbound.metadata["origin_id"] == "thought::1::rumination::1000"
+        assert outbound.metadata["session_kind"] == "proactive"
+        assert outbound.metadata["dominant_disposition"] == "externalize"
+        assert "drive:curiosity" in outbound.metadata["trigger_sources"]
 
     def test_direct_thought_bridge_reply_message_with_outbound_text_routes_without_speech_generation(self, helios_instance):
         h = helios_instance
@@ -1029,6 +1391,92 @@ class TestCLIChannelBootstrap:
         outbound = h._channel_gateway.route_outbound.call_args[0][0]
         assert outbound.user_id == "user1"
         assert outbound.metadata["origin_id"] == "thought::1::rumination::1000"
+
+    def test_thought_bridge_policy_rejection_preserves_deferred_internal_trace(self, helios_instance):
+        h = helios_instance
+        original_build_proactive_observability = h._build_proactive_observability
+        captured_state = {}
+
+        def _capture_proactive_state(**kwargs):
+            captured_state["thought_cycle"] = dict(getattr(kwargs["state"], "last_thought_cycle_result", {}) or {})
+            captured_state["internal_thought"] = dict(getattr(kwargs["state"], "last_internal_thought_trace", {}) or {})
+            return original_build_proactive_observability(**kwargs)
+
+        h._build_proactive_observability = MagicMock(side_effect=_capture_proactive_state)
+        h._channel_gateway.get_channel_descriptors = MagicMock(return_value={"qq": make_output_descriptor("qq")})
+        h._channel_gateway.get_channel_status = MagicMock(return_value={"qq": ChannelStatus.DISCONNECTED})
+        h._channel_gateway.route_outbound = MagicMock(return_value=True)
+        h.sec_evaluator.evaluate = MagicMock(return_value={
+            "goal_relevance": 0.7,
+            "novelty": 0.4,
+            "pleasantness": 0.1,
+        })
+        h.thinking_integration.generate = MagicMock(return_value=make_thought_cycle_result(
+            triggered=True,
+            thought=SimpleNamespace(
+                type="rumination",
+                content="我想把这段判断直接说出来。",
+                timestamp=time.time(),
+                triggered_by="CARE",
+                source_path="internal_thought_llm",
+                llm_used=False,
+                fallback_used=True,
+                metadata={},
+            ),
+            action_proposal=ThoughtActionProposal(
+                origin_thought_id="thought::bridge::reject::1",
+                thought_type="rumination",
+                scope="external",
+                behavior_name="speak_share",
+                preferred_op="send",
+                params={"target_user_id": "user1"},
+                channel_constraints={"candidate_channels": ["qq"], "requires_target_user": True},
+                outbound_intensity=0.73,
+                score=0.73,
+                reason_trace=["trigger_reason=external_stimulus"],
+            ),
+            session_kind="proactive",
+            dominant_disposition="externalize",
+            trigger_sources=["drive:curiosity", "disposition:externalize"],
+        ))
+        h.preconscious_policy.propose = MagicMock(return_value=[])
+        h.response_pipeline.generate_reply = MagicMock(return_value="不应进入 passive fallback")
+        h.response_pipeline.record_exchange = MagicMock()
+        h.regulation.generate_action_proposals = MagicMock(return_value=[])
+        h._generate_speech = MagicMock(return_value="我想把这个判断告诉你")
+
+        h._msg_queue.put({"text": "你好", "user_id": "user1", "channel_id": "qq"})
+
+        h._tick()
+
+        h.response_pipeline.generate_reply.assert_not_called()
+        h._channel_gateway.route_outbound.assert_not_called()
+        state = h.get_state()
+        assert state["internal_thought"]["deferred"] is True
+        assert state["internal_thought"]["policy_rejection_reason"] == "no_channel_available"
+        assert state["internal_thought"]["session_kind"] == "proactive"
+        assert state["internal_thought"]["dominant_disposition"] == "externalize"
+        assert "drive:curiosity" in state["internal_thought"]["trigger_sources"]
+        assert state["internal_thought"]["deferred_provenance"]["owner_path"] == "thought_action_bridge"
+        assert state["thought_cycle"]["deferred"] is True
+        assert state["thought_cycle"]["policy_rejection_reason"] == "no_channel_available"
+        assert captured_state["internal_thought"]["deferred"] is True
+        assert captured_state["thought_cycle"]["deferred"] is True
+        memory_events = h.behavior_catalog.registry.list_feedback_events(source_path="proactive_deferred_trace")
+        memory_event = next(item for item in memory_events if item.event_kind == "memory_write")
+        assert memory_event.payload["owner_path"] == "thought_action_bridge"
+        assert memory_event.payload["session_kind"] == "proactive"
+        assert any(moment.source == "proactive_deferred_trace" for moment in h.autobio.moments)
+        identity_state = state["identity"]
+        assert identity_state["proactive_deferred_trace_count"] == 1
+        assert identity_state["latest_proactive_deferred_trace"]["owner_path"] == "thought_action_bridge"
+        autobio_context = h.memory_system.get_autobio_context(
+            topic_text="speak_share",
+            user_id="user1",
+            history_texts=["speak_share"],
+            limit=3,
+        )
+        assert "speak_share" in autobio_context
 
     def test_passive_direct_reply_fallback_is_suppressed_when_thought_owner_is_active_without_externalization(self, helios_instance):
         h = helios_instance

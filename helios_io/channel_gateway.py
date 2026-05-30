@@ -209,6 +209,14 @@ class ChannelGateway(EventSource):
     def route_outbound(self, message: ChannelMessage) -> bool:
         channel = self._output_channels.get(message.channel_id)
         requested_op = str(message.metadata.get("op_name", "send") or "send")
+        log.debug(
+            "owner_path_node=channel_gateway_enter channel_id=%s op_name=%s user_id_present=%s text_len=%d owner_path=%s",
+            message.channel_id,
+            requested_op,
+            bool(str(message.user_id or "").strip()),
+            len(str(message.text or "")),
+            str(message.metadata.get("owner_path", "") or ""),
+        )
         if channel is None:
             log.warning(
                 "channel_route_event result=failed reason=channel_not_registered channel_id=%s op_name=%s",
@@ -233,6 +241,13 @@ class ChannelGateway(EventSource):
             return False
         try:
             ok = channel.execute_op(requested_op, message)
+            log.debug(
+                "owner_path_node=channel_gateway_exit channel_id=%s op_name=%s ok=%s rendered_text_present=%s",
+                message.channel_id,
+                requested_op,
+                ok,
+                bool(str(message.metadata.get("rendered_text", "") or "").strip()),
+            )
             log.info(
                 "channel_route_event result=%s reason=executed channel_id=%s op_name=%s",
                 "success" if ok else "failed",

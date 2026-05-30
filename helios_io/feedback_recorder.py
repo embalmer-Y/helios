@@ -33,6 +33,15 @@ class FeedbackRecorder:
             "origin_type": str(provenance_dict.get("origin_type", nested_provenance.get("origin_type", "")) or ""),
             "owner_path": str(provenance_dict.get("owner_path", nested_provenance.get("owner_path", "")) or ""),
             "source_type": str(provenance_dict.get("source_type", nested_provenance.get("source_type", "")) or ""),
+            "session_kind": str(provenance_dict.get("session_kind", nested_provenance.get("session_kind", "")) or ""),
+            "dominant_disposition": str(
+                provenance_dict.get("dominant_disposition", nested_provenance.get("dominant_disposition", "")) or ""
+            ),
+            "trigger_sources": [
+                str(item)
+                for item in list(provenance_dict.get("trigger_sources", nested_provenance.get("trigger_sources", [])) or [])
+                if str(item)
+            ],
             "op_name": op_name,
             "requested_op": str(provenance_dict.get("requested_op", provenance_dict.get("op_name", nested_provenance.get("requested_op", op_name))) or op_name or ""),
             "candidate_channels": [str(item) for item in list(provenance_dict.get("candidate_channels", [] ) or []) if str(item)],

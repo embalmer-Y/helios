@@ -69,6 +69,9 @@ def test_regulation_policy_propose_emits_action_proposal(tmp_path):
     assert proposals[0].source_module == "regulation_policy"
     assert proposals[0].created_at_tick == 41
     assert proposals[0].behavior_name == assessment.selected_action
+    assert proposals[0].provenance["session_kind"] == "proactive"
+    assert proposals[0].provenance["dominant_disposition"] in {"externalize", "explore", "reflect", "defer"}
+    assert any(item.startswith("drive:") for item in proposals[0].provenance["trigger_sources"])
 
 
 def test_regulation_policy_provenance_includes_personality_influence_trace(tmp_path):

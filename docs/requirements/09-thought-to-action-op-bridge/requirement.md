@@ -16,6 +16,8 @@
 
 建立一个受控的 thought-to-action op bridge，使思考结果可以提议结构化 op、参数和输出强度，但仍由 planner、policy、executor 和 channel capability 共同决定是否允许外化以及如何执行。
 
+R09 的最终目标进一步明确为：运行时对用户可见外部输出不再保留独立的 passive 承接/补写 owner path；所有用户可见外化都必须统一经由主路径处理，即 `stimulus ingress -> internal thought / thought action proposal -> planner / executor / channel`。外部刺激仍可作为思考触发来源存在，但不再允许并行的 passive reply producer 与主路径竞争 owner。
+
 ## 3. Functional Requirements
 
 ### 3.1 Thought Action Proposal
@@ -38,6 +40,7 @@
 8. planner 可以治理、归一化和拒绝 thought-origin proposal，但不得长期以纯启发式后处理代替 LLM 对 `requested_op`、`candidate_channels` 与 `outbound_intensity` 的明确选择。
 9. 若 proposal 目标是用户可见 channel 输出，则最终外发文本或等价 payload 必须已经存在于 thought-origin `params` / `op_params` 中；不得再由 reply pipeline 二次生成自然语言文案。
 10. 若 internal thought LLM 已返回可解析的 structured JSON，运行时必须把 `thought_text`、`action_proposal`、`action_explicit` 三者一致落入状态与 trace；不得出现 thought 文本保留了 JSON 语义而 `action_proposal` 静默丢失的情况。
+11. 对用户可见输出而言，外部输入只负责形成 stimulus / context，不再拥有独立的 passive reply owner 路径；是否外发、外发什么内容、以及通过哪个 op/channel 外发，最终都必须由主路径中的 thought-origin proposal 或其他正式上游 owner 决定。
 
 ### 3.2 Planner Governance
 
@@ -65,6 +68,7 @@
 5. R09 收口后，运行时正式 external thought-origin action candidate 的唯一 owner path 必须是 `ThoughtCycleResult.action_proposal -> thought_action_bridge`；`preconscious` 不得再独立生产 external `thought_action` proposal。
 5. passive reply fallback 不得冒充 thought-origin action bridge；两者必须在 owner path 和 trace 中可区分。
 6. `reply_message` 只是行为名之一，不再意味着“由 reply prompt 负责生成文本”；它的 `outbound_text` 也必须由 thought-origin action proposal 或其他正式上游 owner 给出。
+7. R09 最终收口时，旧 passive 承接路径只允许保留 stimulus ingress、history write、SEC / memory 等非外发辅助语义；不得再保留任何能够直接产生用户可见外部文案的并行 owner。
 
 ## 4. Non-Functional Requirements
 
@@ -73,6 +77,7 @@
 3. 旧 `internal_only` 兼容层不是必须目标，允许直接替换。
 4. channel op 扩展必须保持 schema 明确，不得退回隐式字符串参数。
 5. R09 的最终实现必须使 runtime 能直接回答“这是 thought 直接提出的行动，还是 policy / passive fallback 产生的行动”。
+6. R09 的最终实现必须使 runtime 能直接回答“这条用户可见输出是否完全经由主路径产生”，并且答案不能再依赖被动承接并行路径或 reply helper 补写。
 
 ## 5. Code Behavior Constraints
 
@@ -85,6 +90,7 @@
 7. 不得让 `preconscious` 在最终 runtime 中继续以独立 producer 身份生成 external `thought_action` proposal，与 `ThoughtCycleResult.action_proposal` 并列竞争 owner 语义。
 7. 不得在 thought-origin proposal 被拒绝后，未经显式策略判断就直接退回 passive direct reply。
 8. 不得在 accepted `reply_message` decision 缺失 `outbound_text` 时，再调用独立 reply LLM 补写消息。
+9. 不得在最终架构中继续保留可独立产生用户可见外部输出的 passive reply producer；若保留 passive 相关模块，也只能承担 stimulus ingress、history、evaluation 或 helper 语义。
 
 ## 6. Impacted Modules
 
@@ -110,3 +116,4 @@
 8. debug prompt dump 中可读到输入 channel、输出 channel 控制方式、可用 ops 和参数格式。
 9. 运行时若成功发送用户可见消息，trace 中必须能把 `outbound_text` 或等价输出 payload 追溯到 originating thought proposal，而不是追溯到 `response_pipeline.generate_reply()`。
 10. 在真实 debug runtime 中，当 internal thought LLM 输出包含外向行动意图的 structured JSON 时，`thought_cycle.action_proposal` 不得长期为 `{}`；若 LLM 显式拒绝行动，也必须在 trace 中保留 `action_explicit=true` 与明确的无 action 结果。
+11. R09 最终收口后，系统中不再存在与主路径并列竞争用户可见输出 owner 的 passive 承接路径；所有用户可见外发都必须能在 trace 中回溯到主路径中的正式 owner。

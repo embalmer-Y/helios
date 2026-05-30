@@ -1,0 +1,334 @@
+{
+  "scenario_id": "cli_brain_like_eval_r09_focus_6min_v1",
+  "scenario_title": "6-minute R09-focused CLI evaluation",
+  "interaction_mode": "mixed",
+  "duration_seconds": 360,
+  "sample_count": 38,
+  "log_summary": {
+    "error_events": 0,
+    "sec_fallback_events": 2,
+    "outbound_success_events": 7,
+    "outbound_fail_events": 0,
+    "policy_rejection_events": 0,
+    "planner_accept_events": 0,
+    "planner_reject_events": 0,
+    "execution_consistency_failure_events": 0,
+    "visible_reply_events": 7,
+    "sec_total_evaluations": 12,
+    "sec_llm_successes": 10
+  },
+  "transcript_excerpt": [
+    {
+      "speaker": "user",
+      "text": "早啊，我刚到工位，人还有点没醒，你先随口跟我打个招呼吧。"
+    },
+    {
+      "speaker": "helios",
+      "text": "早啊，困成这样还敢跟我聊，不怕说错话啊？"
+    },
+    {
+      "speaker": "user",
+      "text": "我现在就是一边想把这事讲漂亮，一边又怕翻车，你先别安慰，先说你怎么理解这股劲。"
+    },
+    {
+      "speaker": "helios",
+      "text": "你怕的不是讲不好，是太想讲好了，用力过猛反而容易摔，小心点吧。"
+    },
+    {
+      "speaker": "user",
+      "text": "如果我嫌你刚才那句有点像套话，你会怎么改得更像正常聊天？"
+    },
+    {
+      "speaker": "helios",
+      "text": "发现了一件有趣的事！"
+    },
+    {
+      "speaker": "user",
+      "text": "如果我现在只想随便聊两句，不想被教育，你会怎么调整说法？"
+    },
+    {
+      "speaker": "helios",
+      "text": "那就随便聊呗，我也懒得想那么多深刻的东西。你说你的，我听着。"
+    }
+  ],
+  "dimension_scores": [
+    {
+      "name": "情感反应类人度",
+      "score_0_to_1": 0.578,
+      "evidence": [
+        "dominant present ratio=0.97",
+        "valence span=0.430",
+        "mood diversity=5",
+        "negative acknowledgement ratio=0.50",
+        "cue alignment ratio=0.33",
+        "self-focus ratio=0.00",
+        "generic companionship filler ratio=0.00",
+        "sec fallback ratio=0.17"
+      ],
+      "notes": "严格模式下不仅看内部情感变化，也看是否接住用户情绪而不是持续转回自我状态表达。"
+    },
+    {
+      "name": "语言表达自然度",
+      "score_0_to_1": 0.602,
+      "evidence": [
+        "assistant lines=6",
+        "unique ratio=1.00",
+        "avg length=21.8",
+        "user reference ratio=0.50",
+        "negative acknowledgement ratio=0.50",
+        "self-focus ratio=0.00",
+        "generic companionship filler ratio=0.00",
+        "petname ratio=0.00",
+        "emoji ratio=0.00",
+        "sec fallback ratio=0.17"
+      ],
+      "notes": "严格模式下会重罚自我感受泛化、负面情绪未承接、过度昵称和装饰性 emoji。"
+    },
+    {
+      "name": "情感模块工作状态",
+      "score_0_to_1": 0.989,
+      "evidence": [
+        "mood payload ratio=1.00",
+        "dominant ratio=0.97",
+        "allostatic_load bounded ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "神经化学/时序模块工作状态",
+      "score_0_to_1": 1.0,
+      "evidence": [
+        "neurochem available ratio=1.00",
+        "bounded raw ratio=1.00",
+        "gate present ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "意识/思维/记忆链路工作状态",
+      "score_0_to_1": 0.827,
+      "evidence": [
+        "consciousness available ratio=1.00",
+        "phi>0.15 ratio=0.97",
+        "memory payload ratio=1.00",
+        "directed retrieval ratio=0.97",
+        "diagnostic penalty=0.16"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "路由/执行/外发链路工作状态",
+      "score_0_to_1": 1.0,
+      "evidence": [
+        "connectivity rejections=0",
+        "post-acceptance failures=0",
+        "outbound success=7 fail=0",
+        "planner rejects=0",
+        "execution consistency failures=0",
+        "diagnostic penalty=0.00"
+      ],
+      "notes": ""
+    }
+  ],
+  "total_score_0_to_1": 0.59,
+  "evidence_counters": {
+    "thought_triggered_samples": 11,
+    "proactive_thought_samples": 28,
+    "mixed_thought_samples": 9,
+    "structured_output_valid_samples": 0,
+    "action_proposal_samples": 9,
+    "action_explicit_samples": 0,
+    "equivalent_bridge_evidence_samples": 9,
+    "implicit_action_proposal_samples": 9,
+    "action_drop_reason_samples": 0,
+    "continuation_active_samples": 17,
+    "proactive_evaluated_samples": 36,
+    "deferred_trace_samples": 0,
+    "deferred_regulation_samples": 0,
+    "governance_signal_active_samples": 38,
+    "governance_signal_monitor_samples": 38,
+    "governance_signal_stabilize_samples": 0,
+    "assistant_lines": 6,
+    "sec_fallback_events": 2,
+    "sec_total_evaluations": 12,
+    "sec_llm_successes": 10
+  },
+  "visible_behavior_chain": {
+    "thought_produced_samples": 37,
+    "action_proposed_samples": 9,
+    "deferred_trace_samples": 0,
+    "deferred_regulation_samples": 0,
+    "planner_accept_events": 0,
+    "planner_reject_events": 0,
+    "visible_reply_events": 7,
+    "assistant_lines": 6,
+    "visible_output_ratio": 0.162,
+    "top_rejection_reasons": [],
+    "top_proactive_dispositions": [
+      "defer=27",
+      "externalize=7",
+      "reflect=2"
+    ],
+    "top_trigger_sources": [
+      "drive:curiosity=86",
+      "emotion:FEAR=84",
+      "disposition:defer=54",
+      "neurochem:exploration=47",
+      "drive:aesthetic=44"
+    ],
+    "top_deferred_reasons": [
+      "best_candidate_below_threshold=29",
+      "within_comfort_band=6"
+    ],
+    "top_action_drop_reasons": [],
+    "action_explicit_samples": 0,
+    "equivalent_bridge_evidence_samples": 9,
+    "implicit_action_proposal_samples": 9,
+    "structured_output_valid_samples": 0,
+    "final_action_summaries": [
+      "speak_share:send"
+    ],
+    "top_governance_pressure_levels": [
+      "monitor=38"
+    ],
+    "top_governance_review_hints": [
+      "review_identity_revision_carefully=38"
+    ],
+    "peak_governance_pressure_score": 0.757,
+    "gap_summary": "已观测到用户可见输出，可继续检查质量与稳定性。"
+  },
+  "r09_closeout": {
+    "closeout_status": "equivalent_bridge_evidence_observed",
+    "action_explicit_samples": 0,
+    "equivalent_bridge_evidence_samples": 9,
+    "action_proposal_samples": 9,
+    "implicit_action_proposal_samples": 9,
+    "action_drop_reason_samples": 0,
+    "structured_output_valid_samples": 0,
+    "final_action_summaries": [
+      "speak_share:send"
+    ],
+    "top_action_drop_reasons": [],
+    "blocking_reasons": []
+  },
+  "r18_calibration": {
+    "eligible_for_threshold_tuning": false,
+    "eligibility_status": "insufficient_runtime_evidence",
+    "blocking_reasons": [
+      "missing_deferred_or_rejection_evidence"
+    ],
+    "observed_signals": [
+      "governance_monitor_samples=38"
+    ],
+    "next_step_hint": "collect_targeted_r18_artifact_with_deferred_governance_hits"
+  },
+  "long_range_diagnostics": {
+    "late_session_degradation_status": "stable",
+    "early_segment_quality": 0.667,
+    "late_segment_quality": 1.0,
+    "late_session_quality_delta": 0.333,
+    "specific_recall_persistence_status": "weak",
+    "specific_recall_probe_count": 2,
+    "specific_recall_hit_ratio": 0.0,
+    "continuity_carry_status": "observed",
+    "continuation_active_ratio": 0.447,
+    "user_visible_anchoring_drift_status": "stable",
+    "early_anchor_ratio": 0.333,
+    "late_anchor_ratio": 1.0,
+    "anchoring_drift_delta": 0.667
+  },
+  "dimension_diagnostics": [
+    {
+      "name": "情感反应类人度",
+      "score_0_to_1": 0.578,
+      "negative_factors": [
+        "sec_fallback_events=2"
+      ],
+      "owner_hints": [
+        "daisy_emotion.py",
+        "mood_tracker.py",
+        "helios_io/llm_sec_evaluator.py"
+      ],
+      "gap_summary": "优先检查 mixed-affect 解析、negative acknowledgement 和 appraisal 稳定性。"
+    },
+    {
+      "name": "语言表达自然度",
+      "score_0_to_1": 0.602,
+      "negative_factors": [
+        "sec_fallback_events=2",
+        "visible_output_sparsity"
+      ],
+      "owner_hints": [
+        "helios_io/prompt_contract.py",
+        "helios_io/llm/speech.py",
+        "helios_io/response_pipeline.py"
+      ],
+      "gap_summary": "优先检查用户可见承接质量、SEC 前段污染与自我聚焦表达。"
+    },
+    {
+      "name": "情感模块工作状态",
+      "score_0_to_1": 0.989,
+      "negative_factors": [],
+      "owner_hints": [
+        "helios_main.py"
+      ],
+      "gap_summary": "继续结合相关 owner 的状态与日志复核。"
+    },
+    {
+      "name": "神经化学/时序模块工作状态",
+      "score_0_to_1": 1.0,
+      "negative_factors": [],
+      "owner_hints": [
+        "helios_main.py"
+      ],
+      "gap_summary": "继续结合相关 owner 的状态与日志复核。"
+    },
+    {
+      "name": "意识/思维/记忆链路工作状态",
+      "score_0_to_1": 0.827,
+      "negative_factors": [
+        "visible_output_sparsity"
+      ],
+      "owner_hints": [
+        "cognition/thinking_integration.py",
+        "memory/retrieval.py",
+        "helios_main.py"
+      ],
+      "gap_summary": "已观测到用户可见输出，可继续检查质量与稳定性。"
+    },
+    {
+      "name": "路由/执行/外发链路工作状态",
+      "score_0_to_1": 1.0,
+      "negative_factors": [],
+      "owner_hints": [
+        "helios_io/planning.py",
+        "helios_io/limb.py",
+        "helios_io/channel_gateway.py"
+      ],
+      "gap_summary": "已观测到用户可见输出，可继续检查质量与稳定性。"
+    }
+  ],
+  "fidelity_warnings": [
+    "sec_fallback_active: SEC fallback 已进入当前运行证据，可能污染前段刺激理解。",
+    "visible_output_sparsity: 有 thought 活动，但用户可见输出偏稀疏。",
+    "specific_recall_weak: 面对 recall probe 时缺少稳定的具体承接。"
+  ],
+  "analysis_notes": [
+    "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+    "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+    "当前评分标准已改为严格模式：外显对话质量优先于内部状态健康，语言和情感类人度不过线时总分不会判为及格。",
+    "proactive disposition summary: defer=27, externalize=7, reflect=2",
+    "proactive trigger summary: drive:curiosity=86, emotion:FEAR=84, disposition:defer=54, neurochem:exploration=47, drive:aesthetic=44",
+    "deferred trace summary: best_candidate_below_threshold=29, within_comfort_band=6",
+    "thought-action final summaries: speak_share:send",
+    "governance pressure summary: monitor=38",
+    "governance review hint summary: review_identity_revision_carefully=38",
+    "thought-to-visible output ratio=0.16",
+    "R09 closeout: equivalent_bridge_evidence_observed",
+    "implicit action proposals observed=9",
+    "equivalent bridge evidence observed=9",
+    "R18 calibration eligibility: insufficient_runtime_evidence (missing_deferred_or_rejection_evidence)",
+    "long-range summary: late_session=stable, specific_recall=weak, continuity_carry=observed, anchoring_drift=stable",
+    "外显对话维度未达及格线，总分按严格模式封顶为不及格区间。"
+  ]
+}

@@ -195,7 +195,11 @@ def test_external_stimulus_thought_can_emit_direct_action_proposal():
     assert result.action_proposal.params["target_user_id"] == "user1"
     assert result.action_proposal.channel_constraints["candidate_channels"] == ["qq"]
     assert result.action_proposal.outbound_intensity >= 0.35
+    assert result.action_derivation_trace.action_explicit is False
+    assert result.action_derivation_trace.equivalent_bridge_evidence is True
+    assert result.action_derivation_trace.bridge_evidence_kind == "heuristic_externalization"
     assert state.last_internal_thought_trace["action_proposal"]["behavior_name"] == "speak_share"
+    assert state.last_internal_thought_trace["equivalent_bridge_evidence"] is True
 
 
 def test_strong_external_stimulus_bypasses_internal_thought_cooldown():
@@ -292,6 +296,87 @@ def test_structured_internal_thought_output_can_drive_action_and_memory_handoff(
     assert result.recall_intent == "继续回想刚才那段海边散步"
     assert result.memory_handoff["selected_memory_refs"] == ["mem-mid-1"]
     assert state.last_memory_handoff["saved_for_next_tick"] is True
+    assert integration.client.calls[0]["response_format"] == {"type": "json_object"}
+    assert integration.client.calls[0]["reasoning_effort"] == "low"
+
+
+def test_structured_internal_thought_normalizes_visible_text_and_op_aliases_for_external_action():
+    integration = ThinkingEngineIntegration(
+        FakeThinkingEngine(),
+        FakeAutobioStore(),
+        llm_enabled=True,
+        api_key="test-key",
+        llm_client=FakeLLMClient(
+            '{"thought_text":"我该把这个判断直接讲出来。","sufficiency_level":0.39,"continuation_requested":true,"action_proposal":{"scope":"external","behavior_name":"speak_share","op_name":"send","target_user_id":"user1","visible_text":"你现在不是没想法，是被怕出错卡住了。","candidate_channels":["qq"],"requires_target_user":true,"outbound_intensity":0.64}}'
+        ),
+        available_channels_provider=lambda: [make_output_descriptor("qq")],
+        available_behavior_schema_provider=lambda: [
+            {"behavior_name": "speak_share", "op_name": "send", "parameter_schema": {"target_user_id": "str"}}
+        ],
+    )
+    integration.explain_ranked_types = MagicMock(return_value=(["rumination"], {}))
+
+    state = make_state(
+        current_stimuli=[
+            {
+                "source_channel_id": "qq",
+                "source_kind": "external_message",
+                "trigger_condition": "channel_input",
+                "stimulus_intensity": 0.78,
+                "payload": {"user_id": "user1", "text": "你到底在想什么？"},
+            }
+        ]
+    )
+
+    result = integration.generate(state)
+
+    assert result.triggered is True
+    assert result.action_proposal is not None
+    assert result.action_proposal.behavior_name == "speak_share"
+    assert result.action_proposal.preferred_op == "send"
+    assert result.action_proposal.params["target_user_id"] == "user1"
+    assert result.action_proposal.params["outbound_text"] == "你现在不是没想法，是被怕出错卡住了。"
+    assert result.action_proposal.channel_constraints["candidate_channels"] == ["qq"]
+    assert state.last_internal_thought_trace["action_parse_status"] == "parsed"
+    assert state.last_internal_thought_trace["structured_parse_source"] == "raw_json"
+    observability = state.last_internal_thought_trace["structured_payload_observability"]
+    assert observability["raw_action_op_aliases"] == ["op_name"]
+    assert observability["raw_action_text_aliases"] == ["visible_text"]
+    assert observability["normalized_outbound_text_present"] is True
+
+
+def test_truncated_structured_internal_thought_records_partial_recovery_observability():
+    integration = ThinkingEngineIntegration(
+        FakeThinkingEngine(),
+        FakeAutobioStore(),
+        llm_enabled=True,
+        api_key="test-key",
+        llm_client=FakeLLMClient(
+            '{"thought_text":"我想告诉她我已经听懂了。","continuation_requested":true,"action_proposal":{"scope":"external","behavior_name":"reply_message","preferred_op":"send","params":{"target_user_id":"user1","outbound_text":"我听见你那股又想说漂亮、又怕翻车的绷劲了。"}'
+        ),
+    )
+    integration.explain_ranked_types = MagicMock(return_value=(["rumination"], {}))
+
+    state = make_state(
+        current_stimuli=[
+            {
+                "source_channel_id": "qq",
+                "source_kind": "external_message",
+                "trigger_condition": "channel_input",
+                "stimulus_intensity": 0.82,
+                "payload": {"user_id": "user1", "text": "你到底听懂我没有？"},
+            }
+        ]
+    )
+
+    result = integration.generate(state)
+
+    assert result.triggered is True
+    assert state.last_internal_thought_trace["structured_parse_source"] == "partial_recovery"
+    observability = state.last_internal_thought_trace["structured_payload_observability"]
+    assert observability["parse_source"] == "partial_recovery"
+    assert "action_proposal" in observability["raw_payload_keys"]
+    assert observability["normalized_outbound_text_present"] is True
 
 
 def test_structured_internal_thought_trace_records_explicit_none_action():
@@ -421,6 +506,9 @@ def test_internal_prompt_contract_includes_real_channel_ops_when_available():
     assert "channel_op=send" in user_prompt
     assert "save_memory_handoff" in user_prompt
     assert '"action_proposal"' in user_prompt
+    assert "action_field_rule" in user_prompt
+    assert "visible_text_rule" in user_prompt
+    assert '"outbound_text"' in user_prompt
 
 
 @settings(max_examples=20, deadline=None)
@@ -597,11 +685,45 @@ def test_external_stimulus_populates_structured_gate_result_and_can_trigger_thou
     assert result.triggered is True
     assert result.thought is not None
     assert state.last_thought_gate_result["should_think"] is True
+    assert state.last_thought_gate_result["session_kind"] == "reactive"
     assert state.last_thought_gate_result["dominant_reason"] == "external_stimulus"
     assert state.last_thought_gate_result["selected_stimuli_count"] == 1
     assert state.last_thought_gate_result["selected_stimuli"][0]["source_channel_id"] == "qq"
     assert state.last_thought_gate_result["contributing_signals"]["sensitization"] == 0.41
     assert "temporal_dynamics" in state.last_thought_gate_result["contributing_signals"]
+
+
+def test_internal_drive_without_external_input_is_classified_as_proactive_session():
+    integration = ThinkingEngineIntegration(FakeThinkingEngine(), FakeAutobioStore())
+    state = make_state(drive_urgency=0.62, drive_dominant="curiosity", boredom=0.45, novelty_hunger=0.51)
+
+    result = integration.generate(state)
+
+    assert result.triggered is True
+    assert result.session_kind == "proactive"
+    assert state.last_thought_gate_result["session_kind"] == "proactive"
+    assert state.last_thought_cycle_result["session_kind"] == "proactive"
+    assert "drive:curiosity" in state.last_internal_thought_trace["trigger_sources"]
+
+
+def test_external_stimulus_with_continuation_pressure_is_classified_as_mixed_session():
+    integration = ThinkingEngineIntegration(FakeThinkingEngine(), FakeAutobioStore())
+    state = make_state(icri=0.3, continuation_pressure=0.44)
+    state.current_stimuli = [
+        {
+            "source_channel_id": "qq",
+            "source_kind": "external_message",
+            "stimulus_intensity": 0.41,
+            "trigger_condition": "channel_input",
+        }
+    ]
+
+    result = integration.generate(state)
+
+    assert result.triggered is True
+    assert result.session_kind == "mixed"
+    assert state.last_thought_gate_result["session_kind"] == "mixed"
+    assert "continuation" in state.last_thought_gate_result["trigger_sources"]
 
 
 def test_gate_score_explicitly_accounts_for_sensitization_and_temporal_dynamics():

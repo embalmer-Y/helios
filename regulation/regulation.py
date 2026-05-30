@@ -553,12 +553,36 @@ class RegulationEngine:
     # ═══════════════════════════════════════════
     
     def get_state(self) -> dict:
+        assessment = self.last_assessment
+        assessment_payload = {}
+        if assessment is not None:
+            assessment_payload = {
+                "wants_regulation": bool(assessment.wants_regulation),
+                "selected_action": str(assessment.selected_action or ""),
+                "selected_score": round(float(assessment.selected_score or 0.0), 4),
+                "drive_dominant": str(assessment.drive_dominant or ""),
+                "drive_urgency": round(float(assessment.drive_urgency or 0.0), 4),
+                "reason_summary": str(assessment.reason_summary or ""),
+                "dominant_emotions": [
+                    str(item) for item in list(getattr(assessment, "dominant_emotions", []) or []) if str(item)
+                ],
+                "deviations": [
+                    {"name": str(name), "score": round(float(score or 0.0), 4)}
+                    for name, score in list(getattr(assessment, "deviations", []) or [])[:5]
+                ],
+                "candidate_actions": [
+                    str(getattr(candidate, "action_type", "") or "")
+                    for candidate in list(getattr(assessment, "candidates", []) or [])[:5]
+                    if str(getattr(candidate, "action_type", "") or "")
+                ],
+            }
         return {
             "total_regulations": self.total_regulations,
             "memories_count": sum(
                 len(emotions) for emotions in self.memories.values()
             ),
             "recent_actions": self.action_history[-5:],
+            "last_assessment": assessment_payload,
         }
     
     def get_regulation_map(self) -> dict:

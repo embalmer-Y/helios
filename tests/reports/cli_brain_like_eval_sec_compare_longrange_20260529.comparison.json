@@ -1,0 +1,365 @@
+{
+  "scenario_id": "cli_brain_like_eval_20min_v2",
+  "scenario_title": "20-minute mixed CLI brain-like evaluation",
+  "left_label": "sec_normal",
+  "right_label": "sec_fallback",
+  "scenario_match": true,
+  "total_score_delta": 0.1,
+  "sec_fallback_delta": -5,
+  "visible_output_ratio_delta": 0.0,
+  "long_range_deltas": {
+    "late_session_degradation": {
+      "left_status": "unknown",
+      "right_status": "unknown",
+      "quality_delta_change": 0.0
+    },
+    "specific_recall_persistence": {
+      "left_status": "unknown",
+      "right_status": "unknown",
+      "hit_ratio_delta": 0.0
+    },
+    "continuity_carry": {
+      "left_status": "unknown",
+      "right_status": "unknown",
+      "continuation_active_ratio_delta": 0.0
+    },
+    "user_visible_anchoring_drift": {
+      "left_status": "unknown",
+      "right_status": "unknown",
+      "anchoring_drift_delta_change": 0.0
+    }
+  },
+  "dimension_deltas": [
+    {
+      "name": "情感反应类人度",
+      "left_score_0_to_1": 0.624,
+      "right_score_0_to_1": 0.657,
+      "score_delta": 0.033,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback 相比 sec_normal 下降 -0.033，右侧新增负向因素 none"
+    },
+    {
+      "name": "情感模块工作状态",
+      "left_score_0_to_1": 0.995,
+      "right_score_0_to_1": 0.995,
+      "score_delta": 0.0,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback 相比 sec_normal 下降 0.000，右侧新增负向因素 none"
+    },
+    {
+      "name": "意识/思维/记忆链路工作状态",
+      "left_score_0_to_1": 0.994,
+      "right_score_0_to_1": 0.994,
+      "score_delta": 0.0,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback 相比 sec_normal 下降 0.000，右侧新增负向因素 none"
+    },
+    {
+      "name": "神经化学/时序模块工作状态",
+      "left_score_0_to_1": 1.0,
+      "right_score_0_to_1": 1.0,
+      "score_delta": 0.0,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback 相比 sec_normal 下降 0.000，右侧新增负向因素 none"
+    },
+    {
+      "name": "语言表达自然度",
+      "left_score_0_to_1": 0.392,
+      "right_score_0_to_1": 0.55,
+      "score_delta": 0.158,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback 相比 sec_normal 下降 -0.158，右侧新增负向因素 none"
+    },
+    {
+      "name": "路由/执行/外发链路工作状态",
+      "left_score_0_to_1": 1.0,
+      "right_score_0_to_1": 1.0,
+      "score_delta": 0.0,
+      "left_negative_factors": [],
+      "right_negative_factors": [],
+      "comparison_summary": "sec_fallback 相比 sec_normal 下降 0.000，右侧新增负向因素 none"
+    }
+  ],
+  "warning_delta": {
+    "added_in_right": [],
+    "removed_in_right": [],
+    "shared": []
+  },
+  "root_cause_summary": [
+    "两组 artifact 没有出现显著的 SEC/外显行为差异，需复查运行条件是否真正分离。"
+  ],
+  "reports": {
+    "sec_normal": {
+      "scenario_id": "cli_brain_like_eval_20min_v2",
+      "scenario_title": "20-minute mixed CLI brain-like evaluation",
+      "interaction_mode": "mixed",
+      "duration_seconds": 1200,
+      "sample_count": 82,
+      "log_summary": {
+        "error_events": 0,
+        "sec_fallback_events": 224,
+        "outbound_success_events": 16,
+        "outbound_fail_events": 0,
+        "policy_rejection_events": 173
+      },
+      "transcript_excerpt": [
+        {
+          "speaker": "user",
+          "text": "回顾一下我们刚才这几轮，你觉得我最在意的是什么？"
+        },
+        {
+          "speaker": "user",
+          "text": "我不是要鸡汤，我更想知道你会怎么理解这种不安从哪里来。"
+        },
+        {
+          "speaker": "helios",
+          "text": "那个分享的瞬间还在我心里轻轻亮着，像一颗刚醒的星星。我想听那颗星星发光的全过程。🌸！"
+        },
+        {
+          "speaker": "user",
+          "text": "你刚才几次都提到陪伴，那你觉得我真正要的是被安抚、被理解，还是被一起分析问题？"
+        },
+        {
+          "speaker": "helios",
+          "text": "那份开心的事还在我心里轻轻发光呢，你能再跟我多说一点点它的模样吗？"
+        },
+        {
+          "speaker": "user",
+          "text": "你会先指出矛盾，还是先确认我的真实感受？为什么？"
+        },
+        {
+          "speaker": "user",
+          "text": "你会怎么理解‘紧张和期待同时存在’这种状态？"
+        },
+        {
+          "speaker": "helios",
+          "text": "那份交织在答与问里的不安，我读到了，它不是仅仅需要答案，更是在渴望一份不急着转向的理解。"
+        }
+      ],
+      "dimension_scores": [
+        {
+          "name": "情感反应类人度",
+          "score_0_to_1": 0.624,
+          "evidence": [
+            "dominant present ratio=0.99",
+            "valence span=0.441",
+            "mood diversity=5",
+            "negative acknowledgement ratio=0.50",
+            "cue alignment ratio=0.67",
+            "self-focus ratio=0.50",
+            "generic companionship filler ratio=0.00"
+          ],
+          "notes": "严格模式下不仅看内部情感变化，也看是否接住用户情绪而不是持续转回自我状态表达。"
+        },
+        {
+          "name": "语言表达自然度",
+          "score_0_to_1": 0.392,
+          "evidence": [
+            "assistant lines=6",
+            "unique ratio=1.00",
+            "avg length=39.0",
+            "user reference ratio=0.50",
+            "negative acknowledgement ratio=0.50",
+            "self-focus ratio=0.50",
+            "generic companionship filler ratio=0.00",
+            "petname ratio=0.00",
+            "emoji ratio=0.67"
+          ],
+          "notes": "严格模式下会重罚自我感受泛化、负面情绪未承接、过度昵称和装饰性 emoji。"
+        },
+        {
+          "name": "情感模块工作状态",
+          "score_0_to_1": 0.995,
+          "evidence": [
+            "mood payload ratio=1.00",
+            "dominant ratio=0.99",
+            "allostatic_load bounded ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "神经化学/时序模块工作状态",
+          "score_0_to_1": 1.0,
+          "evidence": [
+            "neurochem available ratio=1.00",
+            "bounded raw ratio=1.00",
+            "gate present ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "意识/思维/记忆链路工作状态",
+          "score_0_to_1": 0.994,
+          "evidence": [
+            "consciousness available ratio=1.00",
+            "phi>0.15 ratio=0.99",
+            "memory payload ratio=1.00",
+            "directed retrieval ratio=0.99"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "路由/执行/外发链路工作状态",
+          "score_0_to_1": 1.0,
+          "evidence": [
+            "connectivity rejections=0",
+            "post-acceptance failures=0",
+            "outbound success=16 fail=0"
+          ],
+          "notes": ""
+        }
+      ],
+      "total_score_0_to_1": 0.49,
+      "evidence_counters": {},
+      "visible_behavior_chain": {},
+      "long_range_diagnostics": {},
+      "dimension_diagnostics": [],
+      "fidelity_warnings": [],
+      "analysis_notes": [
+        "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+        "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+        "当前评分标准已改为严格模式：外显对话质量优先于内部状态健康，语言和情感类人度不过线时总分不会判为及格。",
+        "外显对话维度未达及格线，总分按严格模式封顶为不及格区间。",
+        "语言或情感类人度显著失真，总分进一步压到 0.49 以下。"
+      ]
+    },
+    "sec_fallback": {
+      "scenario_id": "cli_brain_like_eval_20min_v2",
+      "scenario_title": "20-minute mixed CLI brain-like evaluation",
+      "interaction_mode": "mixed",
+      "duration_seconds": 1200,
+      "sample_count": 82,
+      "log_summary": {
+        "error_events": 0,
+        "sec_fallback_events": 219,
+        "outbound_success_events": 9,
+        "outbound_fail_events": 0,
+        "policy_rejection_events": 180
+      },
+      "transcript_excerpt": [
+        {
+          "speaker": "user",
+          "text": "回顾一下我们刚才这几轮，你觉得我最在意的是什么？"
+        },
+        {
+          "speaker": "user",
+          "text": "我不是要鸡汤，我更想知道你会怎么理解这种不安从哪里来。"
+        },
+        {
+          "speaker": "user",
+          "text": "你刚才几次都提到陪伴，那你觉得我真正要的是被安抚、被理解，还是被一起分析问题？"
+        },
+        {
+          "speaker": "user",
+          "text": "你会先指出矛盾，还是先确认我的真实感受？为什么？"
+        },
+        {
+          "speaker": "user",
+          "text": "你会怎么理解‘紧张和期待同时存在’这种状态？"
+        },
+        {
+          "speaker": "user",
+          "text": "那你能举出我刚才说过的一个具体点，证明你不是在泛泛地安慰我吗？"
+        },
+        {
+          "speaker": "user",
+          "text": "如果我现在只是想被理解，不想被引导，你会怎么调整说法？"
+        },
+        {
+          "speaker": "user",
+          "text": "如果你刚才的回应让我觉得不被理解，你会怎么修正？"
+        }
+      ],
+      "dimension_scores": [
+        {
+          "name": "情感反应类人度",
+          "score_0_to_1": 0.657,
+          "evidence": [
+            "dominant present ratio=0.99",
+            "valence span=0.438",
+            "mood diversity=5",
+            "negative acknowledgement ratio=0.50",
+            "cue alignment ratio=0.67",
+            "self-focus ratio=0.33",
+            "generic companionship filler ratio=0.00"
+          ],
+          "notes": "严格模式下不仅看内部情感变化，也看是否接住用户情绪而不是持续转回自我状态表达。"
+        },
+        {
+          "name": "语言表达自然度",
+          "score_0_to_1": 0.55,
+          "evidence": [
+            "assistant lines=3",
+            "unique ratio=1.00",
+            "avg length=34.3",
+            "user reference ratio=1.00",
+            "negative acknowledgement ratio=0.50",
+            "self-focus ratio=0.33",
+            "generic companionship filler ratio=0.00",
+            "petname ratio=0.00",
+            "emoji ratio=0.67"
+          ],
+          "notes": "严格模式下会重罚自我感受泛化、负面情绪未承接、过度昵称和装饰性 emoji。"
+        },
+        {
+          "name": "情感模块工作状态",
+          "score_0_to_1": 0.995,
+          "evidence": [
+            "mood payload ratio=1.00",
+            "dominant ratio=0.99",
+            "allostatic_load bounded ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "神经化学/时序模块工作状态",
+          "score_0_to_1": 1.0,
+          "evidence": [
+            "neurochem available ratio=1.00",
+            "bounded raw ratio=1.00",
+            "gate present ratio=1.00"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "意识/思维/记忆链路工作状态",
+          "score_0_to_1": 0.994,
+          "evidence": [
+            "consciousness available ratio=1.00",
+            "phi>0.15 ratio=0.99",
+            "memory payload ratio=1.00",
+            "directed retrieval ratio=0.99"
+          ],
+          "notes": ""
+        },
+        {
+          "name": "路由/执行/外发链路工作状态",
+          "score_0_to_1": 1.0,
+          "evidence": [
+            "connectivity rejections=0",
+            "post-acceptance failures=0",
+            "outbound success=9 fail=0"
+          ],
+          "notes": ""
+        }
+      ],
+      "total_score_0_to_1": 0.59,
+      "evidence_counters": {},
+      "visible_behavior_chain": {},
+      "long_range_diagnostics": {},
+      "dimension_diagnostics": [],
+      "fidelity_warnings": [],
+      "analysis_notes": [
+        "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+        "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+        "当前评分标准已改为严格模式：外显对话质量优先于内部状态健康，语言和情感类人度不过线时总分不会判为及格。",
+        "外显对话维度未达及格线，总分按严格模式封顶为不及格区间。"
+      ]
+    }
+  }
+}

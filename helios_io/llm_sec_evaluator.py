@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import Dict, List, Optional
 
@@ -164,9 +165,9 @@ class LLMSECEvaluator:
 
     def __init__(
         self,
-        model: str = "",
-        api_key: str = "",
-        base_url: str = "",
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
         timeout: float = 3.0,
     ):
         """
@@ -176,9 +177,9 @@ class LLMSECEvaluator:
             base_url: API 基础 URL (默认从环境变量)
             timeout: LLM 调用超时秒数 (默认 3.0)
         """
-        self._model = model or os.getenv("HELIOS_LLM_MODEL", "deepseek/deepseek-v4-flash")
-        self._api_key = api_key or os.getenv("OPENAI_API_KEY", "")
-        self._base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        self._model = model if model is not None else os.getenv("HELIOS_LLM_MODEL", "deepseek/deepseek-v4-flash")
+        self._api_key = api_key if api_key is not None else os.getenv("OPENAI_API_KEY", "")
+        self._base_url = base_url if base_url is not None else os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         env_timeout = os.getenv("HELIOS_LLM_SEC_TIMEOUT", "")
         if timeout == 3.0 and env_timeout:
             try:
@@ -265,10 +266,10 @@ class LLMSECEvaluator:
         if client is None:
             raise RuntimeError("OpenAI client 不可用")
 
-        prompt_contract = self._build_sec_prompt_contract(text, context)
-        base_system_prompt, base_user_prompt = self._prompt_contract_builder.render_for_llm(prompt_contract)
-        prompt = f"{base_user_prompt}\n\n{self._build_sec_prompt(text, context)}"
-        system_prompt = f"{base_system_prompt}\n\n{self._system_prompt()}"
+        # SEC 提取在该 provider 上若叠加统一 prompt contract，极易被 reasoning token 吞掉，
+        # 从而导致 message.content 为空且无法落出 JSON。这里改为专用短 prompt。
+        prompt = self._build_sec_prompt(text, context)
+        system_prompt = self._system_prompt()
 
         log.debug(
             "SEC LLM request payload: model=%s timeout=%.2fs system_prompt=%r user_prompt=%r",
@@ -297,8 +298,10 @@ class LLMSECEvaluator:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,
-            temperature=0.3,  # 低温度以获得一致的评估
+            reasoning_effort="low",
+            response_format={"type": "json_object"},
+            max_tokens=480,
+            temperature=0.0,
             timeout=self._timeout,
         )
         elapsed = time.time() - t0
@@ -378,8 +381,52 @@ class LLMSECEvaluator:
         # 当前消息
         parts.append(f"请评估以下消息的 SEC 特征:")
         parts.append(f"「{text}」")
+        parts.append("")
+        parts.append("返回要求:")
+        parts.append("1. 只返回一个 JSON object。")
+        parts.append("2. JSON 必须且只能包含 novelty, pleasantness, goal_relevance, goal_congruence, coping_potential, agency, norm_compatibility 这七个键。")
+        parts.append("3. 所有值必须是数字，不要输出注释、解释、markdown 代码块或额外文本。")
 
         return "\n".join(parts)
+
+    def _extract_json_object(self, text: str) -> Dict[str, object] | None:
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+
+        candidates = [raw]
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S)
+        if fenced:
+            candidates.insert(0, fenced.group(1))
+        bare = re.search(r"(\{.*\})", raw, re.S)
+        if bare:
+            candidates.append(bare.group(1))
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                return {str(key): value for key, value in parsed.items()}
+
+        return self._recover_partial_json_object(raw)
+
+    def _recover_partial_json_object(self, raw: str) -> Dict[str, object] | None:
+        text = str(raw or "").strip()
+        if "{" not in text:
+            return None
+
+        recovered: Dict[str, object] = {}
+        for key in _SEC_KEYS:
+            match = re.search(rf'"{re.escape(key)}"\s*:\s*(-?\d+(?:\.\d+)?)', text)
+            if not match:
+                continue
+            try:
+                recovered[key] = float(match.group(1))
+            except (TypeError, ValueError):
+                continue
+        return recovered or None
 
     def _parse_sec_response(self, raw_text: str) -> Dict[str, float]:
         """
@@ -387,29 +434,9 @@ class LLMSECEvaluator:
 
         尝试从响应中提取 JSON 对象，验证并钳制所有值。
         """
-        # 尝试直接解析
-        text = raw_text.strip()
-
-        # 去掉可能的 markdown 代码块包裹
-        if text.startswith("```"):
-            lines = text.split("\n")
-            # 去掉首尾的 ``` 行
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            text = "\n".join(lines)
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            # 尝试从文本中提取 JSON 对象
-            import re
-            match = re.search(r'\{[^}]+\}', text, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group())
-                except json.JSONDecodeError:
-                    raise ValueError(f"无法解析 LLM SEC 响应: {raw_text[:200]}")
-            else:
-                raise ValueError(f"LLM 响应中找不到 JSON: {raw_text[:200]}")
+        data = self._extract_json_object(raw_text)
+        if data is None:
+            raise ValueError(f"LLM 响应中找不到 JSON: {raw_text[:200]}")
 
         # 提取并验证各维度
         result: Dict[str, float] = {}

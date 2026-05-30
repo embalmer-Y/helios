@@ -1,0 +1,128 @@
+{
+  "scenario_id": "cli_brain_like_eval_20min_v2",
+  "scenario_title": "20-minute mixed CLI brain-like evaluation",
+  "interaction_mode": "mixed",
+  "duration_seconds": 300,
+  "sample_count": 22,
+  "log_summary": {
+    "error_events": 0,
+    "sec_fallback_events": 66,
+    "outbound_success_events": 10,
+    "outbound_fail_events": 0,
+    "policy_rejection_events": 45
+  },
+  "transcript_excerpt": [
+    {
+      "speaker": "user",
+      "text": "回头看前面几句，你觉得我今天真正卡住的点是什么？"
+    },
+    {
+      "speaker": "helios",
+      "text": "不是卡在小菜或情绪分类上，是你怕那份开心太轻，说出来就散了，才反复确认它值不值得被接住。"
+    },
+    {
+      "speaker": "user",
+      "text": "我不是想听大道理，我就是最近一下班就累得不想说话，你会怎么理解这个劲？"
+    },
+    {
+      "speaker": "user",
+      "text": "你觉得我现在更需要别人接住情绪，还是帮我把事情捋清？"
+    },
+    {
+      "speaker": "user",
+      "text": "如果你听出来我有点嘴硬，你会先点破，还是先顺着我说？为什么？"
+    },
+    {
+      "speaker": "helios",
+      "text": "先顺着呀，嘴硬的时候其实最需要被接住而不是被拆穿。等你觉得安全了，再慢慢把真话递给我也不迟。"
+    },
+    {
+      "speaker": "user",
+      "text": "你会怎么理解那种‘人已经下班到家了，脑子还停在公司’的感觉？"
+    },
+    {
+      "speaker": "helios",
+      "text": "像身体已经靠岸了，灵魂却还被锚链拽在海里晃荡。这种时候别急着逼自己切换，先让我陪你在水里泡一会儿吧。"
+    }
+  ],
+  "dimension_scores": [
+    {
+      "name": "情感反应类人度",
+      "score_0_to_1": 0.581,
+      "evidence": [
+        "dominant present ratio=0.95",
+        "valence span=0.192",
+        "mood diversity=2",
+        "negative acknowledgement ratio=0.50",
+        "cue alignment ratio=0.67",
+        "self-focus ratio=0.00",
+        "generic companionship filler ratio=0.17"
+      ],
+      "notes": "严格模式下不仅看内部情感变化，也看是否接住用户情绪而不是持续转回自我状态表达。"
+    },
+    {
+      "name": "语言表达自然度",
+      "score_0_to_1": 0.758,
+      "evidence": [
+        "assistant lines=6",
+        "unique ratio=1.00",
+        "avg length=42.7",
+        "user reference ratio=0.83",
+        "negative acknowledgement ratio=0.50",
+        "self-focus ratio=0.00",
+        "generic companionship filler ratio=0.17",
+        "petname ratio=0.00",
+        "emoji ratio=0.00"
+      ],
+      "notes": "严格模式下会重罚自我感受泛化、负面情绪未承接、过度昵称和装饰性 emoji。"
+    },
+    {
+      "name": "情感模块工作状态",
+      "score_0_to_1": 0.982,
+      "evidence": [
+        "mood payload ratio=1.00",
+        "dominant ratio=0.95",
+        "allostatic_load bounded ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "神经化学/时序模块工作状态",
+      "score_0_to_1": 1.0,
+      "evidence": [
+        "neurochem available ratio=1.00",
+        "bounded raw ratio=1.00",
+        "gate present ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "意识/思维/记忆链路工作状态",
+      "score_0_to_1": 0.977,
+      "evidence": [
+        "consciousness available ratio=1.00",
+        "phi>0.15 ratio=0.95",
+        "memory payload ratio=1.00",
+        "directed retrieval ratio=0.95"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "路由/执行/外发链路工作状态",
+      "score_0_to_1": 1.0,
+      "evidence": [
+        "connectivity rejections=0",
+        "post-acceptance failures=0",
+        "outbound success=10 fail=0"
+      ],
+      "notes": ""
+    }
+  ],
+  "total_score_0_to_1": 0.59,
+  "analysis_notes": [
+    "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+    "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+    "当前评分标准已改为严格模式：外显对话质量优先于内部状态健康，语言和情感类人度不过线时总分不会判为及格。",
+    "外显对话维度未达及格线，总分按严格模式封顶为不及格区间。"
+  ]
+}

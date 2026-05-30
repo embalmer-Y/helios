@@ -197,6 +197,171 @@ class IdentityGovernance:
     BOOTSTRAP_VERSION = "r10.identity.v1"
 
     @staticmethod
+    def build_proactive_governance_signal(store: Optional[IdentityStore]) -> dict[str, object]:
+        identity_metadata = dict(getattr(store, "identity_metadata", {}) or {})
+        summary = dict(identity_metadata.get("proactive_deferred_trace_summary", {}) or {})
+        history = [
+            dict(item)
+            for item in list(identity_metadata.get("proactive_deferred_trace_history", []) or [])
+            if isinstance(item, Mapping)
+        ]
+        if not summary and not history:
+            return {
+                "active": False,
+                "pressure_score": 0.0,
+                "pressure_level": "none",
+                "review_hint": "none",
+                "recent_trace_count": 0,
+                "source_consistency_ratio": 0.0,
+                "recent_trigger_sources": [],
+            }
+
+        total_deferred_traces = int(summary.get("total_deferred_traces", len(history)) or len(history))
+        recent_trace_count = len(history)
+        disposition_counts: dict[str, int] = {}
+        source_type_counts: dict[str, int] = {}
+        trigger_sources_seen: list[str] = []
+        for entry in history:
+            dominant_disposition = str(entry.get("dominant_disposition", "") or "")
+            if dominant_disposition:
+                disposition_counts[dominant_disposition] = disposition_counts.get(dominant_disposition, 0) + 1
+            source_type = str(entry.get("source_type", "") or entry.get("owner_path", "") or "")
+            if source_type:
+                source_type_counts[source_type] = source_type_counts.get(source_type, 0) + 1
+            for item in list(entry.get("trigger_sources", []) or []):
+                value = str(item or "")
+                if value and value not in trigger_sources_seen:
+                    trigger_sources_seen.append(value)
+        recent_trigger_sources = [
+            str(item)
+            for item in list(trigger_sources_seen or summary.get("recent_trigger_sources", []) or [])
+            if str(item)
+        ]
+        recorded_timestamps = [
+            float(entry.get("recorded_at_ts", 0.0) or 0.0)
+            for entry in history
+            if float(entry.get("recorded_at_ts", 0.0) or 0.0) > 0.0
+        ]
+        recent_trace_count = max(recent_trace_count, 0)
+        defer_count = int(disposition_counts.get("defer", 0) or 0)
+        reflect_count = int(disposition_counts.get("reflect", 0) or 0)
+        dominant_count = max(disposition_counts.values(), default=0)
+        dominant_ratio = dominant_count / max(recent_trace_count, 1)
+        defer_ratio = defer_count / max(recent_trace_count, 1)
+        reflect_ratio = reflect_count / max(recent_trace_count, 1)
+        source_consistency_ratio = max(source_type_counts.values(), default=0) / max(recent_trace_count, 1)
+        recent_trace_span_seconds = 0.0
+        if len(recorded_timestamps) >= 2:
+            recent_trace_span_seconds = max(recorded_timestamps[-1] - recorded_timestamps[0], 0.0)
+        recent_trace_density_per_minute = 0.0
+        if recent_trace_count >= 2 and recent_trace_span_seconds > 0.0:
+            recent_trace_density_per_minute = (recent_trace_count - 1) * 60.0 / recent_trace_span_seconds
+
+        pressure_score = min(
+            1.0,
+            max(recent_trace_count - 1, 0) * 0.08
+            + max(recent_trace_count - 4, 0) * 0.14
+            + dominant_ratio * 0.14
+            + defer_ratio * 0.10
+            + reflect_ratio * 0.04
+            + (0.06 if recent_trace_count >= 3 and len(recent_trigger_sources) <= 3 else 0.0)
+            + (0.05 if recent_trace_count >= 3 and source_consistency_ratio >= 0.67 else 0.0),
+        )
+        pressure_level = "none"
+        review_hint = "none"
+        stabilize_ready = (
+            pressure_score >= 0.72
+            and recent_trace_count >= 5
+            and source_consistency_ratio >= 0.67
+            and recent_trace_density_per_minute >= 2.4
+        )
+        if stabilize_ready:
+            pressure_level = "stabilize"
+            review_hint = "delay_low_confidence_identity_revision"
+        elif pressure_score >= 0.45:
+            pressure_level = "monitor"
+            review_hint = "review_identity_revision_carefully"
+
+        return {
+            "active": pressure_level != "none",
+            "pressure_score": round(float(pressure_score), 4),
+            "pressure_level": pressure_level,
+            "review_hint": review_hint,
+            "total_deferred_traces": total_deferred_traces,
+            "recent_trace_count": recent_trace_count,
+            "recent_trace_span_seconds": round(float(recent_trace_span_seconds), 4),
+            "recent_trace_density_per_minute": round(float(recent_trace_density_per_minute), 4),
+            "source_consistency_ratio": round(float(source_consistency_ratio), 4),
+            "dominant_disposition_counts": disposition_counts,
+            "recent_trigger_sources": recent_trigger_sources,
+            "latest_trace": dict(summary.get("latest_trace", {}) or {}),
+        }
+
+    @staticmethod
+    def record_proactive_deferred_trace(
+        *,
+        store: IdentityStore,
+        payload: Mapping[str, object],
+        max_history: int = 12,
+    ) -> dict[str, object]:
+        entry = {
+            "recorded_at_ts": round(float(payload.get("recorded_at_ts", time.time()) or time.time()), 4),
+            "tick": int(payload.get("tick", 0) or 0),
+            "source_type": str(payload.get("source_type", "") or ""),
+            "owner_path": str(payload.get("owner_path", "") or ""),
+            "origin_id": str(payload.get("origin_id", "") or ""),
+            "session_kind": str(payload.get("session_kind", "") or ""),
+            "dominant_disposition": str(payload.get("dominant_disposition", "") or ""),
+            "trigger_sources": [
+                str(item) for item in list(payload.get("trigger_sources", []) or []) if str(item)
+            ],
+            "rejection_reason": str(payload.get("rejection_reason", "") or ""),
+            "behavior_name": str(payload.get("behavior_name", "") or ""),
+            "requested_op": str(payload.get("requested_op", "") or ""),
+            "candidate_channels": [
+                str(item) for item in list(payload.get("candidate_channels", []) or []) if str(item)
+            ],
+        }
+        history = [
+            dict(item)
+            for item in list(store.identity_metadata.get("proactive_deferred_trace_history", []) or [])
+            if isinstance(item, Mapping)
+        ]
+        history.append(entry)
+        history = history[-max(int(max_history or 1), 1):]
+
+        previous_summary = dict(store.identity_metadata.get("proactive_deferred_trace_summary", {}) or {})
+        total_deferred_traces = int(previous_summary.get("total_deferred_traces", 0) or 0) + 1
+        disposition_counts = {
+            str(key): int(value or 0)
+            for key, value in dict(previous_summary.get("dominant_disposition_counts", {}) or {}).items()
+        }
+        dominant_disposition = str(entry.get("dominant_disposition", "") or "")
+        if dominant_disposition:
+            disposition_counts[dominant_disposition] = disposition_counts.get(dominant_disposition, 0) + 1
+
+        recent_trigger_sources: list[str] = [
+            str(item)
+            for item in list(previous_summary.get("recent_trigger_sources", []) or [])
+            if str(item)
+        ]
+        for item in list(entry.get("trigger_sources", []) or []):
+            value = str(item or "")
+            if value and value not in recent_trigger_sources:
+                recent_trigger_sources.append(value)
+        recent_trigger_sources = recent_trigger_sources[-8:]
+
+        store.identity_metadata["proactive_deferred_trace_history"] = history
+        store.identity_metadata["proactive_deferred_trace_summary"] = {
+            "total_deferred_traces": total_deferred_traces,
+            "latest_trace": dict(entry),
+            "dominant_disposition_counts": disposition_counts,
+            "recent_trigger_sources": recent_trigger_sources,
+        }
+        store.identity_metadata["proactive_governance_signal"] = IdentityGovernance.build_proactive_governance_signal(store)
+        return entry
+
+    @staticmethod
     def _write_bootstrap_definition(path: str, definition: IdentityBootstrapDefinition) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -277,8 +442,22 @@ class IdentityGovernance:
         reason_trace = list(proposal.reason_trace)
         applied_change: dict[str, object] = {}
         result = "accepted"
+        governance_signal = self.build_proactive_governance_signal(store)
+        pressure_level = str(governance_signal.get("pressure_level", "none") or "none")
+        low_confidence_revision = float(proposal.confidence or 0.0) < 0.65
+        if (
+            pressure_level == "stabilize"
+            and low_confidence_revision
+            and proposal.revision_type in {"self_definition_revision", "personality_adjustment"}
+        ):
+            result = "rejected"
+            reason_trace.append("proactive_governance_backpressure")
+            reason_trace.append(f"governance_pressure:{pressure_level}")
+        elif pressure_level == "monitor":
+            reason_trace.append("proactive_governance_monitoring")
+            reason_trace.append(f"governance_pressure:{pressure_level}")
 
-        if proposal.revision_type == "self_definition_revision":
+        if result == "accepted" and proposal.revision_type == "self_definition_revision":
             new_definition = str(requested_change.get("self_definition", "") or "").strip()
             if not new_definition:
                 result = "rejected"
@@ -289,7 +468,7 @@ class IdentityGovernance:
             else:
                 store.self_definition = new_definition
                 applied_change = {"self_definition": new_definition}
-        elif proposal.revision_type == "personality_adjustment":
+        elif result == "accepted" and proposal.revision_type == "personality_adjustment":
             requested_traits = dict(requested_change.get("personality_baseline", {}) or {})
             sanitized: dict[str, float] = {}
             for key, value in requested_traits.items():
@@ -302,7 +481,7 @@ class IdentityGovernance:
             else:
                 store.personality_baseline.update(sanitized)
                 applied_change = {"personality_baseline": dict(sanitized)}
-        elif proposal.revision_type == "autobiographical_identity_narrative_revision":
+        elif result == "accepted" and proposal.revision_type == "autobiographical_identity_narrative_revision":
             narrative_summary = str(requested_change.get("narrative_summary", "") or "").strip()
             if not narrative_summary:
                 result = "rejected"
@@ -321,7 +500,7 @@ class IdentityGovernance:
                         "autobiographical_identity_narrative": dict(narrative_payload),
                     }
                 }
-        else:
+        elif result == "accepted":
             result = "rejected"
             reason_trace.append("unsupported_revision_type")
 

@@ -1,0 +1,129 @@
+{
+  "scenario_id": "cli_brain_like_eval_20min_v2",
+  "scenario_title": "20-minute mixed CLI brain-like evaluation",
+  "interaction_mode": "mixed",
+  "duration_seconds": 300,
+  "sample_count": 22,
+  "log_summary": {
+    "error_events": 1,
+    "sec_fallback_events": 60,
+    "outbound_success_events": 4,
+    "outbound_fail_events": 0,
+    "policy_rejection_events": 14
+  },
+  "transcript_excerpt": [
+    {
+      "speaker": "user",
+      "text": "如果我们继续聊下去，你会希望这段对话是什么感觉？"
+    },
+    {
+      "speaker": "user",
+      "text": "如果我说你刚才那句回应有点空，你会怎么调整，而不是重复安慰模板？"
+    },
+    {
+      "speaker": "user",
+      "text": "如果你真的在听，你会先追问我哪一个细节？为什么？"
+    },
+    {
+      "speaker": "user",
+      "text": "回顾一下我们刚才这几轮，你觉得我最在意的是什么？"
+    },
+    {
+      "speaker": "user",
+      "text": "我不是要鸡汤，我更想知道你会怎么理解这种不安从哪里来。"
+    },
+    {
+      "speaker": "user",
+      "text": "你刚才几次都提到陪伴，那你觉得我真正要的是被安抚、被理解，还是被一起分析问题？"
+    },
+    {
+      "speaker": "user",
+      "text": "你会先指出矛盾，还是先确认我的真实感受？为什么？"
+    },
+    {
+      "speaker": "user",
+      "text": "你会怎么理解‘紧张和期待同时存在’这种状态？"
+    }
+  ],
+  "dimension_scores": [
+    {
+      "name": "情感反应类人度",
+      "score_0_to_1": 0.446,
+      "evidence": [
+        "dominant present ratio=0.95",
+        "valence span=0.152",
+        "mood diversity=2",
+        "negative acknowledgement ratio=0.50",
+        "cue alignment ratio=0.00",
+        "self-focus ratio=0.00",
+        "generic companionship filler ratio=0.00"
+      ],
+      "notes": "严格模式下不仅看内部情感变化，也看是否接住用户情绪而不是持续转回自我状态表达。"
+    },
+    {
+      "name": "语言表达自然度",
+      "score_0_to_1": 0.5,
+      "evidence": [
+        "assistant lines=1",
+        "unique ratio=1.00",
+        "avg length=8.0",
+        "user reference ratio=0.00",
+        "negative acknowledgement ratio=0.50",
+        "self-focus ratio=0.00",
+        "generic companionship filler ratio=0.00",
+        "petname ratio=0.00",
+        "emoji ratio=0.00"
+      ],
+      "notes": "严格模式下会重罚自我感受泛化、负面情绪未承接、过度昵称和装饰性 emoji。"
+    },
+    {
+      "name": "情感模块工作状态",
+      "score_0_to_1": 0.982,
+      "evidence": [
+        "mood payload ratio=1.00",
+        "dominant ratio=0.95",
+        "allostatic_load bounded ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "神经化学/时序模块工作状态",
+      "score_0_to_1": 1.0,
+      "evidence": [
+        "neurochem available ratio=1.00",
+        "bounded raw ratio=1.00",
+        "gate present ratio=1.00"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "意识/思维/记忆链路工作状态",
+      "score_0_to_1": 0.977,
+      "evidence": [
+        "consciousness available ratio=1.00",
+        "phi>0.15 ratio=0.95",
+        "memory payload ratio=1.00",
+        "directed retrieval ratio=0.95"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "路由/执行/外发链路工作状态",
+      "score_0_to_1": 1.0,
+      "evidence": [
+        "connectivity rejections=0",
+        "post-acceptance failures=0",
+        "outbound success=4 fail=0"
+      ],
+      "notes": ""
+    }
+  ],
+  "total_score_0_to_1": 0.49,
+  "analysis_notes": [
+    "总分将对外行为质量与内部子系统健康一起计入，但每项扣分都应结合 evidence 单独复核。",
+    "若真实 LLM 不可用，语言自然度与 reflective 表现会自然降级，报告需要单独标注运行条件。",
+    "当前评分标准已改为严格模式：外显对话质量优先于内部状态健康，语言和情感类人度不过线时总分不会判为及格。",
+    "外显对话维度未达及格线，总分按严格模式封顶为不及格区间。",
+    "语言或情感类人度显著失真，总分进一步压到 0.49 以下。"
+  ]
+}

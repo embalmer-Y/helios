@@ -180,3 +180,94 @@
 6. `cognition/drives.py`: 保留
 7. `cognition/cognitive_impact.py`: 调整接口
 8. `cognition/__init__.py`: 调整接口
+
+### 11.4 Memory / Retrieval
+
+该分组已结合当前代码结构与 R11/R17/R18 规划于 2026-05-28 完成第一轮确认，确认结论如下：
+
+1. `memory/memory_system.py`: 重构/重建
+2. `memory/retrieval.py`: 调整接口
+3. `memory/autobiographical.py`: 保留
+4. `memory/emotional_memory.py`: 调整接口
+5. `memory/memory_compressor.py`: 保留实现，重定哲学
+6. `memory/seed_memory_importer.py`: 调整接口
+7. `memory/backend.py` / `memory/sqlite_backend.py`: 保留
+
+补充边界说明：
+
+1. 记忆层必须服务 thought-centered loop，而不是单独服务 reply context。
+2. directed retrieval、未完成意图和 self-evolution trace 属于记忆/治理协作边界，不属于 channel 或 evaluation owner。
+
+### 11.5 Identity / Governance
+
+该分组已结合当前代码结构与 R10/R18/R19 规划于 2026-05-28 完成第一轮确认，确认结论如下：
+
+1. `personality.py`: 调整接口
+2. `personality_contract.py`: 调整接口
+3. `data/personality.json` 等现有持久化表面: 重构/重建
+
+补充边界说明：
+
+1. 身份慢变量变更必须经过治理 owner 和审计路径。
+2. prompt 文本、channel 输出文本和单次评估结果都不拥有身份写回权。
+
+### 11.6 Helios I/O / Channels / Ops
+
+该分组已结合当前代码结构与 R09/R16/R17/R18 规划于 2026-05-28 完成第一轮确认，确认结论如下：
+
+1. `helios_io/action_models.py`: 调整接口
+2. `helios_io/planning.py`: 调整接口
+3. `helios_io/limb.py`: 调整接口
+4. `helios_io/limb_decision_bridge.py`: 保留实现，重定哲学
+5. `helios_io/channel.py`: 重构/重建
+6. `helios_io/channel_gateway.py`: 调整接口
+7. `helios_io/protocols/`: 保留
+8. `helios_io/channels/qq_channel.py`: 调整接口
+9. `helios_io/channels/stt_channel.py`: 调整接口
+10. `helios_io/channels/tts_channel.py`: 调整接口
+11. `helios_io/channels/vision_channel.py`: 调整接口
+12. `helios_io/interaction_policy.py`: 重构/重建
+13. `helios_io/response_pipeline.py`: 重构/重建
+14. `helios_io/reply_prompt_builder.py`: 重构/重建
+15. `helios_io/llm_sec_evaluator.py`: 调整接口
+16. `helios_io/llm/speech.py`: 重构/重建
+17. `helios_io/conversation_history.py`: 调整接口
+18. `helios_io/icri_temperature.py`: 保留实现，重定哲学
+19. `helios_io/routing_policy.py`: 保留实现，重定哲学
+20. `helios_io/feedback_recorder.py`: 保留
+
+补充边界说明：
+
+1. channel 子系统只拥有 descriptor、ops、lifecycle、config 和 I/O 适配，不拥有主动性决策或身份治理。
+2. evaluation 只能通过正式 owner 暴露的状态和日志观察 I/O 链路，不得把 channel 临时内部状态当作评分真相。
+
+### 11.7 Regulation / Behavior Registry
+
+该分组已结合当前代码结构与 R18 规划于 2026-05-28 完成第一轮确认，确认结论如下：
+
+1. `regulation/regulation.py`: 调整接口
+2. `regulation/policy.py`: 保留实现，重定哲学
+3. `regulation/conation.py`: 保留
+4. `regulation/constants.py`: 调整接口
+5. `behavior_registry/runtime_catalog.py`: 保留
+6. `behavior_registry/sqlite_registry.py`: 保留
+7. `behavior_registry/records.py`: 保留
+
+补充边界说明：
+
+1. regulation 拥有内在趋向和 proactive drive 汇总，但不直接执行 channel outward ops。
+2. behavior registry 继续作为可执行能力治理层，不负责 thought 生成。
+
+### 11.8 Tests / Scripts / Data
+
+该分组已结合当前验证面与 R17-R20 规划于 2026-05-28 完成第一轮确认，确认结论如下：
+
+1. `tests/`: 调整接口
+2. `scripts/`: 调整接口
+3. `data/`: 调整接口
+4. `.env.example`: 重写
+
+补充边界说明：
+
+1. 测试层必须从“是否回复”预期转向“是否按正式 owner 链路完成思考、决策、执行、记录和评估”。
+2. 数据目录需要显式区分 bootstrap identity、runtime state、memory backend、evaluation artifacts 和审计历史。

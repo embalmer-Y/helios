@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import logging
 from typing import Dict, Iterable, List, Mapping, Optional
 
 from .action_models import ActionDecision, ActionProposal, BehaviorSpec
 from .channel import ChannelDescriptor, ChannelOpDescriptor, ChannelStatus
+
+
+log = logging.getLogger("helios.helios_io.planning")
 
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -68,6 +72,11 @@ class PolicyEvaluator:
         trace["requested_op"] = requested_op
         trace["normalized_intensity"] = normalized_intensity
         trace["origin_type"] = str(proposal.origin_type or "")
+        trace["session_kind"] = str(proposal.provenance.get("session_kind", "") or "")
+        trace["dominant_disposition"] = str(proposal.provenance.get("dominant_disposition", "") or "")
+        trace["trigger_sources"] = [
+            str(item) for item in list(proposal.provenance.get("trigger_sources", []) or []) if str(item)
+        ]
 
         if (
             str(proposal.origin_type or "") == "thought"
@@ -277,8 +286,22 @@ class ExecutionPlanner:
         channel_descriptors: Mapping[str, ChannelDescriptor],
         channel_statuses: Optional[Mapping[str, ChannelStatus]] = None,
     ) -> ActionDecision:
+        log.debug(
+            "owner_path_node=planner_enter proposal_id=%s source_type=%s behavior=%s requested_op=%s candidate_channels=%s target_user_id_present=%s outbound_text_present=%s",
+            proposal.proposal_id,
+            proposal.source_type,
+            proposal.behavior_name,
+            proposal.op_name,
+            list(proposal.candidate_channels),
+            bool(str(proposal.parameters.get("target_user_id", "") or "").strip()),
+            bool(str(proposal.parameters.get("outbound_text", "") or "").strip()),
+        )
         behavior_spec = self._resolve_behavior_spec(proposal.behavior_name, behavior_specs)
         if behavior_spec is None:
+            log.debug(
+                "owner_path_node=planner_exit proposal_id=%s accepted=false reason=behavior_not_registered",
+                proposal.proposal_id,
+            )
             return ActionDecision(
                 decision_id=f"decision::{proposal.proposal_id}",
                 proposal_id=proposal.proposal_id,
@@ -289,6 +312,13 @@ class ExecutionPlanner:
 
         evaluation = self._policy_evaluator.evaluate(proposal, behavior_spec, channel_descriptors, channel_statuses)
         if not evaluation.accepted:
+            log.debug(
+                "owner_path_node=planner_exit proposal_id=%s accepted=false reason=%s allowed_channels=%s violations=%s",
+                proposal.proposal_id,
+                self._join_violation_codes(evaluation.violations),
+                list(evaluation.allowed_channels),
+                [item.code for item in evaluation.violations],
+            )
             return ActionDecision(
                 decision_id=f"decision::{proposal.proposal_id}",
                 proposal_id=proposal.proposal_id,
@@ -340,6 +370,14 @@ class ExecutionPlanner:
 
         if behavior_spec.execution_mode != "internal" and (not selected_channel_id or not selected_op):
             rejection_reason = routing_trace["rejection_reason"] or "invalid_channel_binding"
+            log.debug(
+                "owner_path_node=planner_exit proposal_id=%s accepted=false reason=%s selected_channel_id=%s selected_op=%s routing_trace=%s",
+                proposal.proposal_id,
+                rejection_reason,
+                selected_channel_id,
+                selected_op,
+                routing_trace,
+            )
             return ActionDecision(
                 decision_id=f"decision::{proposal.proposal_id}",
                 proposal_id=proposal.proposal_id,
@@ -356,6 +394,14 @@ class ExecutionPlanner:
 
         if behavior_spec.execution_mode != "internal" and routing_trace.get("rejection_reason"):
             rejection_reason = str(routing_trace["rejection_reason"] or "invalid_channel_binding")
+            log.debug(
+                "owner_path_node=planner_exit proposal_id=%s accepted=false reason=%s selected_channel_id=%s selected_op=%s routing_trace=%s",
+                proposal.proposal_id,
+                rejection_reason,
+                selected_channel_id,
+                selected_op,
+                routing_trace,
+            )
             return ActionDecision(
                 decision_id=f"decision::{proposal.proposal_id}",
                 proposal_id=proposal.proposal_id,
@@ -371,6 +417,14 @@ class ExecutionPlanner:
             )
 
         score = evaluation.resolved_score
+        log.debug(
+            "owner_path_node=planner_exit proposal_id=%s accepted=true selected_channel_id=%s selected_op=%s normalized_intensity=%.3f selection_reason=%s",
+            proposal.proposal_id,
+            selected_channel_id,
+            selected_op,
+            normalized_intensity,
+            routing_trace.get("selection_reason", ""),
+        )
         return ActionDecision(
             decision_id=f"decision::{proposal.proposal_id}",
             proposal_id=proposal.proposal_id,
