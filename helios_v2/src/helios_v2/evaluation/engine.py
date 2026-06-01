@@ -1,0 +1,303 @@
+"""First-version path for read-only evaluation artifact assembly."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Mapping, Protocol, runtime_checkable
+
+from .contracts import (
+    EvaluateEvidenceBundleOp,
+    EvaluationAPI,
+    EvaluationArtifact,
+    EvaluationConfig,
+    EvaluationError,
+    EvaluationEvidenceBundle,
+    EvaluationRequest,
+    FidelityWarning,
+    PublishEvaluationArtifactOp,
+)
+
+
+def _bundle_ids(items: tuple[Mapping[str, object], ...]) -> tuple[str, ...]:
+    refs: list[str] = []
+    for item in items:
+        value = item.get("evidence_id")
+        if isinstance(value, str) and value:
+            refs.append(value)
+    return tuple(refs)
+
+
+def _warning(
+    warning_id: str,
+    warning_kind: str,
+    summary: str,
+    evidence_refs: tuple[str, ...],
+) -> FidelityWarning:
+    refs = evidence_refs or (warning_id,)
+    return FidelityWarning(
+        warning_id=warning_id,
+        warning_kind=warning_kind,
+        summary=summary,
+        evidence_refs=refs,
+    )
+
+
+@runtime_checkable
+class EvaluationPath(Protocol):
+    """Owner-private path that assembles one evaluation artifact from a request and evidence bundle."""
+
+    def assemble_artifact(
+        self,
+        request: EvaluationRequest,
+        bundle: EvaluationEvidenceBundle,
+        config: EvaluationConfig,
+    ) -> EvaluationArtifact:
+        """Return one deterministic evaluation artifact from validated inputs."""
+
+        ...
+
+
+@dataclass(frozen=True)
+class FirstVersionEvaluationPath:
+    """First shipped evaluation path consuming explicit runtime evidence only."""
+
+    def assemble_artifact(
+        self,
+        request: EvaluationRequest,
+        bundle: EvaluationEvidenceBundle,
+        config: EvaluationConfig,
+    ) -> EvaluationArtifact:
+        if config.evaluation_bootstrap_id != "evaluation-bootstrap:v1":
+            raise EvaluationError(
+                "FirstVersionEvaluationPath requires the confirmed evaluation bootstrap id"
+            )
+
+        thought_refs = _bundle_ids(bundle.thought_evidence)
+        action_refs = _bundle_ids(bundle.action_evidence)
+        planner_refs = _bundle_ids(bundle.planner_evidence)
+        governance_refs = _bundle_ids(bundle.governance_evidence)
+        writeback_refs = _bundle_ids(bundle.writeback_evidence)
+        prompt_refs = _bundle_ids(bundle.prompt_evidence)
+        outward_refs = _bundle_ids(bundle.outward_expression_evidence)
+        outward_ext_refs = _bundle_ids(bundle.outward_expression_externalization_evidence)
+
+        action_status = bundle.action_evidence[0].get("status") if bundle.action_evidence else None
+        planner_status = bundle.planner_evidence[0].get("status") if bundle.planner_evidence else None
+        writeback_statuses = tuple(item.get("status") for item in bundle.writeback_evidence)
+        any_written = any(
+            isinstance(status, str) and status.startswith("written") for status in writeback_statuses
+        )
+
+        thought_to_action_gap = (
+            "missing_thought_evidence"
+            if not bundle.thought_evidence
+            else "missing_action_evidence"
+            if not bundle.action_evidence
+            else f"action_status:{action_status}"
+            if action_status != "normalized"
+            else "no_gap"
+        )
+        action_to_writeback_gap = (
+            "missing_planner_evidence"
+            if not bundle.planner_evidence
+            else "missing_writeback_evidence"
+            if not bundle.writeback_evidence
+            else f"planner_status:{planner_status}"
+            if planner_status not in {"executed", "execution_failed", "accepted", "policy_rejected", "execution_consistency_failed"}
+            else "no_gap"
+            if any_written
+            else f"writeback_statuses:{','.join(str(status) for status in writeback_statuses)}"
+        )
+        outward_expression_gap = (
+            "missing_prompt_evidence"
+            if not bundle.prompt_evidence
+            else "missing_outward_expression_draft"
+            if not bundle.outward_expression_evidence
+            else "missing_outward_expression_externalization_draft"
+            if not bundle.outward_expression_externalization_evidence
+            else "no_gap"
+        )
+        autonomy_gap = (
+            "missing_autonomy_evidence"
+            if not bundle.autonomy_evidence
+            else "deferred_continuity_preserved"
+            if bundle.autonomy_evidence[0].get("deferred_active") is True
+            else "no_gap"
+        )
+
+        warnings: list[FidelityWarning] = []
+        if not bundle.thought_evidence:
+            warnings.append(
+                _warning(
+                    "warning:missing-thought-evidence",
+                    "missing_evidence",
+                    "Evaluation bundle is missing thought evidence.",
+                    (bundle.bundle_id,),
+                )
+            )
+        if not bundle.action_evidence:
+            warnings.append(
+                _warning(
+                    "warning:missing-action-evidence",
+                    "missing_evidence",
+                    "Evaluation bundle is missing action externalization evidence.",
+                    thought_refs or (bundle.bundle_id,),
+                )
+            )
+        if not bundle.planner_evidence:
+            warnings.append(
+                _warning(
+                    "warning:missing-planner-evidence",
+                    "missing_evidence",
+                    "Evaluation bundle is missing planner outcome evidence.",
+                    action_refs or (bundle.bundle_id,),
+                )
+            )
+        if not bundle.writeback_evidence:
+            warnings.append(
+                _warning(
+                    "warning:missing-writeback-evidence",
+                    "missing_evidence",
+                    "Evaluation bundle is missing continuity writeback evidence.",
+                    planner_refs or governance_refs or (bundle.bundle_id,),
+                )
+            )
+        if not bundle.autonomy_evidence:
+            warnings.append(
+                _warning(
+                    "warning:missing-autonomy-evidence",
+                    "missing_evidence",
+                    "Evaluation bundle is missing autonomy evidence.",
+                    writeback_refs or (bundle.bundle_id,),
+                )
+            )
+        if outward_expression_gap != "no_gap":
+            warnings.append(
+                _warning(
+                    "warning:outward-expression-chain-incomplete",
+                    "artifact_gap",
+                    "Outward-expression artifact chain is incomplete.",
+                    prompt_refs + outward_refs + outward_ext_refs or (bundle.bundle_id,),
+                )
+            )
+        if thought_to_action_gap != "no_gap":
+            warnings.append(
+                _warning(
+                    "warning:thought-to-action-gap",
+                    "chain_gap",
+                    f"Thought-to-action gap detected: {thought_to_action_gap}.",
+                    thought_refs + action_refs or (bundle.bundle_id,),
+                )
+            )
+        if action_to_writeback_gap != "no_gap":
+            warnings.append(
+                _warning(
+                    "warning:action-to-writeback-gap",
+                    "chain_gap",
+                    f"Action-to-writeback gap detected: {action_to_writeback_gap}.",
+                    action_refs + planner_refs + writeback_refs or (bundle.bundle_id,),
+                )
+            )
+
+        dimension_scores: dict[str, float] = {
+            "thought_fidelity": 1.0 if bundle.thought_evidence else 0.0,
+            "action_fidelity": 1.0 if action_status == "normalized" else 0.0,
+            "continuity_fidelity": 1.0 if any_written else 0.0,
+            "governance_fidelity": 1.0 if bundle.governance_evidence else 0.0,
+            "autonomy_fidelity": 1.0 if bundle.autonomy_evidence else 0.0,
+            "outward_expression_artifact_fidelity": 1.0 if outward_expression_gap == "no_gap" else 0.0,
+        }
+
+        gap_summary: dict[str, object] = {
+            "thought_to_action_gap": thought_to_action_gap,
+            "action_to_writeback_gap": action_to_writeback_gap,
+            "autonomy_continuity_gap": autonomy_gap,
+            "outward_expression_artifact_gap": outward_expression_gap,
+            "externally_consequential_activity": "present" if any_written else "not_confirmed",
+            "continuity_written": any_written,
+        }
+
+        long_range_diagnostics: dict[str, object] = {
+            "late_session_degradation_status": request.time_window_summary.get(
+                "late_session_degradation_status",
+                "not_evaluated",
+            ),
+            "continuity_carry_persistence_status": (
+                "deferred_continuity_preserved"
+                if autonomy_gap == "deferred_continuity_preserved"
+                else "observed"
+                if any_written
+                else "not_observed"
+            ),
+            "specific_recall_persistence_status": request.time_window_summary.get(
+                "specific_recall_persistence_status",
+                "not_evaluated",
+            ),
+            "user_visible_anchoring_drift_status": request.time_window_summary.get(
+                "user_visible_anchoring_drift_status",
+                "not_evaluated",
+            ),
+            "comparison_window_label": request.time_window_summary.get(
+                "comparison_window_label",
+                request.scenario_kind,
+            ),
+        }
+
+        return EvaluationArtifact(
+            artifact_id=f"evaluation-artifact:{bundle.bundle_id}",
+            source_bundle_id=bundle.bundle_id,
+            dimension_scores=dimension_scores,
+            gap_summary=gap_summary,
+            fidelity_warnings=tuple(warnings),
+            long_range_diagnostics=long_range_diagnostics,
+        )
+
+
+@dataclass(frozen=True)
+class EvaluationEngine(EvaluationAPI):
+    """Public owner that assembles read-only evaluation artifacts from explicit evidence."""
+
+    config: EvaluationConfig
+    evaluation_path: EvaluationPath | None
+
+    def build_evaluate_op(
+        self,
+        request: EvaluationRequest,
+        bundle: EvaluationEvidenceBundle,
+    ) -> EvaluateEvidenceBundleOp:
+        if bundle.source_request_id != request.request_id:
+            raise EvaluationError(
+                "EvaluationEvidenceBundle must preserve the source request id"
+            )
+        return EvaluateEvidenceBundleOp(
+            op_name="evaluate_evidence_bundle",
+            owner="evaluation_fidelity_and_diagnostic_provenance",
+            request_id=request.request_id,
+            bundle_id=bundle.bundle_id,
+            scenario_kind=request.scenario_kind,
+        )
+
+    def evaluate(
+        self,
+        request: EvaluationRequest,
+        bundle: EvaluationEvidenceBundle,
+    ) -> EvaluationArtifact:
+        if bundle.source_request_id != request.request_id:
+            raise EvaluationError(
+                "EvaluationEvidenceBundle must preserve the source request id"
+            )
+        if self.evaluation_path is None:
+            raise EvaluationError("Evaluation requires an explicit evaluation capability")
+        return self.evaluation_path.assemble_artifact(request, bundle, self.config)
+
+    def build_publish_artifact_op(
+        self,
+        artifact: EvaluationArtifact,
+    ) -> PublishEvaluationArtifactOp:
+        return PublishEvaluationArtifactOp(
+            op_name="publish_evaluation_artifact",
+            owner="evaluation_fidelity_and_diagnostic_provenance",
+            artifact_id=artifact.artifact_id,
+            source_bundle_id=artifact.source_bundle_id,
+            warning_count=len(artifact.fidelity_warnings),
+        )

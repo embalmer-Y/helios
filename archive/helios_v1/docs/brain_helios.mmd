@@ -1,0 +1,18 @@
+flowchart TD
+    A1[人脑：外界刺激/内部身体信号] --> A2[人脑：感觉接入与中继<br/>丘脑 脑干 NTS]
+    A2 --> A3[人脑：显著性/原始情绪评估<br/>杏仁核 岛叶 ACC 下丘脑]
+    A3 --> A4[人脑：内感受与神经调质调制<br/>DA NE 5-HT ACh Cortisol Oxy Opioid]
+    A4 --> A5[人脑：记忆检索与情景绑定<br/>海马 海马旁回 杏仁核]
+    A5 --> A6[人脑：价值评估/认知控制<br/>vmPFC OFC dlPFC mPFC ACC]
+    A6 --> A7[人脑：自我叙事/意识化整合<br/>DMN + 前额叶-顶叶网络]
+    A7 --> A8[人脑：行动选择与输出<br/>ACC 基底节 运动/语言系统]
+    A8 --> A9[人脑：经验回写与长期塑形]
+
+    B1[Helios：channels + event sources<br/>QQ CLI STT Vision Separation Drive] --> B2[Helios：ChannelGateway + _collect_events + HeliosState]
+    B2 --> B3[Helios：DAISY + Habituation + SEC + Mood + Allostasis]
+    B3 --> B4[Helios：Neurochem + NeurochemGate + TemporalDynamics + TemporalGate]
+    B4 --> B5[Helios：MemorySystem + AutobiographicalStore + Compressor + SeedImporter]
+    B5 --> B6[Helios：DriveOracle + Appraisal/Cognition + ThinkingIntegration + Preconscious]
+    B6 --> B7[Helios：UnifiedPhi/ICRI + IdentityGovernance + PersonalityProjection]
+    B7 --> B8[Helios：RegulationEngine + ExecutionPlanner + LimbBridge + BehaviorExecutor]
+    B8 --> B9[Helios：FeedbackRecorder + memory writes + persistence + consolidation]

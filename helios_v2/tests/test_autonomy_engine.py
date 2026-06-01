@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import pytest
+
+from helios_v2.autonomy import (
+    AutonomyConfig,
+    AutonomyEngine,
+    AutonomyError,
+    DeferredContinuityRecord,
+    FirstVersionAutonomyPath,
+    ProactiveDriveRequest,
+)
+
+
+def _build_config() -> AutonomyConfig:
+    return AutonomyConfig(
+        autonomy_bootstrap_id="autonomy-bootstrap:v1",
+        mandatory_learned_parameters=(
+            "drive_integration_policy",
+            "continuity_carry_policy",
+            "proactive_externalization_policy",
+        ),
+    )
+
+
+def _build_request(
+    *,
+    outward_ready: bool,
+    externalization_blocked: bool,
+    continuation_pressure: float = 0.8,
+    retrieval_pull: float = 0.4,
+    temporal_pressure: float = 0.5,
+    identity_unresolved_pressure: float = 0.4,
+    prior_deferred_records: tuple[DeferredContinuityRecord, ...] = (),
+) -> ProactiveDriveRequest:
+    return ProactiveDriveRequest(
+        request_id="autonomy-request:001",
+        source_gate_result_id="gate-result:001",
+        source_retrieval_bundle_id="bundle:001",
+        source_thought_cycle_result_id="thought-result:001",
+        source_planner_bridge_result_id="planner-result:001",
+        source_identity_governance_result_id="governance-result:001",
+        source_writeback_result_ids=("writeback-result:001", "writeback-result:002"),
+        source_outward_expression_draft_id="outward-expression-draft:001",
+        source_outward_expression_externalization_draft_id="outward-expression-externalization-draft:001",
+        continuation_summary={"continuation_pressure": continuation_pressure},
+        retrieval_pull_summary={"retrieval_pull": retrieval_pull},
+        temporal_pressure_summary={"temporal_pressure": temporal_pressure},
+        identity_unresolved_summary={"identity_unresolved_pressure": identity_unresolved_pressure},
+        outward_readiness_summary={
+            "outward_ready": outward_ready,
+            "externalization_blocked": externalization_blocked,
+        },
+        prior_deferred_records=prior_deferred_records,
+    )
+
+
+def test_engine_preserves_blocked_outward_tendency_as_deferred_continuity() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    request = _build_request(outward_ready=True, externalization_blocked=True)
+    evaluate_op = engine.build_evaluate_op(request)
+    result = engine.evaluate(request)
+    publish_op = engine.build_publish_result_op(result)
+
+    assert evaluate_op.request_id == request.request_id
+    assert result.drive_state.dominant_disposition == "defer"
+    assert result.drive_state.activity_mode == "deferred_continuity"
+    assert result.drive_state.proactive_action_requested is True
+    assert result.drive_state.deferred_active is True
+    assert len(result.deferred_records) == 1
+    assert result.deferred_records[0].carry_reason == "blocked_outward_externalization"
+    assert publish_op.deferred_count == 1
+
+
+def test_engine_externalizes_when_outward_path_is_ready() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    result = engine.evaluate(_build_request(outward_ready=True, externalization_blocked=False))
+
+    assert result.drive_state.dominant_disposition == "externalize"
+    assert result.drive_state.activity_mode == "outward_proactive"
+    assert result.drive_state.deferred_active is False
+    assert result.deferred_records == ()
+
+
+def test_engine_requires_explicit_autonomy_capability() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=None)
+
+    with pytest.raises(AutonomyError, match="explicit autonomy capability"):
+        engine.evaluate(_build_request(outward_ready=True, externalization_blocked=False))
+
+
+def test_engine_carries_forward_prior_deferred_records_across_ticks() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    result = engine.evaluate(
+        _build_request(
+            outward_ready=False,
+            externalization_blocked=False,
+            continuation_pressure=0.1,
+            retrieval_pull=0.1,
+            temporal_pressure=0.1,
+            identity_unresolved_pressure=0.1,
+            prior_deferred_records=(
+                DeferredContinuityRecord(
+                    record_id="deferred-continuity:prior:001",
+                    continuity_key="planner-result:001:blocked_outward_externalization",
+                    origin_ref="planner-result:001",
+                    carry_reason="blocked_outward_externalization",
+                    carry_count=1,
+                    decayed_pressure=0.8,
+                    expires_after_ticks=3,
+                ),
+            ),
+        )
+    )
+
+    assert result.drive_state.dominant_disposition == "defer"
+    assert result.drive_state.activity_mode == "deferred_continuity"
+    assert result.drive_state.deferred_active is True
+    assert result.drive_state.pressure_components["prior_deferred_count"] == 1.0
+    assert result.drive_state.pressure_components["generated_record_count"] == 0.0
+    assert len(result.deferred_records) == 1
+    assert result.deferred_records[0].carry_reason == "carried_forward:blocked_outward_externalization"
+    assert result.deferred_records[0].carry_count == 2
+    assert result.deferred_records[0].decayed_pressure == pytest.approx(0.656, rel=1e-6)
+    assert result.deferred_records[0].expires_after_ticks == 2
+
+
+def test_engine_merges_matching_prior_records_and_reports_merge_count() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    result = engine.evaluate(
+        _build_request(
+            outward_ready=False,
+            externalization_blocked=False,
+            continuation_pressure=0.1,
+            retrieval_pull=0.1,
+            temporal_pressure=0.1,
+            identity_unresolved_pressure=0.1,
+            prior_deferred_records=(
+                DeferredContinuityRecord(
+                    record_id="deferred-continuity:prior:001",
+                    continuity_key="planner-result:001:blocked_outward_externalization",
+                    origin_ref="planner-result:001",
+                    carry_reason="blocked_outward_externalization",
+                    carry_count=1,
+                    decayed_pressure=0.5,
+                    expires_after_ticks=3,
+                ),
+                DeferredContinuityRecord(
+                    record_id="deferred-continuity:prior:002",
+                    continuity_key="planner-result:001:blocked_outward_externalization",
+                    origin_ref="planner-result:001",
+                    carry_reason="blocked_outward_externalization",
+                    carry_count=2,
+                    decayed_pressure=0.4,
+                    expires_after_ticks=2,
+                ),
+            ),
+        )
+    )
+
+    assert len(result.deferred_records) == 1
+    assert result.deferred_records[0].carry_reason == "merged:blocked_outward_externalization"
+    assert result.deferred_records[0].carry_count == 3
+    assert result.deferred_records[0].decayed_pressure == pytest.approx(0.738, rel=1e-6)
+    assert result.drive_state.pressure_components["merged_record_count"] == 1.0
+
+
+def test_engine_resolves_prior_deferred_records_when_outward_path_recovers() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    result = engine.evaluate(
+        _build_request(
+            outward_ready=True,
+            externalization_blocked=False,
+            prior_deferred_records=(
+                DeferredContinuityRecord(
+                    record_id="deferred-continuity:prior:003",
+                    continuity_key="planner-result:001:blocked_outward_externalization",
+                    origin_ref="planner-result:001",
+                    carry_reason="blocked_outward_externalization",
+                    carry_count=1,
+                    decayed_pressure=0.8,
+                    expires_after_ticks=3,
+                ),
+            ),
+        )
+    )
+
+    assert result.drive_state.dominant_disposition == "externalize"
+    assert result.drive_state.deferred_active is False
+    assert result.deferred_records == ()
+    assert result.drive_state.pressure_components["resolved_record_count"] == 1.0
+
+
+def test_engine_expires_weak_prior_deferred_records() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    result = engine.evaluate(
+        _build_request(
+            outward_ready=False,
+            externalization_blocked=False,
+            continuation_pressure=0.1,
+            retrieval_pull=0.1,
+            temporal_pressure=0.1,
+            identity_unresolved_pressure=0.1,
+            prior_deferred_records=(
+                DeferredContinuityRecord(
+                    record_id="deferred-continuity:prior:004",
+                    continuity_key="planner-result:002:blocked_outward_externalization",
+                    origin_ref="planner-result:002",
+                    carry_reason="blocked_outward_externalization",
+                    carry_count=1,
+                    decayed_pressure=0.1,
+                    expires_after_ticks=3,
+                ),
+            ),
+        )
+    )
+
+    assert result.deferred_records == ()
+    assert result.drive_state.pressure_components["expired_record_count"] == 1.0

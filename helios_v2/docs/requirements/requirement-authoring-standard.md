@@ -12,6 +12,8 @@ This standard applies to all requirement packages created or updated under `docs
 4. New or updated `task.md` files.
 5. Updates to the requirements index.
 
+This standard also governs maturity assessment for requirement tracking. When an index tracks implementation maturity, the maturity value must be evaluated and updated under the rules in this document.
+
 ## 3. Directory and Naming Rules
 
 ### 3.1 Folder naming
@@ -147,6 +149,60 @@ At minimum cover applicable dimensions:
 6. Task documents must identify the first narrow validation command or check for each phase when practical.
 7. If a feature has independently configurable sinks or outputs, tasks must model them independently instead of through one umbrella toggle.
 
+### 5.11 Requirement maturity assessment rules
+Requirement indexes that track implementation maturity must use explicit, evidence-based maturity labels rather than informal comments.
+
+Mandatory rules:
+
+1. Maturity is implementation-facing, not aspiration-facing. It must reflect shipped code and validation evidence, not planned architecture quality.
+2. Maturity must be reassessed whenever a change set materially alters owner behavior, runtime integration, validation coverage, or implementation depth.
+3. Maturity judgments must be made against the requirement's owner boundary. Missing downstream work in later requirements must not downgrade an already-implemented owner unless that later work is part of the same requirement's stated scope.
+4. Documentation-only authoring does not count as implementation progress.
+5. A requirement must not be marked above `pure_skeleton` unless there is executable code implementing owner behavior plus focused validation.
+6. A requirement must not be marked `relatively_complete` if the owner is still mostly pass-through wiring, placeholder policy, or shape-only validation.
+7. If evidence is mixed, the lower maturity must be used until focused validation demonstrates the higher level.
+
+Required maturity labels and standards:
+
+1. `not_started`
+    - Requirement/design/task docs may exist, but no meaningful owner implementation has landed.
+    - Allowed signals:
+       - docs only
+       - unimplemented package references
+       - no runtime or test surface for the owner
+    - Disallowed signals:
+       - claiming progress because filenames or empty package shells exist
+
+2. `pure_skeleton`
+    - The owner package, contracts, or runtime wiring shell exists, but behavior is still mainly structural.
+    - Typical evidence:
+       - interfaces and dataclasses exist
+       - owner methods mostly delegate without confirmed first-version policy
+       - runtime stage shell exists without meaningful owner behavior
+       - tests validate only construction, shapes, or placeholder wiring
+    - This label is appropriate when the code proves the architecture boundary but does not yet provide a narrow, usable owner behavior.
+
+3. `baseline_implementation`
+    - The owner executes a real first-version behavior inside its scoped boundary.
+    - Required evidence:
+       - concrete owner behavior, not only contracts
+       - fail-fast validation on core inputs or outputs
+       - focused tests covering the owner behavior
+       - if applicable, at least one adjacent integration path showing the owner can participate in runtime flow
+    - Typical limitations still allowed:
+       - injected or intentionally shallow first-version policy
+       - reduced semantics compared with the final requirement vision
+       - partial surrounding ecosystem still missing in later requirements
+
+4. `relatively_complete`
+    - The owner has a substantial first-version implementation and is no longer best described as a thin baseline.
+    - Required evidence:
+       - concrete owner behavior covering most of the requirement's stated scope
+       - runtime integration where the requirement expects it
+       - focused validation plus adjacent validation for the owner path
+       - no dominant reliance on placeholder semantics for the owner's main runtime outcome
+    - This label does not mean the requirement is final or perfect. It means the owner is materially implemented and the remaining gaps are iterative rather than foundational.
+
 ## 6. Quality Bar
 A requirement package is acceptable only if all checks pass.
 
@@ -157,6 +213,7 @@ A requirement package is acceptable only if all checks pass.
 5. Safe: includes fallback or degradation behavior when dependencies fail.
 6. Architecturally owned: every new runtime concept has a clear owner module and integration path.
 7. Migration-safe: default rollout behavior and compatibility behavior are both explicit.
+8. Maturity-aware: if the index tracks maturity, the assigned maturity label is justified by concrete implementation and validation evidence.
 
 ## 7. Language and Style Rules
 
@@ -173,6 +230,7 @@ When adding or materially changing a requirement package, the author must also u
 2. Priority changes if relevant.
 3. Dependency changes if relevant.
 4. Suggested implementation sequence changes if order changes.
+5. Maturity changes if implementation coverage changed.
 
 A requirement change set is incomplete if `index.md` is stale.
 
@@ -182,7 +240,9 @@ When updating a requirement package, the author must keep requirement, design, a
 2. `design.md` defines the target runtime shape and owning abstractions.
 3. `task.md` defines the implementation slices and validation path.
 
-If design or task changes alter ordering, ownership, or rollout strategy, `index.md` must be updated in the same change set.
+If design or task changes alter ordering, ownership, rollout strategy, or implementation maturity, `index.md` must be updated in the same change set.
+
+If implementation changes alter owner maturity, the index update must include both the new maturity label and enough change context for a reviewer to understand why that maturity changed.
 
 ## 9. Requirement Template
 Use this template when creating a new `requirement.md`.
@@ -231,3 +291,4 @@ Before finalizing, verify:
 7. The task document contains ordered, verifiable implementation slices.
 8. `index.md` has been updated.
 9. No unresolved placeholder text remains.
+10. Any maturity label present in the index is still justified by the current implementation and validation evidence.

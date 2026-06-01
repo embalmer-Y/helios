@@ -1,0 +1,332 @@
+"""Owner: planner executor feedback bridge."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from helios_v2.action_externalization import ThoughtExternalizationResult
+
+from .contracts import (
+    ActionDecision,
+    EvaluatePlannerBridgeOp,
+    ExecutionConsistencyFailure,
+    NormalizedExecutionFeedback,
+    PlannerBridgeAPI,
+    PlannerBridgeConfig,
+    PlannerBridgeError,
+    PlannerBridgeRequest,
+    PlannerBridgeResult,
+    PublishActionDecisionOp,
+    PublishExecutionFeedbackOp,
+    PublishPlannerBridgeRejectionOp,
+)
+
+
+def _validate_externalization_result(externalization_result: ThoughtExternalizationResult) -> None:
+    if not externalization_result.result_id:
+        raise PlannerBridgeError("ThoughtExternalizationResult must declare a non-empty result_id")
+    if externalization_result.status != "normalized" or externalization_result.normalized_proposal is None:
+        raise PlannerBridgeError("Planner bridge requires a normalized ThoughtExternalizationResult")
+
+
+def _validate_request(
+    externalization_result: ThoughtExternalizationResult,
+    request: PlannerBridgeRequest,
+) -> None:
+    if request.source_externalization_result_id != externalization_result.result_id:
+        raise PlannerBridgeError(
+            "PlannerBridgeRequest must preserve the source externalization-result id"
+        )
+    if request.normalized_proposal_present != (externalization_result.normalized_proposal is not None):
+        raise PlannerBridgeError(
+            "PlannerBridgeRequest must preserve whether the upstream normalized proposal is present"
+        )
+
+
+@runtime_checkable
+class PlannerBridgePath(Protocol):
+    def evaluate(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+        config: PlannerBridgeConfig,
+    ) -> tuple[PlannerBridgeResult, NormalizedExecutionFeedback | None]:
+        """Return one planner-bridge result and optional normalized execution feedback."""
+
+
+@dataclass
+class FirstVersionPlannerBridgePath(PlannerBridgePath):
+    """Owner-private deterministic first-version bridge path."""
+
+    def evaluate(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+        config: PlannerBridgeConfig,
+    ) -> tuple[PlannerBridgeResult, NormalizedExecutionFeedback | None]:
+        proposal = externalization_result.normalized_proposal
+        assert proposal is not None
+        behavior_name = proposal.behavior_name
+        behavior_registered = bool(request.behavior_snapshot.get("registered", False))
+        behavior_reviewed = bool(request.behavior_snapshot.get("reviewed", False))
+        behavior_min_score = float(request.behavior_snapshot.get("minimum_score", 0.0))
+        proposal_score = float(request.behavior_snapshot.get("proposal_score", 1.0))
+
+        if not behavior_registered:
+            return self._policy_rejected(request, "behavior_not_registered"), None
+        if not behavior_reviewed:
+            return self._policy_rejected(request, "behavior_unreviewed"), None
+        if proposal_score < behavior_min_score:
+            return self._policy_rejected(request, "score_below_threshold"), None
+        if not proposal.preferred_op:
+            return self._policy_rejected(request, "missing_requested_op"), None
+
+        selected_channel_id = self._select_channel(request, proposal.preferred_op)
+        if selected_channel_id is None:
+            return self._policy_rejected(request, "no_channel_available"), None
+
+        channel_descriptor = request.channel_descriptor_snapshot.get(selected_channel_id)
+        if not isinstance(channel_descriptor, dict):
+            return self._policy_rejected(request, "requested_op_unavailable"), None
+        output_ops = channel_descriptor.get("output_ops", ())
+        if proposal.preferred_op not in output_ops:
+            return self._consistency_failed(
+                request,
+                proposal_id=proposal.proposal_id,
+                behavior_name=behavior_name,
+                selected_channel_id=selected_channel_id,
+                selected_op=proposal.preferred_op,
+                rejection_reason="missing_output_op",
+                normalized_intensity=self._normalize_intensity(proposal.outbound_intensity, config),
+            )
+
+        if proposal.preferred_op in {"reply_message", "send_message", "speak_text"} and "outbound_text" not in proposal.params:
+            return self._consistency_failed(
+                request,
+                proposal_id=proposal.proposal_id,
+                behavior_name=behavior_name,
+                selected_channel_id=selected_channel_id,
+                selected_op=proposal.preferred_op,
+                rejection_reason="missing_op_inputs",
+                normalized_intensity=self._normalize_intensity(proposal.outbound_intensity, config),
+            )
+
+        channel_status = request.channel_status_snapshot.get(selected_channel_id)
+        if not isinstance(channel_status, dict) or not channel_status.get("bound", False):
+            return self._consistency_failed(
+                request,
+                proposal_id=proposal.proposal_id,
+                behavior_name=behavior_name,
+                selected_channel_id=selected_channel_id,
+                selected_op=proposal.preferred_op,
+                rejection_reason="missing_channel_binding",
+                normalized_intensity=self._normalize_intensity(proposal.outbound_intensity, config),
+            )
+
+        normalized_intensity = self._normalize_intensity(proposal.outbound_intensity, config)
+        decision = ActionDecision(
+            decision_id=f"action-decision:{request.request_id}",
+            proposal_id=proposal.proposal_id,
+            selected_channel_id=selected_channel_id,
+            selected_op=proposal.preferred_op,
+            normalized_intensity=normalized_intensity,
+            validated_params=proposal.params,
+            execution_priority=int(request.behavior_snapshot.get("execution_priority", 1)),
+            policy_trace={
+                "behavior_name": behavior_name,
+                "proposal_score": proposal_score,
+                "minimum_score": behavior_min_score,
+            },
+        )
+
+        execute_now = bool(channel_status.get("execute_now", True))
+        if not execute_now:
+            result = PlannerBridgeResult(
+                result_id=f"planner-bridge-result:{request.request_id}",
+                source_request_id=request.request_id,
+                status="accepted",
+                action_decision=decision,
+                rejection_reason=None,
+                execution_consistency_failure=None,
+                tick_id=request.tick_id,
+            )
+            return result, None
+
+        execution_success = bool(channel_status.get("execution_success", True))
+        feedback = NormalizedExecutionFeedback(
+            proposal_id=proposal.proposal_id,
+            decision_id=decision.decision_id,
+            behavior_name=behavior_name,
+            success=execution_success,
+            channel_id=selected_channel_id,
+            op_name=proposal.preferred_op,
+            normalized_intensity=normalized_intensity,
+            result_details={
+                "transport_status": "ok" if execution_success else "failed",
+            },
+            state_effects={
+                "visible_action_attempted": True,
+            },
+        )
+        result = PlannerBridgeResult(
+            result_id=f"planner-bridge-result:{request.request_id}",
+            source_request_id=request.request_id,
+            status="executed" if execution_success else "execution_failed",
+            action_decision=decision,
+            rejection_reason=None,
+            execution_consistency_failure=None,
+            tick_id=request.tick_id,
+        )
+        return result, feedback
+
+    def _policy_rejected(
+        self,
+        request: PlannerBridgeRequest,
+        reason: str,
+    ) -> PlannerBridgeResult:
+        return PlannerBridgeResult(
+            result_id=f"planner-bridge-result:{request.request_id}",
+            source_request_id=request.request_id,
+            status="policy_rejected",
+            action_decision=None,
+            rejection_reason=reason,
+            execution_consistency_failure=None,
+            tick_id=request.tick_id,
+        )
+
+    def _consistency_failed(
+        self,
+        request: PlannerBridgeRequest,
+        proposal_id: str,
+        behavior_name: str,
+        selected_channel_id: str,
+        selected_op: str,
+        rejection_reason: str,
+        normalized_intensity: float,
+    ) -> tuple[PlannerBridgeResult, None]:
+        decision = ActionDecision(
+            decision_id=f"action-decision:{request.request_id}",
+            proposal_id=proposal_id,
+            selected_channel_id=selected_channel_id,
+            selected_op=selected_op,
+            normalized_intensity=normalized_intensity,
+            validated_params={},
+            execution_priority=int(request.behavior_snapshot.get("execution_priority", 1)),
+            policy_trace={"consistency_check": rejection_reason},
+        )
+        failure = ExecutionConsistencyFailure(
+            decision_id=decision.decision_id,
+            proposal_id=proposal_id,
+            behavior_name=behavior_name,
+            rejection_reason=rejection_reason,
+            selected_channel_id=selected_channel_id,
+            selected_op=selected_op,
+            policy_trace=decision.policy_trace,
+        )
+        result = PlannerBridgeResult(
+            result_id=f"planner-bridge-result:{request.request_id}",
+            source_request_id=request.request_id,
+            status="execution_consistency_failed",
+            action_decision=decision,
+            rejection_reason=rejection_reason,
+            execution_consistency_failure=failure,
+            tick_id=request.tick_id,
+        )
+        return result, None
+
+    def _select_channel(self, request: PlannerBridgeRequest, requested_op: str) -> str | None:
+        descriptors = request.channel_descriptor_snapshot
+        statuses = request.channel_status_snapshot
+        for channel_id, descriptor in descriptors.items():
+            if not isinstance(descriptor, dict):
+                continue
+            supported_ops = descriptor.get("supported_ops", ())
+            if requested_op not in supported_ops:
+                continue
+            status = statuses.get(channel_id)
+            if not isinstance(status, dict) or not status.get("available", False):
+                continue
+            return channel_id
+        return None
+
+    def _normalize_intensity(self, intensity: float, config: PlannerBridgeConfig) -> float:
+        return max(config.legal_min_intensity, min(config.legal_max_intensity, intensity))
+
+
+@dataclass
+class PlannerBridgeEngine(PlannerBridgeAPI):
+    """Evaluate normalized externalization proposals into formal bridge outcomes."""
+
+    config: PlannerBridgeConfig
+    bridge_path: PlannerBridgePath | None
+
+    def evaluate_proposal(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+    ) -> tuple[PlannerBridgeResult, NormalizedExecutionFeedback | None]:
+        _validate_externalization_result(externalization_result)
+        _validate_request(externalization_result, request)
+        if self.bridge_path is None:
+            raise PlannerBridgeError("Planner bridge requires an explicit bridge capability")
+        result, feedback = self.bridge_path.evaluate(externalization_result, request, self.config)
+        if result.source_request_id != request.request_id:
+            raise PlannerBridgeError("PlannerBridgeResult must preserve the source request id")
+        return result, feedback
+
+    def build_evaluate_op(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+    ) -> EvaluatePlannerBridgeOp:
+        _validate_externalization_result(externalization_result)
+        _validate_request(externalization_result, request)
+        return EvaluatePlannerBridgeOp(
+            op_name="evaluate_planner_bridge",
+            owner="planner_executor_feedback_bridge",
+            request_id=request.request_id,
+            externalization_result_id=externalization_result.result_id,
+            normalized_proposal_present=request.normalized_proposal_present,
+        )
+
+    def build_publish_decision_op(
+        self,
+        decision: ActionDecision,
+    ) -> PublishActionDecisionOp:
+        return PublishActionDecisionOp(
+            op_name="publish_action_decision",
+            owner="planner_executor_feedback_bridge",
+            decision_id=decision.decision_id,
+            proposal_id=decision.proposal_id,
+            selected_channel_id=decision.selected_channel_id,
+            selected_op=decision.selected_op,
+        )
+
+    def build_publish_rejection_op(
+        self,
+        result: PlannerBridgeResult,
+    ) -> PublishPlannerBridgeRejectionOp:
+        if result.status not in {"policy_rejected", "execution_consistency_failed"} or result.rejection_reason is None:
+            raise PlannerBridgeError(
+                "PublishPlannerBridgeRejectionOp requires a rejected or consistency-failed PlannerBridgeResult"
+            )
+        return PublishPlannerBridgeRejectionOp(
+            op_name="publish_planner_bridge_rejection",
+            owner="planner_executor_feedback_bridge",
+            result_id=result.result_id,
+            status=result.status,
+            rejection_reason=result.rejection_reason,
+        )
+
+    def build_publish_execution_feedback_op(
+        self,
+        feedback: NormalizedExecutionFeedback,
+    ) -> PublishExecutionFeedbackOp:
+        return PublishExecutionFeedbackOp(
+            op_name="publish_execution_feedback",
+            owner="planner_executor_feedback_bridge",
+            decision_id=feedback.decision_id,
+            proposal_id=feedback.proposal_id,
+            success=feedback.success,
+        )
