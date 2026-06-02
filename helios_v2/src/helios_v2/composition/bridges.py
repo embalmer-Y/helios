@@ -1053,6 +1053,7 @@ class FirstVersionEvaluationRequestBridge:
                     "dominant_disposition": autonomy_result.result.drive_state.dominant_disposition,
                     "deferred_active": autonomy_result.result.drive_state.deferred_active,
                     "proactive_action_requested": autonomy_result.result.drive_state.proactive_action_requested,
+                    **autonomy_result.result.long_horizon_state.to_evidence(),
                 },
             ),
             prompt_evidence=tuple(

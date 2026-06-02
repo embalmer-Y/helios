@@ -79,3 +79,118 @@ def test_deferred_continuity_record_requires_positive_decay_and_carry() -> None:
             decayed_pressure=0.0,
             expires_after_ticks=2,
         )
+
+
+def test_continuity_thread_validates_strength_and_state() -> None:
+    from helios_v2.autonomy import ContinuityThread
+
+    thread = ContinuityThread(
+        thread_id="continuity-thread:001",
+        continuity_key="origin:reason",
+        origin_ref="origin",
+        age_ticks=2,
+        reinforcement_count=1,
+        thread_strength=0.6,
+        thread_state="reinforced",
+        last_carry_reason="blocked_outward_externalization",
+    )
+    assert thread.age_ticks == 2
+
+    with pytest.raises(AutonomyError, match="thread_strength must be within"):
+        ContinuityThread(
+            thread_id="continuity-thread:002",
+            continuity_key="k",
+            origin_ref="o",
+            age_ticks=1,
+            reinforcement_count=0,
+            thread_strength=1.5,
+            thread_state="forming",
+            last_carry_reason="r",
+        )
+
+    with pytest.raises(AutonomyError, match="thread_state must use the fixed taxonomy"):
+        ContinuityThread(
+            thread_id="continuity-thread:003",
+            continuity_key="k",
+            origin_ref="o",
+            age_ticks=1,
+            reinforcement_count=0,
+            thread_strength=0.5,
+            thread_state="unknown",
+            last_carry_reason="r",
+        )
+
+
+def test_long_horizon_state_enforces_dominant_and_suppressed_invariants() -> None:
+    from helios_v2.autonomy import ContinuityThread, LongHorizonContinuityState
+
+    thread_a = ContinuityThread(
+        thread_id="thread:a",
+        continuity_key="ka",
+        origin_ref="oa",
+        age_ticks=3,
+        reinforcement_count=2,
+        thread_strength=0.9,
+        thread_state="reinforced",
+        last_carry_reason="ra",
+    )
+    thread_b = ContinuityThread(
+        thread_id="thread:b",
+        continuity_key="kb",
+        origin_ref="ob",
+        age_ticks=1,
+        reinforcement_count=0,
+        thread_strength=0.4,
+        thread_state="suppressed",
+        last_carry_reason="rb",
+    )
+    state = LongHorizonContinuityState(
+        state_id="long-horizon:001",
+        active_thread_count=2,
+        dominant_thread_id="thread:a",
+        suppressed_thread_ids=("thread:b",),
+        max_thread_age=3,
+        aggregate_reinforcement=2,
+        threads=(thread_a, thread_b),
+    )
+    evidence = state.to_evidence()
+    assert evidence["dominant_thread_id"] == "thread:a"
+    assert evidence["dominant_reinforcement_count"] == 2
+    assert evidence["active_thread_count"] == 2
+
+    with pytest.raises(AutonomyError, match="must declare a dominant thread when threads exist"):
+        LongHorizonContinuityState(
+            state_id="long-horizon:002",
+            active_thread_count=1,
+            dominant_thread_id=None,
+            suppressed_thread_ids=(),
+            max_thread_age=1,
+            aggregate_reinforcement=0,
+            threads=(thread_a,),
+        )
+
+    with pytest.raises(AutonomyError, match="suppressed_thread_ids must exclude the dominant thread"):
+        LongHorizonContinuityState(
+            state_id="long-horizon:003",
+            active_thread_count=2,
+            dominant_thread_id="thread:a",
+            suppressed_thread_ids=("thread:a",),
+            max_thread_age=3,
+            aggregate_reinforcement=2,
+            threads=(thread_a, thread_b),
+        )
+
+
+def test_empty_long_horizon_state_rejects_dominant_thread() -> None:
+    from helios_v2.autonomy import LongHorizonContinuityState
+
+    with pytest.raises(AutonomyError, match="must not declare a dominant thread when no threads exist"):
+        LongHorizonContinuityState(
+            state_id="long-horizon:empty",
+            active_thread_count=0,
+            dominant_thread_id="ghost",
+            suppressed_thread_ids=(),
+            max_thread_age=0,
+            aggregate_reinforcement=0,
+            threads=(),
+        )

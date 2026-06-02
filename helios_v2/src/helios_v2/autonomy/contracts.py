@@ -50,6 +50,9 @@ _LEARNED_PARAMETER_CATEGORIES = {
     "proactive_externalization_policy",
 }
 
+ContinuityThreadState = Literal["forming", "reinforced", "suppressed", "retiring"]
+_THREAD_STATES = {"forming", "reinforced", "suppressed", "retiring"}
+
 
 def _freeze_mapping(mapping: Mapping[str, object]) -> Mapping[str, object]:
     frozen = MappingProxyType(dict(mapping))
@@ -94,6 +97,7 @@ class ProactiveDriveRequest:
     identity_unresolved_summary: Mapping[str, object]
     outward_readiness_summary: Mapping[str, object]
     prior_deferred_records: tuple[DeferredContinuityRecord, ...] = ()
+    prior_continuity_threads: tuple["ContinuityThread", ...] = ()
 
     def __post_init__(self) -> None:
         for attr_name in (
@@ -116,6 +120,11 @@ class ProactiveDriveRequest:
             if not isinstance(record, DeferredContinuityRecord):
                 raise AutonomyError(
                     "ProactiveDriveRequest prior_deferred_records must contain deferred continuity records only"
+                )
+        for thread in self.prior_continuity_threads:
+            if not isinstance(thread, ContinuityThread):
+                raise AutonomyError(
+                    "ProactiveDriveRequest prior_continuity_threads must contain continuity threads only"
                 )
         for attr_name in (
             "continuation_summary",
@@ -195,6 +204,138 @@ class DeferredContinuityRecord:
 
 
 @dataclass(frozen=True)
+class ContinuityThread:
+    """Immutable long-horizon continuity thread aggregating one recurring tendency.
+
+    Owner: subjective autonomy and proactive evolution.
+
+    A thread aggregates the carry history of one continuity key across ticks. It layers a
+    thread-level recurrence signal (age, reinforcement, strength, arbitration state) on top
+    of the per-record decay semantics; it does not replace deferred-continuity records.
+
+    Failure semantics:
+        Construction raises `AutonomyError` on empty ids/keys, non-positive age, negative
+        reinforcement, out-of-range strength, or an unknown thread state.
+    """
+
+    thread_id: str
+    continuity_key: str
+    origin_ref: str
+    age_ticks: int
+    reinforcement_count: int
+    thread_strength: float
+    thread_state: ContinuityThreadState
+    last_carry_reason: str
+
+    def __post_init__(self) -> None:
+        if not self.thread_id:
+            raise AutonomyError("ContinuityThread must declare a non-empty thread_id")
+        if not self.continuity_key:
+            raise AutonomyError("ContinuityThread must declare a non-empty continuity_key")
+        if not self.origin_ref:
+            raise AutonomyError("ContinuityThread must declare a non-empty origin_ref")
+        if not isinstance(self.age_ticks, int) or self.age_ticks < 1:
+            raise AutonomyError("ContinuityThread age_ticks must be a positive integer")
+        if not isinstance(self.reinforcement_count, int) or self.reinforcement_count < 0:
+            raise AutonomyError("ContinuityThread reinforcement_count must be a non-negative integer")
+        if not isinstance(self.thread_strength, (int, float)):
+            raise AutonomyError("ContinuityThread thread_strength must be numeric")
+        if not 0.0 <= float(self.thread_strength) <= 1.0:
+            raise AutonomyError("ContinuityThread thread_strength must be within [0, 1]")
+        if self.thread_state not in _THREAD_STATES:
+            raise AutonomyError("ContinuityThread thread_state must use the fixed taxonomy")
+        if not self.last_carry_reason:
+            raise AutonomyError("ContinuityThread must declare a non-empty last_carry_reason")
+
+
+@dataclass(frozen=True)
+class LongHorizonContinuityState:
+    """Immutable owner-owned summary of the active long-horizon continuity threads.
+
+    Owner: subjective autonomy and proactive evolution.
+
+    Failure semantics:
+        Construction raises `AutonomyError` on negative counts, a thread-count that
+        disagrees with the number of threads, a dominant id that is absent when threads
+        exist (or present when none do), or a suppressed-id set that is not a strict subset
+        of thread ids excluding the dominant id.
+    """
+
+    state_id: str
+    active_thread_count: int
+    dominant_thread_id: str | None
+    suppressed_thread_ids: tuple[str, ...]
+    max_thread_age: int
+    aggregate_reinforcement: int
+    threads: tuple[ContinuityThread, ...]
+
+    def __post_init__(self) -> None:
+        if not self.state_id:
+            raise AutonomyError("LongHorizonContinuityState must declare a non-empty state_id")
+        if self.active_thread_count != len(self.threads):
+            raise AutonomyError(
+                "LongHorizonContinuityState active_thread_count must equal the number of threads"
+            )
+        if self.max_thread_age < 0 or self.aggregate_reinforcement < 0:
+            raise AutonomyError(
+                "LongHorizonContinuityState counts must be non-negative"
+            )
+        thread_ids = {thread.thread_id for thread in self.threads}
+        if self.threads:
+            if self.dominant_thread_id is None:
+                raise AutonomyError(
+                    "LongHorizonContinuityState must declare a dominant thread when threads exist"
+                )
+            if self.dominant_thread_id not in thread_ids:
+                raise AutonomyError(
+                    "LongHorizonContinuityState dominant_thread_id must reference a known thread"
+                )
+        elif self.dominant_thread_id is not None:
+            raise AutonomyError(
+                "LongHorizonContinuityState must not declare a dominant thread when no threads exist"
+            )
+        for suppressed_id in self.suppressed_thread_ids:
+            if suppressed_id not in thread_ids:
+                raise AutonomyError(
+                    "LongHorizonContinuityState suppressed_thread_ids must reference known threads"
+                )
+            if suppressed_id == self.dominant_thread_id:
+                raise AutonomyError(
+                    "LongHorizonContinuityState suppressed_thread_ids must exclude the dominant thread"
+                )
+
+    def to_evidence(self) -> dict[str, object]:
+        """Owner: autonomy.
+
+        Purpose:
+            Return a compact projection of the long-horizon continuity state for the
+            read-only evaluation owner.
+
+        Returns:
+            A plain dict with the dominant thread summary plus aggregate thread facts. The
+            dict carries only owner-published continuity facts, never a decision the
+            evaluation owner should re-own.
+        """
+
+        dominant = None
+        if self.dominant_thread_id is not None:
+            dominant = next(
+                (thread for thread in self.threads if thread.thread_id == self.dominant_thread_id),
+                None,
+            )
+        return {
+            "active_thread_count": self.active_thread_count,
+            "dominant_thread_id": self.dominant_thread_id,
+            "dominant_thread_strength": float(dominant.thread_strength) if dominant else 0.0,
+            "dominant_thread_age": dominant.age_ticks if dominant else 0,
+            "dominant_reinforcement_count": dominant.reinforcement_count if dominant else 0,
+            "suppressed_thread_count": len(self.suppressed_thread_ids),
+            "max_thread_age": self.max_thread_age,
+            "aggregate_reinforcement": self.aggregate_reinforcement,
+        }
+
+
+@dataclass(frozen=True)
 class AutonomyResult:
     """Immutable autonomy result published from one proactive-drive request."""
 
@@ -202,6 +343,7 @@ class AutonomyResult:
     source_request_id: str
     drive_state: ProactiveDriveState
     deferred_records: tuple[DeferredContinuityRecord, ...]
+    long_horizon_state: LongHorizonContinuityState
 
     def __post_init__(self) -> None:
         if not self.result_id:

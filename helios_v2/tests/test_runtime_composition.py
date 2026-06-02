@@ -199,3 +199,22 @@ def test_write_only_sink_runtime_cannot_carry_timeline() -> None:
         "evaluation_fidelity_and_diagnostic_provenance"
     ].artifact.long_range_diagnostics
     assert second_diag["execution_timeline_status"] == "absent_uninstrumented"
+
+
+def test_long_horizon_continuity_state_flows_into_evaluation_evidence() -> None:
+    handle = assemble_runtime()
+    handle.startup()
+
+    result = handle.tick()
+
+    autonomy_result = result.stage_results["subjective_autonomy_and_proactive_evolution"].result
+    # The default runtime externalizes, so no threads form, but the long-horizon state must
+    # still be a formal owner-owned contract published on the result.
+    assert autonomy_result.long_horizon_state.active_thread_count == 0
+    assert autonomy_result.long_horizon_state.dominant_thread_id is None
+
+    # Evaluation must consume the autonomy evidence and report explicit long-horizon status.
+    diagnostics = result.stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.long_range_diagnostics
+    assert diagnostics["long_horizon_continuity"] in {"no_active_thread", "absent"}

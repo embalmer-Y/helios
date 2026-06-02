@@ -302,6 +302,32 @@ class FirstVersionEvaluationPath:
                 )
             )
 
+        # Long-horizon continuity: read the autonomy owner's published thread summary if
+        # present. Absence is reported explicitly rather than inferred.
+        autonomy_entry = bundle.autonomy_evidence[0] if bundle.autonomy_evidence else None
+        if autonomy_entry is not None and "active_thread_count" in autonomy_entry:
+            active_thread_count = autonomy_entry.get("active_thread_count")
+            dominant_thread_id = autonomy_entry.get("dominant_thread_id")
+            dominant_reinforcement = autonomy_entry.get("dominant_reinforcement_count")
+            if isinstance(active_thread_count, int) and active_thread_count > 0:
+                if isinstance(dominant_reinforcement, int) and dominant_reinforcement > 0:
+                    long_horizon_continuity = "reinforced_dominant_thread"
+                else:
+                    long_horizon_continuity = "forming_dominant_thread"
+            else:
+                long_horizon_continuity = "no_active_thread"
+            long_horizon_continuity_detail = {
+                "active_thread_count": active_thread_count,
+                "dominant_thread_id": dominant_thread_id,
+                "dominant_thread_age": autonomy_entry.get("dominant_thread_age"),
+                "dominant_reinforcement_count": dominant_reinforcement,
+                "max_thread_age": autonomy_entry.get("max_thread_age"),
+                "aggregate_reinforcement": autonomy_entry.get("aggregate_reinforcement"),
+            }
+        else:
+            long_horizon_continuity = "absent"
+            long_horizon_continuity_detail = {}
+
         dimension_scores: dict[str, float] = {
             "thought_fidelity": 1.0 if bundle.thought_evidence else 0.0,
             "action_fidelity": 1.0 if action_status == "normalized" else 0.0,
@@ -350,6 +376,8 @@ class FirstVersionEvaluationPath:
             "execution_timeline_status": execution_timeline_status,
             "execution_timeline_tick_id": timeline_tick_id,
             "shim_derived_dimensions": _SHIM_DERIVED_DIMENSIONS,
+            "long_horizon_continuity": long_horizon_continuity,
+            "long_horizon_continuity_detail": long_horizon_continuity_detail,
         }
 
         return EvaluationArtifact(

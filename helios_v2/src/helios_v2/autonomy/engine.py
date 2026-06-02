@@ -10,8 +10,10 @@ from .contracts import (
     AutonomyConfig,
     AutonomyError,
     AutonomyResult,
+    ContinuityThread,
     DeferredContinuityRecord,
     EvaluateProactiveDriveOp,
+    LongHorizonContinuityState,
     ProactiveDriveRequest,
     ProactiveDriveState,
     PublishAutonomyResultOp,
@@ -63,6 +65,7 @@ class FirstVersionAutonomyPath:
 
     decay_factor: float = 0.82
     minimum_decayed_pressure: float = 0.15
+    reinforcement_gain: float = 0.25
 
     @staticmethod
     def _base_reason(carry_reason: str) -> str:
@@ -179,6 +182,110 @@ class FirstVersionAutonomyPath:
             active_records=merged_snapshot.active_records,
             merged_record_count=merged_snapshot.merged_record_count,
             expired_record_count=expired_record_count,
+        )
+
+    def _build_long_horizon_state(
+        self,
+        *,
+        request: ProactiveDriveRequest,
+        active_records: tuple[DeferredContinuityRecord, ...],
+    ) -> LongHorizonContinuityState:
+        """Form, reinforce, and arbitrate long-horizon continuity threads.
+
+        Threads are computed from the prior carried threads plus the active deferred records
+        for the current tick. A key present in both prior threads and current records is
+        reinforced; a key present only in current records forms a fresh thread; a prior
+        thread whose key has no active record this tick is retired (it is not carried).
+        Per-record decay is unchanged: reinforcement is a thread-level signal layered on top.
+        """
+
+        prior_by_key: dict[str, ContinuityThread] = {
+            thread.continuity_key: thread for thread in request.prior_continuity_threads
+        }
+        records_by_key: dict[str, DeferredContinuityRecord] = {}
+        for record in active_records:
+            # The first active record per key anchors the thread's origin and reason.
+            records_by_key.setdefault(record.continuity_key, record)
+
+        threads: list[ContinuityThread] = []
+        for index, (continuity_key, record) in enumerate(records_by_key.items(), start=1):
+            prior = prior_by_key.get(continuity_key)
+            if prior is None:
+                thread_strength = min(1.0, max(0.0, float(record.decayed_pressure)))
+                threads.append(
+                    ContinuityThread(
+                        thread_id=f"continuity-thread:{request.request_id}:{index}",
+                        continuity_key=continuity_key,
+                        origin_ref=record.origin_ref,
+                        age_ticks=1,
+                        reinforcement_count=0,
+                        thread_strength=round(thread_strength, 4),
+                        thread_state="forming",
+                        last_carry_reason=record.carry_reason,
+                    )
+                )
+            else:
+                reinforced_strength = min(
+                    1.0,
+                    float(prior.thread_strength) + self.reinforcement_gain * float(record.decayed_pressure),
+                )
+                threads.append(
+                    ContinuityThread(
+                        thread_id=f"continuity-thread:{request.request_id}:{index}",
+                        continuity_key=continuity_key,
+                        origin_ref=prior.origin_ref,
+                        age_ticks=prior.age_ticks + 1,
+                        reinforcement_count=prior.reinforcement_count + 1,
+                        thread_strength=round(reinforced_strength, 4),
+                        thread_state="reinforced",
+                        last_carry_reason=record.carry_reason,
+                    )
+                )
+
+        if not threads:
+            return LongHorizonContinuityState(
+                state_id=f"long-horizon-continuity:{request.request_id}",
+                active_thread_count=0,
+                dominant_thread_id=None,
+                suppressed_thread_ids=(),
+                max_thread_age=0,
+                aggregate_reinforcement=0,
+                threads=(),
+            )
+
+        # Deterministic arbitration: highest (strength, age, continuity_key) dominates.
+        dominant = max(
+            threads,
+            key=lambda thread: (thread.thread_strength, thread.age_ticks, thread.continuity_key),
+        )
+        arbitrated: list[ContinuityThread] = []
+        suppressed_ids: list[str] = []
+        for thread in threads:
+            if thread.thread_id == dominant.thread_id:
+                arbitrated.append(thread)
+                continue
+            suppressed_ids.append(thread.thread_id)
+            arbitrated.append(
+                ContinuityThread(
+                    thread_id=thread.thread_id,
+                    continuity_key=thread.continuity_key,
+                    origin_ref=thread.origin_ref,
+                    age_ticks=thread.age_ticks,
+                    reinforcement_count=thread.reinforcement_count,
+                    thread_strength=thread.thread_strength,
+                    thread_state="suppressed",
+                    last_carry_reason=thread.last_carry_reason,
+                )
+            )
+
+        return LongHorizonContinuityState(
+            state_id=f"long-horizon-continuity:{request.request_id}",
+            active_thread_count=len(arbitrated),
+            dominant_thread_id=dominant.thread_id,
+            suppressed_thread_ids=tuple(suppressed_ids),
+            max_thread_age=max(thread.age_ticks for thread in arbitrated),
+            aggregate_reinforcement=sum(thread.reinforcement_count for thread in arbitrated),
+            threads=tuple(arbitrated),
         )
 
     def assemble_result(
@@ -306,11 +413,16 @@ class FirstVersionAutonomyPath:
             deferred_active=bool(deferred_records),
             proactive_action_requested=proactive_action_requested,
         )
+        long_horizon_state = self._build_long_horizon_state(
+            request=request,
+            active_records=tuple(deferred_records),
+        )
         return AutonomyResult(
             result_id=f"autonomy-result:{request.request_id}",
             source_request_id=request.request_id,
             drive_state=drive_state,
             deferred_records=tuple(deferred_records),
+            long_horizon_state=long_horizon_state,
         )
 
 

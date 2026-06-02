@@ -32,9 +32,11 @@ def _build_request(
     temporal_pressure: float = 0.5,
     identity_unresolved_pressure: float = 0.4,
     prior_deferred_records: tuple[DeferredContinuityRecord, ...] = (),
+    prior_continuity_threads: tuple = (),
+    request_id: str = "autonomy-request:001",
 ) -> ProactiveDriveRequest:
     return ProactiveDriveRequest(
-        request_id="autonomy-request:001",
+        request_id=request_id,
         source_gate_result_id="gate-result:001",
         source_retrieval_bundle_id="bundle:001",
         source_thought_cycle_result_id="thought-result:001",
@@ -52,6 +54,7 @@ def _build_request(
             "externalization_blocked": externalization_blocked,
         },
         prior_deferred_records=prior_deferred_records,
+        prior_continuity_threads=prior_continuity_threads,
     )
 
 
@@ -223,3 +226,54 @@ def test_engine_expires_weak_prior_deferred_records() -> None:
 
     assert result.deferred_records == ()
     assert result.drive_state.pressure_components["expired_record_count"] == 1.0
+
+
+def test_blocked_tendency_forms_a_continuity_thread() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    result = engine.evaluate(_build_request(outward_ready=True, externalization_blocked=True))
+
+    state = result.long_horizon_state
+    assert state.active_thread_count == 1
+    thread = state.threads[0]
+    assert thread.thread_state == "forming"
+    assert thread.age_ticks == 1
+    assert thread.reinforcement_count == 0
+    assert state.dominant_thread_id == thread.thread_id
+
+
+def test_recurring_tendency_reinforces_its_thread_across_ticks() -> None:
+    path = FirstVersionAutonomyPath()
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=path)
+
+    first = engine.evaluate(
+        _build_request(outward_ready=True, externalization_blocked=True, request_id="autonomy-request:t1")
+    )
+    second = engine.evaluate(
+        _build_request(
+            outward_ready=True,
+            externalization_blocked=True,
+            request_id="autonomy-request:t2",
+            prior_deferred_records=first.deferred_records,
+            prior_continuity_threads=first.long_horizon_state.threads,
+        )
+    )
+
+    first_thread = first.long_horizon_state.threads[0]
+    second_thread = second.long_horizon_state.threads[0]
+    assert first_thread.reinforcement_count == 0
+    assert second_thread.reinforcement_count == 1
+    assert second_thread.age_ticks == first_thread.age_ticks + 1
+    assert second_thread.thread_state == "reinforced"
+    assert second_thread.thread_strength >= first_thread.thread_strength
+
+
+def test_no_deferred_continuity_yields_empty_long_horizon_state() -> None:
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
+
+    # An outward-ready, unblocked, high-pressure request externalizes and defers nothing.
+    result = engine.evaluate(_build_request(outward_ready=True, externalization_blocked=False))
+
+    assert result.drive_state.dominant_disposition == "externalize"
+    assert result.long_horizon_state.active_thread_count == 0
+    assert result.long_horizon_state.dominant_thread_id is None

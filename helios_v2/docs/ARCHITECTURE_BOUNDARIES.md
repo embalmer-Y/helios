@@ -77,13 +77,14 @@ Boundary rules:
 
 | Owner | Primary modules | Owns | Explicitly does not own |
 | --- | --- | --- | --- |
-| Autonomy owner | `helios_v2.autonomy` | proactive-drive integration, bounded disposition selection, deferred continuity publication, outward-vs-inward proactive distinction | prompt assembly; planner authority; channel execution; governance judgment |
+| Autonomy owner | `helios_v2.autonomy` | proactive-drive integration, bounded disposition selection, deferred continuity publication, outward-vs-inward proactive distinction, and long-horizon continuity threads (recurrence reinforcement, conflict arbitration, the owner-owned `LongHorizonContinuityState`) | prompt assembly; planner authority; channel execution; governance judgment |
 
 Boundary rules:
 
 1. `autonomy` is the sole owner of proactive-drive integration and deferred continuity in v2.
 2. `autonomy` may request or justify proactive externalization semantically, but it must not directly execute a channel path.
 3. Blocked proactive tendencies must become explicit deferred continuity records rather than disappearing silently.
+4. Long-horizon continuity threads are owned solely by `autonomy`. They are computed from the owner's own deferred-continuity records plus owner-private prior-thread carry; reinforcement and conflict arbitration are deterministic and bounded; threads are retired only explicitly (expired or resolved) and suppressed threads remain preserved as continuity. No other owner may compute thread reinforcement or arbitration, and threads never grant direct channel or planner authority.
 
 ### 4.4 Requirement `21` observability owner
 

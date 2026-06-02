@@ -25,6 +25,7 @@ from helios_v2.action_externalization import (
 from helios_v2.autonomy import (
     AutonomyAPI,
     AutonomyResult,
+    ContinuityThread,
     DeferredContinuityRecord,
     EvaluateProactiveDriveOp,
     ProactiveDriveRequest,
@@ -1503,6 +1504,11 @@ class AutonomyRuntimeStage(RuntimeStage):
         init=False,
         repr=False,
     )
+    _prior_continuity_threads: tuple[ContinuityThread, ...] = field(
+        default_factory=tuple,
+        init=False,
+        repr=False,
+    )
 
     @property
     def stage_name(self) -> str:
@@ -1569,6 +1575,7 @@ class AutonomyRuntimeStage(RuntimeStage):
         request = replace(
             request,
             prior_deferred_records=self._prior_deferred_records,
+            prior_continuity_threads=self._prior_continuity_threads,
         )
         if request.source_gate_result_id != thought_gating_result.result.result_id:
             raise RuntimeStageExecutionError(
@@ -1609,6 +1616,7 @@ class AutonomyRuntimeStage(RuntimeStage):
         evaluate_op = self.autonomy_layer.build_evaluate_op(request)
         result = self.autonomy_layer.evaluate(request)
         self._prior_deferred_records = result.deferred_records
+        self._prior_continuity_threads = result.long_horizon_state.threads
         publish_result_op = self.autonomy_layer.build_publish_result_op(result)
         return AutonomyStageResult(
             request=request,

@@ -69,4 +69,27 @@ Requirement 24 - Long-horizon continuity threads and reinforcement in autonomy
 
 ## 8. Completion Snapshot
 
-Status: pending implementation. This section will be updated with validated results and the final delivered file list once the implementation lands.
+Status on 2026-06-02: implemented and validated as `baseline_implementation`.
+
+Delivered files:
+
+1. `helios_v2/src/helios_v2/autonomy/contracts.py` (`ContinuityThread`, `LongHorizonContinuityState`, `ContinuityThreadState`, `prior_continuity_threads` on the request, `long_horizon_state` on the result)
+2. `helios_v2/src/helios_v2/autonomy/engine.py` (`_build_long_horizon_state`: thread formation, recurrence reinforcement with `reinforcement_gain`, deterministic conflict arbitration; preserves existing decay/merge/expire/resolved accounting)
+3. `helios_v2/src/helios_v2/autonomy/__init__.py` (thread contract exports)
+4. `helios_v2/src/helios_v2/runtime/stages.py` (`AutonomyRuntimeStage` owner-private prior-thread carry)
+5. `helios_v2/src/helios_v2/composition/bridges.py` (autonomy evidence projects the long-horizon state)
+6. `helios_v2/src/helios_v2/evaluation/engine.py` (`long_horizon_continuity` diagnostic with explicit absence handling)
+7. `helios_v2/tests/test_autonomy_contracts.py`, `helios_v2/tests/test_autonomy_engine.py`, `helios_v2/tests/test_evaluation_engine.py`, `helios_v2/tests/test_runtime_composition.py` (extended)
+8. `helios_v2/docs/requirements/index.md`, `helios_v2/docs/ARCHITECTURE_BOUNDARIES.md`, `helios_v2/docs/BRAIN_ARCHITECTURE_COMPARISON.md`
+
+Validated outcomes:
+
+1. `pytest helios_v2/tests/test_autonomy_contracts.py helios_v2/tests/test_autonomy_engine.py helios_v2/tests/test_evaluation_engine.py tests/test_runtime_composition.py -q` -> passed
+2. `pytest helios_v2/tests -q` -> `263 passed`
+
+Implementation notes:
+
+1. Continuity threads are computed from the owner's own active deferred records plus owner-private prior-thread carry held by `AutonomyRuntimeStage`, mirroring the existing prior-deferred-record carry. No other owner computes reinforcement or arbitration.
+2. Reinforcement is a thread-level signal layered on top of unchanged per-record decay: a recurring continuity key increments reinforcement count and accumulates bounded strength while individual records still decay.
+3. Arbitration is deterministic on `(thread_strength, age_ticks, continuity_key)`; suppressed threads are preserved for the next tick, not retired. Threads retire only when their underlying continuity expires or resolves.
+4. The thread layer is a skeleton: it carries deterministic recurrence structure, not substantive motive content, which is deferred until real cognition lands. R14/R15 adjacency remains a separate future requirement.

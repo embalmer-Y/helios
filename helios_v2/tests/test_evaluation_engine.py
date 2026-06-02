@@ -156,6 +156,53 @@ def test_engine_warns_explicitly_when_execution_timeline_evidence_is_absent() ->
     assert artifact.long_range_diagnostics["execution_timeline_status"] == "absent_uninstrumented"
 
 
+def test_engine_reports_long_horizon_continuity_from_autonomy_evidence() -> None:
+    engine = EvaluationEngine(config=_build_config(), evaluation_path=FirstVersionEvaluationPath())
+
+    bundle = EvaluationEvidenceBundle(
+        bundle_id="evaluation-bundle:lh",
+        source_request_id="evaluation-request:001",
+        thought_evidence=(({"evidence_id": "thought:lh", "execution_status": "completed"}),),
+        action_evidence=(({"evidence_id": "action:lh", "status": "normalized"}),),
+        planner_evidence=(({"evidence_id": "planner:lh", "status": "executed"}),),
+        governance_evidence=(({"evidence_id": "gov:lh", "status": "accepted"}),),
+        writeback_evidence=(({"evidence_id": "wb:lh", "status": "written"}),),
+        autonomy_evidence=(
+            {
+                "evidence_id": "autonomy:lh",
+                "dominant_disposition": "defer",
+                "deferred_active": True,
+                "proactive_action_requested": True,
+                "active_thread_count": 1,
+                "dominant_thread_id": "continuity-thread:lh:1",
+                "dominant_thread_age": 3,
+                "dominant_reinforcement_count": 2,
+                "max_thread_age": 3,
+                "aggregate_reinforcement": 2,
+            },
+        ),
+        prompt_evidence=(({"evidence_id": "prompt:lh", "status": "published"}),),
+        outward_expression_evidence=(({"evidence_id": "oe:lh", "status": "prepared"}),),
+        outward_expression_externalization_evidence=(({"evidence_id": "oee:lh", "status": "prepared"}),),
+    )
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    assert artifact.long_range_diagnostics["long_horizon_continuity"] == "reinforced_dominant_thread"
+    detail = artifact.long_range_diagnostics["long_horizon_continuity_detail"]
+    assert detail["dominant_thread_id"] == "continuity-thread:lh:1"
+    assert detail["aggregate_reinforcement"] == 2
+
+
+def test_engine_reports_absent_long_horizon_continuity_without_thread_fields() -> None:
+    engine = EvaluationEngine(config=_build_config(), evaluation_path=FirstVersionEvaluationPath())
+
+    artifact = engine.evaluate(_build_request(), _build_bundle())
+
+    # The baseline bundle's autonomy evidence carries no thread fields.
+    assert artifact.long_range_diagnostics["long_horizon_continuity"] == "absent"
+
+
 def test_engine_publishes_explicit_warning_when_outward_expression_chain_is_incomplete() -> None:
     engine = EvaluationEngine(
         config=_build_config(),
