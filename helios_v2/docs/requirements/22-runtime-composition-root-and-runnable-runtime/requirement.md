@@ -92,3 +92,16 @@ Introduce one shipped runtime composition root in `helios_v2/src` that assembles
 7. The driver script constructs the runtime through the composition owner, runs a bounded number of ticks, and writes a parseable JSON-line event stream.
 8. A repository guard test fails if any module under `helios_v2/src` introduces `import logging`, a logger, or a `print(` call, enforcing that the `21` observability owner is the single logging mechanism.
 9. The full `helios_v2/tests` suite remains green.
+
+## 8. Future Extension Scope
+
+This requirement intentionally delivers a first-version composition root, not a final-form runtime host. The composition owner is expected to keep evolving as later owner waves land. The following extensions are explicitly anticipated and must remain compatible with the assembly contract introduced here, but are out of scope for this slice:
+
+1. Replacing the shipped first-version injected owner capabilities and bridges with deeper owner-owned policy as `03-16` are deepened, without changing the public `assemble_runtime` contract.
+2. A long-running runtime host or service loop that advances ticks continuously, with explicit lifecycle control, instead of the bounded-tick driver shipped here.
+3. Real external input and output adapters (for example a live sensory source or a real channel transport) injected through owner APIs, replacing the bounded driver-supplied stimulus batch.
+4. Real critical-dependency providers (for example an LLM capability, a persistent memory backend, or a channel capability) replacing the first-version dependency provider, still gated by the existing fail-fast startup rule.
+5. Multiple named runtime profiles or assembly variants (for example a diagnostic-heavy profile for `17`) selected through explicit configuration rather than through degraded or implicit branches.
+6. Owner-level fine-grained observability emission, opened later through the `21` owner under plan C, consumed by the composition-assembled runtime without changing the assembly contract.
+
+These extensions must each arrive through their own requirement package. None of them may be smuggled into this slice, and none may introduce a degraded, reduced, or fallback assembly path. The first-version composition root must stay a stable, additive foundation that later requirements extend rather than rewrite.

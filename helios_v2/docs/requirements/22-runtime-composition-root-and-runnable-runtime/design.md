@@ -178,6 +178,10 @@ A `RuntimeError` subclass raised on assembly-time invariant violations, for exam
 3. Default rollout: the runtime is uninstrumented unless a recorder is injected, matching the `21` default-off contract.
 4. The first-version injected owner capabilities and bridges are explicitly baseline. Later owner-deepening waves replace these injected first-version capabilities through the owners themselves, without changing the composition owner's assembly contract.
 
+### 7.1 Forward-compatibility intent
+
+This composition owner is designed as an extensible foundation, not a final runtime host. The `assemble_runtime` signature, the `RuntimeHandle` lifecycle surface, and the canonical stage-order constant are the stable seams that later requirements extend. Anticipated future extensions (each via its own requirement package) include: a long-running tick host replacing the bounded driver; real external input/output and critical-dependency providers replacing the first-version provider and driver-supplied stimuli; deeper owner-owned policy replacing the first-version injected capabilities and bridges; named assembly profiles selected by explicit configuration; and owner-level observability emission opened later through the `21` owner. Each extension must preserve the assembly contract and the no-degraded-mode rule established here, so growth is additive rather than a rewrite.
+
 ## 8. Failure Modes and Constraints
 
 1. Missing critical dependency: `assemble_runtime` returns a handle, but `handle.startup()` raises `RuntimeStartupError` through the existing gate. No reduced assembly is produced.
