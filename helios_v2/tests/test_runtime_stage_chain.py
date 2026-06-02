@@ -1686,7 +1686,17 @@ def test_runtime_chain_executes_sensory_ingress_then_rapid_appraisal_then_neurom
     assert evaluation_result.artifact.dimension_scores["autonomy_fidelity"] == 1.0
     assert evaluation_result.artifact.gap_summary["outward_expression_artifact_gap"] == "no_gap"
     assert evaluation_result.artifact.dimension_scores["continuity_fidelity"] == 1.0
-    assert evaluation_result.publish_artifact_op.warning_count == 0
+    # This chain assembles without timeline evidence (the FixedEvaluationRequestProvider
+    # supplies none), so evaluation emits exactly the explicit missing-timeline warning and
+    # reports the timeline as absent rather than inferring execution fidelity.
+    assert evaluation_result.publish_artifact_op.warning_count == 1
+    assert evaluation_result.artifact.fidelity_warnings[0].warning_id == "warning:missing-execution-timeline"
+    assert (
+        evaluation_result.artifact.long_range_diagnostics["execution_timeline_status"]
+        == "absent_uninstrumented"
+    )
+    assert evaluation_result.artifact.gap_summary["consequence_path_outcome"] == "continuity_written"
+    assert evaluation_result.artifact.dimension_scores["internal_to_visible_consequence"] == 1.0
     assert thought_gating_result.result.source_signal_snapshot_id == thought_gating_result.signal_snapshot.snapshot_id
     assert thought_gating_result.result.decision == "fire"
     assert thought_gating_result.publish_gate_result_op.result_id == thought_gating_result.result.result_id

@@ -1,6 +1,9 @@
 """Unified runtime observability and logging owner package."""
 
 from .contracts import (
+    ExecutionTimelineStageEntry,
+    ExecutionTimelineStageStatus,
+    ExecutionTimelineView,
     LogEvent,
     LogEventKind,
     LogSeverity,
@@ -9,6 +12,7 @@ from .contracts import (
     severity_rank,
 )
 from .engine import (
+    ExecutionTimelineReconstructor,
     InMemoryLogSink,
     JsonLineStreamLogSink,
     RuntimeObservabilityAPI,
@@ -16,6 +20,10 @@ from .engine import (
 )
 
 __all__ = [
+    "ExecutionTimelineReconstructor",
+    "ExecutionTimelineStageEntry",
+    "ExecutionTimelineStageStatus",
+    "ExecutionTimelineView",
     "InMemoryLogSink",
     "JsonLineStreamLogSink",
     "LogEvent",

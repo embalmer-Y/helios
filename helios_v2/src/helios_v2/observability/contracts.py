@@ -191,3 +191,119 @@ class LogSink(Protocol):
         """
 
         ...
+
+
+ExecutionTimelineStageStatus = Literal["completed", "failed"]
+
+_TIMELINE_STAGE_STATUSES = frozenset({"completed", "failed"})
+
+
+@dataclass(frozen=True)
+class ExecutionTimelineStageEntry:
+    """Immutable per-stage execution fact for one reconstructed tick.
+
+    Owner: observability.
+
+    This entry carries only kernel execution-timing facts (stage order, lifecycle
+    status, duration). It never carries an owner's semantic decision. It is derived by
+    the timeline reconstructor from already-captured kernel lifecycle events.
+
+    Failure semantics:
+        Construction raises `ObservabilityError` on empty stage name, negative stage
+        index, negative duration, an unknown status, or a failed entry without an
+        `error_type`.
+    """
+
+    stage_name: str
+    stage_index: int
+    status: ExecutionTimelineStageStatus
+    duration_ms: float
+    error_type: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.stage_name:
+            raise ObservabilityError("ExecutionTimelineStageEntry must declare a non-empty stage_name")
+        if not isinstance(self.stage_index, int) or self.stage_index < 0:
+            raise ObservabilityError("ExecutionTimelineStageEntry stage_index must be a non-negative integer")
+        if self.status not in _TIMELINE_STAGE_STATUSES:
+            raise ObservabilityError(f"Unknown timeline stage status: {self.status!r}")
+        if self.duration_ms < 0:
+            raise ObservabilityError("ExecutionTimelineStageEntry duration_ms must be non-negative")
+        if self.status == "failed" and not self.error_type:
+            raise ObservabilityError("A failed ExecutionTimelineStageEntry must declare an error_type")
+        if self.status == "completed" and self.error_type is not None:
+            raise ObservabilityError("A completed ExecutionTimelineStageEntry must not declare an error_type")
+
+
+@dataclass(frozen=True)
+class ExecutionTimelineView:
+    """Immutable read-only reconstruction of one tick's kernel execution timeline.
+
+    Owner: observability.
+
+    This view is the only sanctioned form in which downstream owners may consume kernel
+    execution-timing facts. Downstream owners must not parse raw `LogEvent` objects to
+    obtain timing facts, and this view never transports any owner's semantic decision.
+
+    Failure semantics:
+        Construction raises `ObservabilityError` on a non-positive tick id, a
+        `stage_count` that disagrees with the number of stage entries, or stage indices
+        that are not strictly increasing from zero.
+    """
+
+    tick_id: int
+    stages: tuple[ExecutionTimelineStageEntry, ...]
+    completed: bool
+    stage_count: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tick_id, int) or self.tick_id <= 0:
+            raise ObservabilityError("ExecutionTimelineView tick_id must be a positive integer")
+        if self.stage_count != len(self.stages):
+            raise ObservabilityError("ExecutionTimelineView stage_count must equal the number of stage entries")
+        for expected_index, stage in enumerate(self.stages):
+            if stage.stage_index != expected_index:
+                raise ObservabilityError(
+                    "ExecutionTimelineView stage indices must be strictly increasing from zero"
+                )
+
+    def to_evidence(self, evidence_id: str) -> dict[str, object]:
+        """Owner: observability.
+
+        Purpose:
+            Return a compact, JSON-friendly projection of this timeline view for
+            downstream read-only evidence consumption (for example by the evaluation owner).
+
+        Inputs:
+            `evidence_id` - a non-empty stable id the consumer assigns to this evidence.
+
+        Returns:
+            A plain dict carrying `evidence_id`, `tick_id`, `completed`, `stage_count`,
+            and a compact per-stage status list. The dict is a copy and does not alias
+            view state.
+
+        Raises:
+            ObservabilityError if `evidence_id` is empty.
+
+        Notes:
+            The projection includes only execution-timing facts, never owner decisions.
+        """
+
+        if not evidence_id:
+            raise ObservabilityError("ExecutionTimelineView.to_evidence requires a non-empty evidence_id")
+        return {
+            "evidence_id": evidence_id,
+            "tick_id": self.tick_id,
+            "completed": self.completed,
+            "stage_count": self.stage_count,
+            "stages": [
+                {
+                    "stage_name": stage.stage_name,
+                    "stage_index": stage.stage_index,
+                    "status": stage.status,
+                    "duration_ms": stage.duration_ms,
+                    "error_type": stage.error_type,
+                }
+                for stage in self.stages
+            ],
+        }

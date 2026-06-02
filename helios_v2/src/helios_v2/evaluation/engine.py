@@ -42,6 +42,69 @@ def _warning(
     )
 
 
+# Path outcomes for internal-to-visible consequence binding, ordered from no activation
+# to full continuity-written consequence. These labels and scores are the formal
+# consequence-binding vocabulary published in the evaluation artifact.
+_CONSEQUENCE_BINDING_LABELS: dict[str, str] = {
+    "no_activation": "no internal activation reached the chain",
+    "internally_activated_only": "internal activation did not produce a normalized action",
+    "blocked": "action was normalized but execution was blocked or failed",
+    "rejected": "action was normalized but policy-rejected before execution",
+    "executed": "action executed externally but was not yet written back to continuity",
+    "continuity_written": "internal activation closed into executed action and continuity writeback",
+}
+
+_CONSEQUENCE_BINDING_SCORES: dict[str, float] = {
+    "no_activation": 0.0,
+    "internally_activated_only": 0.2,
+    "blocked": 0.4,
+    "rejected": 0.4,
+    "executed": 0.8,
+    "continuity_written": 1.0,
+}
+
+# Dimensions whose scores are currently derived from deterministic first-version shim
+# evidence rather than from genuinely non-deterministic cognition. This annotation keeps
+# the diagnostic honest while the cognition chain is still a shim.
+_SHIM_DERIVED_DIMENSIONS: tuple[str, ...] = (
+    "thought_fidelity",
+    "action_fidelity",
+    "continuity_fidelity",
+    "governance_fidelity",
+    "autonomy_fidelity",
+    "outward_expression_artifact_fidelity",
+    "internal_to_visible_consequence",
+)
+
+
+def _classify_consequence_outcome(
+    *,
+    has_thought: bool,
+    action_status: object,
+    planner_status: object,
+    any_written: bool,
+) -> str:
+    """Map owner-published statuses into one explicit internal-to-visible path outcome.
+
+    This uses only statuses already published by upstream owners (action normalization
+    status, planner bridge status, and whether continuity was written). It performs no
+    heuristic re-derivation of any owner's decision.
+    """
+
+    if not has_thought:
+        return "no_activation"
+    if action_status != "normalized":
+        return "internally_activated_only"
+    if planner_status == "executed":
+        return "continuity_written" if any_written else "executed"
+    if planner_status == "policy_rejected":
+        return "rejected"
+    if planner_status in {"execution_failed", "execution_consistency_failed"}:
+        return "blocked"
+    # accepted-but-not-executed, or any other normalized-yet-inconsequential path
+    return "internally_activated_only"
+
+
 @runtime_checkable
 class EvaluationPath(Protocol):
     """Owner-private path that assembles one evaluation artifact from a request and evidence bundle."""
@@ -125,6 +188,37 @@ class FirstVersionEvaluationPath:
             else "no_gap"
         )
 
+        # Consequence-binding: map the chain into one explicit internal-to-visible path
+        # outcome using owner-published statuses only (no heuristic re-derivation).
+        consequence_path_outcome = _classify_consequence_outcome(
+            has_thought=bool(bundle.thought_evidence),
+            action_status=action_status,
+            planner_status=planner_status,
+            any_written=any_written,
+        )
+        consequence_binding = _CONSEQUENCE_BINDING_LABELS[consequence_path_outcome]
+        internal_to_visible_score = _CONSEQUENCE_BINDING_SCORES[consequence_path_outcome]
+
+        # Execution-timeline status: derived only from the prior-tick timeline evidence
+        # provided by the observability owner. Absence is reported explicitly; fidelity is
+        # never inferred from a missing timeline.
+        timeline_evidence = bundle.execution_timeline_evidence
+        if not timeline_evidence:
+            execution_timeline_status = "absent_uninstrumented"
+            timeline_tick_id: object = None
+        else:
+            entry = timeline_evidence[0]
+            prior_tick = entry.get("tick_id")
+            if prior_tick is None:
+                execution_timeline_status = "no_prior_timeline"
+                timeline_tick_id = None
+            elif entry.get("completed") is True:
+                execution_timeline_status = "observed"
+                timeline_tick_id = prior_tick
+            else:
+                execution_timeline_status = "observed_incomplete"
+                timeline_tick_id = prior_tick
+
         warnings: list[FidelityWarning] = []
         if not bundle.thought_evidence:
             warnings.append(
@@ -171,6 +265,15 @@ class FirstVersionEvaluationPath:
                     writeback_refs or (bundle.bundle_id,),
                 )
             )
+        if not bundle.execution_timeline_evidence:
+            warnings.append(
+                _warning(
+                    "warning:missing-execution-timeline",
+                    "missing_timeline",
+                    "Evaluation bundle has no execution-timeline evidence; runtime may be uninstrumented.",
+                    (bundle.bundle_id,),
+                )
+            )
         if outward_expression_gap != "no_gap":
             warnings.append(
                 _warning(
@@ -206,6 +309,7 @@ class FirstVersionEvaluationPath:
             "governance_fidelity": 1.0 if bundle.governance_evidence else 0.0,
             "autonomy_fidelity": 1.0 if bundle.autonomy_evidence else 0.0,
             "outward_expression_artifact_fidelity": 1.0 if outward_expression_gap == "no_gap" else 0.0,
+            "internal_to_visible_consequence": internal_to_visible_score,
         }
 
         gap_summary: dict[str, object] = {
@@ -215,6 +319,8 @@ class FirstVersionEvaluationPath:
             "outward_expression_artifact_gap": outward_expression_gap,
             "externally_consequential_activity": "present" if any_written else "not_confirmed",
             "continuity_written": any_written,
+            "consequence_path_outcome": consequence_path_outcome,
+            "consequence_binding": consequence_binding,
         }
 
         long_range_diagnostics: dict[str, object] = {
@@ -241,6 +347,9 @@ class FirstVersionEvaluationPath:
                 "comparison_window_label",
                 request.scenario_kind,
             ),
+            "execution_timeline_status": execution_timeline_status,
+            "execution_timeline_tick_id": timeline_tick_id,
+            "shim_derived_dimensions": _SHIM_DERIVED_DIMENSIONS,
         }
 
         return EvaluationArtifact(

@@ -49,7 +49,11 @@ from helios_v2.internal_thought import (
 )
 from helios_v2.memory import MemoryAffectReplayConfig, MemoryAffectReplayEngine
 from helios_v2.neuromodulation import NeuromodulatorConfig, NeuromodulatorEngine, NeuromodulatorLevels
-from helios_v2.observability import RuntimeObservabilityRecorder
+from helios_v2.observability import (
+    ExecutionTimelineReconstructor,
+    InMemoryLogSink,
+    RuntimeObservabilityRecorder,
+)
 from helios_v2.outward_expression import (
     FirstVersionOutwardExpressionPath,
     OutwardExpressionConfig,
@@ -132,6 +136,7 @@ from .bridges import (
     FirstVersionThoughtGateSignalBridge,
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
+    TimelineViewHolder,
 )
 from .dependencies import FirstVersionDependencyProvider, default_critical_dependency_specs
 
@@ -410,11 +415,20 @@ class RuntimeHandle:
 
     Notes:
         The handle forwards to the wrapped kernel. It exposes the sensory ingress owner so a
-        driver can supply per-tick stimuli through the owner API only.
+        driver can supply per-tick stimuli through the owner API only. When the runtime is
+        instrumented (a recorder plus a readable in-memory sink are present), the handle
+        reconstructs each completed tick's execution-timeline view through the observability
+        owner and carries it forward into the next tick's evaluation evidence assembly. The
+        carry is owner-neutral: it transports a formal observability contract only.
     """
 
     kernel: RuntimeKernel
     ingress: SensoryIngress
+    timeline_holder: TimelineViewHolder | None = None
+    timeline_sink: InMemoryLogSink | None = None
+    _reconstructor: ExecutionTimelineReconstructor = field(
+        default_factory=ExecutionTimelineReconstructor
+    )
 
     def startup(self) -> None:
         """Run the fail-fast dependency gate before any tick executes."""
@@ -422,9 +436,24 @@ class RuntimeHandle:
         self.kernel.startup()
 
     def tick(self) -> RuntimeTickResult:
-        """Execute one runtime tick and return its structured per-stage result."""
+        """Execute one runtime tick and carry its completed timeline forward when instrumented."""
 
-        return self.kernel.tick()
+        result = self.kernel.tick()
+        self._carry_timeline(result.tick_id)
+        return result
+
+    def _carry_timeline(self, tick_id: int) -> None:
+        """Reconstruct the just-completed tick's timeline and store it for the next tick.
+
+        This runs only when the runtime is instrumented with a readable sink. The next
+        tick's evaluation evidence then consumes the previous tick's timeline view, because
+        the current tick is not yet complete when its own evaluation stage runs.
+        """
+
+        if self.timeline_holder is None or self.timeline_sink is None:
+            return
+        view = self._reconstructor.reconstruct(self.timeline_sink.events, tick_id)
+        self.timeline_holder.view = view
 
     def run_ticks(self, n: int) -> tuple[RuntimeTickResult, ...]:
         """Owner: composition.
@@ -444,7 +473,7 @@ class RuntimeHandle:
 
         if not isinstance(n, int) or n <= 0:
             raise ValueError("run_ticks requires a positive integer tick count")
-        return tuple(self.kernel.tick() for _ in range(n))
+        return tuple(self.tick() for _ in range(n))
 
 
 def assemble_runtime(
@@ -566,6 +595,12 @@ def assemble_runtime(
         evaluation_path=FirstVersionEvaluationPath(),
     )
 
+    # Owner-neutral carry for the prior-tick execution-timeline view. When the runtime is
+    # instrumented with a readable in-memory sink, the handle updates this holder after each
+    # tick and the evaluation bridge reads it when assembling the next tick's evidence.
+    timeline_sink = _find_in_memory_sink(recorder)
+    timeline_holder = TimelineViewHolder(instrumented=timeline_sink is not None)
+
     kernel = RuntimeKernel(
         dependency_specs=resolved_specs,
         dependency_provider=resolved_provider,
@@ -626,7 +661,7 @@ def assemble_runtime(
         ),
         EvaluationRuntimeStage(
             evaluation_layer=evaluation,
-            request_provider=FirstVersionEvaluationRequestBridge(),
+            request_provider=FirstVersionEvaluationRequestBridge(timeline_holder=timeline_holder),
         ),
     ]
 
@@ -639,4 +674,28 @@ def assemble_runtime(
     for stage in stages:
         kernel.register_stage(stage)
 
-    return RuntimeHandle(kernel=kernel, ingress=ingress)
+    return RuntimeHandle(
+        kernel=kernel,
+        ingress=ingress,
+        timeline_holder=timeline_holder,
+        timeline_sink=timeline_sink,
+    )
+
+
+def _find_in_memory_sink(
+    recorder: RuntimeObservabilityRecorder | None,
+) -> InMemoryLogSink | None:
+    """Return the first readable in-memory sink on the recorder, if any.
+
+    The timeline carry needs a readable event source. A recorder configured only with
+    write-only sinks (for example a JSON-line stream) cannot be read back here, so the
+    carry stays inactive and evaluation records explicit timeline absence rather than
+    fabricating a view.
+    """
+
+    if recorder is None:
+        return None
+    for sink in recorder.sinks:
+        if isinstance(sink, InMemoryLogSink):
+            return sink
+    return None

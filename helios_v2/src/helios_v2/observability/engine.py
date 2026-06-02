@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import Mapping, Protocol, TextIO, runtime_checkable
 
 from .contracts import (
+    ExecutionTimelineStageEntry,
+    ExecutionTimelineView,
     LogEvent,
     LogEventKind,
     LogSeverity,
@@ -206,3 +208,125 @@ class RuntimeObservabilityRecorder(RuntimeObservabilityAPI):
             for sink in self.sinks:
                 sink.emit(event)
         return event
+
+
+@dataclass
+class ExecutionTimelineReconstructor:
+    """Owner: observability.
+
+    Purpose:
+        Reconstruct one tick's execution timeline view from already-captured kernel
+        lifecycle events. This keeps the log-to-structured-fact transformation inside the
+        observability owner, so downstream owners consume the formal `ExecutionTimelineView`
+        rather than parsing raw `LogEvent` objects.
+
+    Failure semantics:
+        Derives the view only from kernel execution-timing facts (stage order, lifecycle,
+        duration). A tick with no observed lifecycle events yields an explicitly incomplete
+        view rather than a fabricated one. A malformed pairing (a completed or failed stage
+        with no matching started stage, or a duplicated completed/failed stage) raises
+        `ObservabilityError`.
+    """
+
+    def reconstruct(self, events: tuple[LogEvent, ...], tick_id: int) -> ExecutionTimelineView:
+        """Owner: observability.
+
+        Purpose:
+            Build the immutable `ExecutionTimelineView` for one tick.
+
+        Inputs:
+            `events` - the captured event stream (for example `InMemoryLogSink.events`).
+            `tick_id` - the positive tick id whose timeline is being reconstructed.
+
+        Returns:
+            An `ExecutionTimelineView`. When no lifecycle events exist for the tick, the
+            view is explicitly incomplete (`stages=()`, `completed=False`).
+
+        Raises:
+            ObservabilityError on a non-positive tick id or a malformed lifecycle pairing.
+
+        Notes:
+            Only `stage_started`, `stage_completed`, `stage_failed`, and
+            `runtime_tick_completed` events for the given tick are consulted, and only their
+            timing facts are read. Owner decision payloads are never interpreted.
+        """
+
+        if not isinstance(tick_id, int) or tick_id <= 0:
+            raise ObservabilityError("ExecutionTimelineReconstructor requires a positive tick_id")
+
+        started_stage_names: set[str] = set()
+        tick_completed = False
+        ordered_entries: list[ExecutionTimelineStageEntry] = []
+        seen_terminal_stage_names: set[str] = set()
+
+        for event in events:
+            if event.tick_id != tick_id:
+                continue
+            if event.event_kind == "runtime_tick_completed":
+                tick_completed = True
+                continue
+            if event.event_kind == "stage_started":
+                if event.stage_name:
+                    started_stage_names.add(event.stage_name)
+                continue
+            if event.event_kind in ("stage_completed", "stage_failed"):
+                stage_name = event.stage_name
+                if not stage_name:
+                    raise ObservabilityError(
+                        "Timeline reconstruction found a stage lifecycle event without a stage_name"
+                    )
+                if stage_name not in started_stage_names:
+                    raise ObservabilityError(
+                        f"Timeline reconstruction found a terminal event for unstarted stage '{stage_name}'"
+                    )
+                if stage_name in seen_terminal_stage_names:
+                    raise ObservabilityError(
+                        f"Timeline reconstruction found a duplicate terminal event for stage '{stage_name}'"
+                    )
+                seen_terminal_stage_names.add(stage_name)
+                payload = event.payload
+                stage_index = payload.get("stage_index")
+                if not isinstance(stage_index, int):
+                    raise ObservabilityError(
+                        "Timeline reconstruction requires an integer stage_index in the stage payload"
+                    )
+                duration_value = payload.get("duration_ms")
+                duration_ms = float(duration_value) if isinstance(duration_value, (int, float)) else 0.0
+                if event.event_kind == "stage_completed":
+                    ordered_entries.append(
+                        ExecutionTimelineStageEntry(
+                            stage_name=stage_name,
+                            stage_index=stage_index,
+                            status="completed",
+                            duration_ms=duration_ms,
+                        )
+                    )
+                else:
+                    error_type = payload.get("error_type")
+                    ordered_entries.append(
+                        ExecutionTimelineStageEntry(
+                            stage_name=stage_name,
+                            stage_index=stage_index,
+                            status="failed",
+                            duration_ms=duration_ms,
+                            error_type=str(error_type) if error_type else "UnknownError",
+                        )
+                    )
+
+        ordered_entries.sort(key=lambda entry: entry.stage_index)
+        normalized_entries = tuple(
+            ExecutionTimelineStageEntry(
+                stage_name=entry.stage_name,
+                stage_index=position,
+                status=entry.status,
+                duration_ms=entry.duration_ms,
+                error_type=entry.error_type,
+            )
+            for position, entry in enumerate(ordered_entries)
+        )
+        return ExecutionTimelineView(
+            tick_id=tick_id,
+            stages=normalized_entries,
+            completed=tick_completed,
+            stage_count=len(normalized_entries),
+        )

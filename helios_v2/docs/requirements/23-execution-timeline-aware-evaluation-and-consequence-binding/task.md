@@ -69,4 +69,30 @@ Requirement 23 - Execution-timeline-aware evaluation and consequence binding
 
 ## 8. Completion Snapshot
 
-Status: pending implementation. This section will be updated with validated results and the final delivered file list once the implementation lands.
+Status on 2026-06-02: implemented and validated as `baseline_implementation`.
+
+Delivered files:
+
+1. `helios_v2/src/helios_v2/observability/contracts.py` (`ExecutionTimelineStageEntry`, `ExecutionTimelineView`, `to_evidence`)
+2. `helios_v2/src/helios_v2/observability/engine.py` (`ExecutionTimelineReconstructor`)
+3. `helios_v2/src/helios_v2/observability/__init__.py` (timeline exports)
+4. `helios_v2/src/helios_v2/evaluation/contracts.py` (`execution_timeline_evidence` category)
+5. `helios_v2/src/helios_v2/evaluation/engine.py` (consequence-binding scoring, timeline-status diagnostics, shim annotation, missing-timeline warning)
+6. `helios_v2/src/helios_v2/composition/bridges.py` (`TimelineViewHolder`, `FirstVersionExecutionTimelineEvidenceBridge`, timeline-aware `FirstVersionEvaluationRequestBridge`)
+7. `helios_v2/src/helios_v2/composition/runtime_assembly.py` (`RuntimeHandle` cross-tick timeline carry, `_find_in_memory_sink`)
+8. `helios_v2/tests/test_observability_timeline.py`
+9. `helios_v2/tests/test_evaluation_engine.py` (extended)
+10. `helios_v2/tests/test_runtime_composition.py` (extended)
+11. `helios_v2/tests/test_runtime_stage_chain.py` (updated for new timeline-absence behavior)
+12. `helios_v2/docs/requirements/index.md`, `helios_v2/docs/ARCHITECTURE_BOUNDARIES.md`, `helios_v2/docs/BRAIN_ARCHITECTURE_COMPARISON.md`
+
+Validated outcomes:
+
+1. `pytest helios_v2/tests/test_observability_timeline.py helios_v2/tests/test_evaluation_engine.py helios_v2/tests/test_runtime_composition.py helios_v2/tests/test_no_adhoc_logging_guard.py -q` -> `29 passed`
+2. `pytest helios_v2/tests -q` -> `254 passed`
+
+Implementation notes:
+
+1. Timeline reconstruction is owned entirely by the observability owner; evaluation consumes only the formal `ExecutionTimelineView` projection, never raw log events, preserving the rule that the log channel is not an authoritative decision transport.
+2. Evaluation reasons about the previous completed tick because the current tick is not finished when its evaluation stage runs. An instrumented first tick records `no_prior_timeline`; later ticks record `observed`; an uninstrumented runtime (or a write-only-sink runtime with no readable event source) records `absent_uninstrumented`.
+3. Consequence-binding outcomes use owner-published statuses only (planner bridge status, action normalization status, writeback status); no heuristic re-derivation. Shim-derived dimensions are annotated explicitly so fidelity is not overstated while cognition is deterministic.

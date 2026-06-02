@@ -37,7 +37,11 @@ def _build_request() -> EvaluationRequest:
     )
 
 
-def _build_bundle(*, include_outward_externalization: bool = True) -> EvaluationEvidenceBundle:
+def _build_bundle(
+    *,
+    include_outward_externalization: bool = True,
+    include_timeline: bool = True,
+) -> EvaluationEvidenceBundle:
     return EvaluationEvidenceBundle(
         bundle_id="evaluation-bundle:001",
         source_request_id="evaluation-request:001",
@@ -57,6 +61,19 @@ def _build_bundle(*, include_outward_externalization: bool = True) -> Evaluation
         )
         if include_outward_externalization
         else (),
+        execution_timeline_evidence=(
+            (
+                {
+                    "evidence_id": "execution-timeline-evidence:tick:1",
+                    "tick_id": 1,
+                    "completed": True,
+                    "stage_count": 19,
+                    "stages": [],
+                },
+            )
+            if include_timeline
+            else ()
+        ),
     )
 
 
@@ -81,7 +98,62 @@ def test_engine_assembles_read_only_artifact_from_explicit_evidence() -> None:
     assert artifact.gap_summary["autonomy_continuity_gap"] == "no_gap"
     assert artifact.gap_summary["outward_expression_artifact_gap"] == "no_gap"
     assert artifact.long_range_diagnostics["comparison_window_label"] == "runtime_tick:1"
+    assert artifact.long_range_diagnostics["execution_timeline_status"] == "observed"
+    assert artifact.long_range_diagnostics["execution_timeline_tick_id"] == 1
+    assert artifact.gap_summary["consequence_path_outcome"] == "continuity_written"
+    assert artifact.dimension_scores["internal_to_visible_consequence"] == 1.0
+    assert "internal_to_visible_consequence" in artifact.long_range_diagnostics["shim_derived_dimensions"]
     assert publish_op.warning_count == 0
+
+
+def test_engine_consequence_binding_distinguishes_path_outcomes() -> None:
+    engine = EvaluationEngine(config=_build_config(), evaluation_path=FirstVersionEvaluationPath())
+
+    def _bundle_with(planner_status: str, writeback: tuple, action_status: str = "normalized"):
+        return EvaluationEvidenceBundle(
+            bundle_id="evaluation-bundle:cb",
+            source_request_id="evaluation-request:001",
+            thought_evidence=(({"evidence_id": "thought:cb", "execution_status": "completed"}),),
+            action_evidence=(({"evidence_id": "action:cb", "status": action_status}),),
+            planner_evidence=(({"evidence_id": "planner:cb", "status": planner_status}),),
+            governance_evidence=(({"evidence_id": "gov:cb", "status": "accepted"}),),
+            writeback_evidence=writeback,
+            autonomy_evidence=(({"evidence_id": "autonomy:cb", "deferred_active": False}),),
+            prompt_evidence=(({"evidence_id": "prompt:cb", "status": "published"}),),
+            outward_expression_evidence=(({"evidence_id": "oe:cb", "status": "prepared"}),),
+            outward_expression_externalization_evidence=(({"evidence_id": "oee:cb", "status": "prepared"}),),
+            execution_timeline_evidence=(),
+        )
+
+    request = _build_request()
+    written = (({"evidence_id": "wb:cb", "status": "written"}),)
+
+    executed_written = engine.evaluate(request, _bundle_with("executed", written))
+    assert executed_written.gap_summary["consequence_path_outcome"] == "continuity_written"
+    assert executed_written.dimension_scores["internal_to_visible_consequence"] == 1.0
+
+    executed_only = engine.evaluate(request, _bundle_with("executed", ()))
+    assert executed_only.gap_summary["consequence_path_outcome"] == "executed"
+    assert executed_only.dimension_scores["internal_to_visible_consequence"] == 0.8
+
+    rejected = engine.evaluate(request, _bundle_with("policy_rejected", ()))
+    assert rejected.gap_summary["consequence_path_outcome"] == "rejected"
+
+    blocked = engine.evaluate(request, _bundle_with("execution_failed", ()))
+    assert blocked.gap_summary["consequence_path_outcome"] == "blocked"
+
+    internally_only = engine.evaluate(request, _bundle_with("accepted", (), action_status="rejected"))
+    assert internally_only.gap_summary["consequence_path_outcome"] == "internally_activated_only"
+
+
+def test_engine_warns_explicitly_when_execution_timeline_evidence_is_absent() -> None:
+    engine = EvaluationEngine(config=_build_config(), evaluation_path=FirstVersionEvaluationPath())
+
+    artifact = engine.evaluate(_build_request(), _build_bundle(include_timeline=False))
+
+    warning_ids = {warning.warning_id for warning in artifact.fidelity_warnings}
+    assert "warning:missing-execution-timeline" in warning_ids
+    assert artifact.long_range_diagnostics["execution_timeline_status"] == "absent_uninstrumented"
 
 
 def test_engine_publishes_explicit_warning_when_outward_expression_chain_is_incomplete() -> None:

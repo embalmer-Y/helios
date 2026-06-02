@@ -144,3 +144,58 @@ def test_default_critical_dependency_specs_declare_required_baseline() -> None:
     assert len(specs) == 1
     assert specs[0].name == RUNTIME_COGNITION_BASELINE
     assert specs[0].required is True
+
+
+def test_cross_tick_timeline_carry_feeds_evaluation_evidence() -> None:
+    sink = InMemoryLogSink()
+    recorder = RuntimeObservabilityRecorder(sinks=(sink,), minimum_severity="debug")
+    handle = assemble_runtime(recorder=recorder)
+    handle.startup()
+
+    results = handle.run_ticks(2)
+
+    first_diag = results[0].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.long_range_diagnostics
+    second_diag = results[1].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.long_range_diagnostics
+
+    # First instrumented tick has no prior timeline yet; the second consumes tick 1's view.
+    assert first_diag["execution_timeline_status"] == "no_prior_timeline"
+    assert second_diag["execution_timeline_status"] == "observed"
+    assert second_diag["execution_timeline_tick_id"] == 1
+
+
+def test_uninstrumented_runtime_reports_absent_timeline() -> None:
+    handle = assemble_runtime()
+    handle.startup()
+
+    result = handle.tick()
+
+    diagnostics = result.stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.long_range_diagnostics
+    assert diagnostics["execution_timeline_status"] == "absent_uninstrumented"
+
+
+def test_write_only_sink_runtime_cannot_carry_timeline() -> None:
+    # A recorder with only a write-only stream sink has no readable event source, so the
+    # carry stays inactive and evaluation records explicit timeline absence.
+    import io
+
+    from helios_v2.observability import JsonLineStreamLogSink
+
+    stream = io.StringIO()
+    recorder = RuntimeObservabilityRecorder(
+        sinks=(JsonLineStreamLogSink(stream=stream),), minimum_severity="debug"
+    )
+    handle = assemble_runtime(recorder=recorder)
+    handle.startup()
+
+    results = handle.run_ticks(2)
+
+    second_diag = results[1].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.long_range_diagnostics
+    assert second_diag["execution_timeline_status"] == "absent_uninstrumented"

@@ -109,6 +109,7 @@ class EvaluationEvidenceBundle:
     prompt_evidence: tuple[Mapping[str, object], ...]
     outward_expression_evidence: tuple[Mapping[str, object], ...]
     outward_expression_externalization_evidence: tuple[Mapping[str, object], ...]
+    execution_timeline_evidence: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.bundle_id:
@@ -127,6 +128,7 @@ class EvaluationEvidenceBundle:
             "prompt_evidence",
             "outward_expression_evidence",
             "outward_expression_externalization_evidence",
+            "execution_timeline_evidence",
         ):
             object.__setattr__(
                 self,

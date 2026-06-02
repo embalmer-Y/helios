@@ -24,7 +24,7 @@ the final owner policy; later owner-deepening waves replace them through the own
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from helios_v2.appraisal.engine import (
     AggregateJudgmentEstimator,
@@ -66,6 +66,7 @@ from helios_v2.neuromodulation import (
     NeuromodulatorState,
     NeuromodulatorUpdatePath,
 )
+from helios_v2.observability import ExecutionTimelineView
 from helios_v2.outward_expression_externalization import OutwardExpressionExternalizationRequest
 from helios_v2.planner_bridge import PlannerBridgeRequest
 from helios_v2.prompt_contract import EmbodiedPromptRequest
@@ -386,6 +387,59 @@ class FirstVersionDirectedMemoryCandidateProvider(DirectedMemoryCandidateProvide
 # ---------------------------------------------------------------------------
 # Cross-owner bridges (owner-neutral request/context assembly, provenance-preserving).
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class TimelineViewHolder:
+    """Owner: composition.
+
+    Purpose:
+        Hold the previous completed tick's execution-timeline view so it can be carried
+        forward into the next tick's evaluation evidence assembly, plus whether the runtime
+        is instrumented at all.
+
+    Notes:
+        Owner-neutral carry only. It transports a formal `ExecutionTimelineView` produced
+        by the observability owner; it never interprets or mutates the view's content. The
+        `instrumented` flag lets evaluation distinguish an instrumented first tick (no prior
+        timeline yet) from a genuinely uninstrumented runtime.
+    """
+
+    view: ExecutionTimelineView | None = None
+    instrumented: bool = False
+
+
+@dataclass
+class FirstVersionExecutionTimelineEvidenceBridge:
+    """Owner: composition.
+
+    Purpose:
+        Project the carried previous-tick `ExecutionTimelineView` into the execution-timeline
+        evidence entry consumed by the evaluation bundle.
+
+    Notes:
+        Owner-neutral glue. It forwards only the formal observability timeline projection
+        (execution-timing facts). When the runtime is instrumented but no prior tick exists
+        yet, it emits an explicit no-prior-timeline marker (tick_id None) so evaluation can
+        distinguish a first instrumented tick from a genuinely uninstrumented runtime. When
+        the runtime is uninstrumented, it yields an empty tuple.
+    """
+
+    def build_timeline_evidence(self, holder: "TimelineViewHolder | None") -> tuple[dict, ...]:
+        if holder is None or not holder.instrumented:
+            return ()
+        if holder.view is None:
+            return (
+                {
+                    "evidence_id": "execution-timeline-evidence:no-prior-tick",
+                    "tick_id": None,
+                    "completed": False,
+                    "stage_count": 0,
+                    "stages": [],
+                },
+            )
+        view = holder.view
+        return (view.to_evidence(f"execution-timeline-evidence:tick:{view.tick_id}"),)
 
 
 @dataclass
@@ -899,8 +953,15 @@ class FirstVersionEvaluationRequestBridge:
 
     Notes:
         Owner-neutral glue. It assembles a provenance-rich, read-only evidence bundle from
-        already-public owner results; it does not mutate runtime state or score fidelity.
+        already-public owner results plus the carried prior-tick execution-timeline view; it
+        does not mutate runtime state or score fidelity. The timeline holder is supplied by
+        the runtime handle and updated after each completed tick.
     """
+
+    timeline_holder: TimelineViewHolder | None = None
+    timeline_bridge: FirstVersionExecutionTimelineEvidenceBridge = field(
+        default_factory=FirstVersionExecutionTimelineEvidenceBridge
+    )
 
     def build_request(
         self,
@@ -1015,5 +1076,8 @@ class FirstVersionEvaluationRequestBridge:
                     "status": "prepared",
                     "source_prompt_contract_id": outward_expression_externalization_result.draft.source_prompt_contract_id,
                 },
+            ),
+            execution_timeline_evidence=self.timeline_bridge.build_timeline_evidence(
+                self.timeline_holder
             ),
         )
