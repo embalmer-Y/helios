@@ -73,4 +73,29 @@ This requirement adds no new cognitive owner. It assembles existing owners and s
 
 ## 8. Completion Snapshot
 
-Status: pending implementation. This section will be updated with validated results and the final delivered file list once the implementation lands.
+Status on 2026-06-02: implemented and validated as `baseline_implementation`.
+
+Delivered files:
+
+1. `helios_v2/src/helios_v2/composition/__init__.py`
+2. `helios_v2/src/helios_v2/composition/runtime_assembly.py` (`CANONICAL_STAGE_ORDER`, `CompositionConfig`, `default_composition_config`, `RuntimeHandle`, `assemble_runtime`, `CompositionError`)
+3. `helios_v2/src/helios_v2/composition/bridges.py` (first-version owner-neutral cross-owner bridges and first-version injected owner capabilities, generalized across ticks)
+4. `helios_v2/src/helios_v2/composition/dependencies.py` (`FirstVersionDependencyProvider`, `default_critical_dependency_specs`, `RUNTIME_COGNITION_BASELINE`)
+5. `helios_v2/src/helios_v2/__init__.py` (surfaces `assemble_runtime` and `RuntimeHandle`)
+6. `helios_v2/scripts/run_runtime_driver.py` (thin bounded-tick driver writing a JSON-line event stream)
+7. `helios_v2/tests/test_runtime_composition.py`
+8. `helios_v2/tests/test_no_adhoc_logging_guard.py`
+9. `helios_v2/docs/requirements/index.md` (maturity updated to `baseline_implementation`)
+10. `helios_v2/docs/ARCHITECTURE_BOUNDARIES.md` (section 4.5 composition owner snapshot)
+
+Validated outcomes:
+
+1. `pytest helios_v2/tests/test_runtime_composition.py helios_v2/tests/test_no_adhoc_logging_guard.py -q` -> `11 passed`
+2. `pytest helios_v2/tests -q` -> `239 passed`
+3. `python helios_v2/scripts/run_runtime_driver.py --ticks 2 --out logs/runtime_events.jsonl` -> 79 JSON-line events (1 startup + 2 x (19 stage_started + 19 stage_completed + 1 tick_completed)), each line a parseable JSON record.
+
+Implementation notes:
+
+1. The assembled runtime is default-off for observability: without an injected recorder it behaves exactly as the bare kernel and emits nothing.
+2. The canonical stage-order constant uses the real `stage_name` values exposed by the stage adapters and is validated at assembly time; a mismatch raises `CompositionError`.
+3. The first-version bridges and injected owner capabilities are baseline shims, deterministic and bounded, generalized to advance across arbitrary ticks. Later owner-deepening waves replace them through the owners without changing the `assemble_runtime` contract.

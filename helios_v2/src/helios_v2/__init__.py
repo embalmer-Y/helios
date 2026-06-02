@@ -2,6 +2,7 @@
 
 from .action_externalization import ActionExternalizationAPI
 from .autonomy import AutonomyAPI
+from .composition import RuntimeHandle, assemble_runtime
 from .consciousness import ConsciousContentAPI
 from .directed_retrieval import DirectedRetrievalAPI
 from .evaluation import EvaluationAPI
@@ -44,8 +45,10 @@ __all__ = [
 	"OutwardExpressionAPI",
 	"OutwardExpressionExternalizationAPI",
 	"PlannerBridgeAPI",
+	"RuntimeHandle",
 	"RuntimeKernel",
 	"RuntimeObservabilityRecorder",
 	"ThoughtGatingAPI",
 	"WorkspaceCompetitionAPI",
+	"assemble_runtime",
 ]

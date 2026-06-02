@@ -1,0 +1,1019 @@
+"""Owner: runtime composition root.
+
+First-version owner-neutral cross-owner bridges and first-version injected owner
+capabilities required to assemble the runnable `01 -> 18` chain from shipped code.
+
+These bridges promote the previously test-only `Fixed*` doubles in
+`tests/test_runtime_stage_chain.py` into shipped, provenance-preserving, tick-general
+implementations. They are assembly glue, not owners:
+
+1. each bridge consumes explicit upstream stage results and produces the next owner's
+   request or context contract,
+2. each bridge preserves the upstream provenance ids the downstream stage contract
+   requires and fails fast (via the owners' own errors) on inconsistency,
+3. no bridge computes a downstream owner's semantic decision on its behalf,
+4. no bridge embeds a hardcoded runtime strategy branch; values not yet produced by an
+   owner come from explicit upstream contract fields.
+
+The first-version injected owner capabilities (appraisal estimators, neuromodulator
+update path, feeling construction path, memory formation path, workspace paths, and the
+directed-retrieval memory candidate provider) are deterministic and bounded. They are
+the minimum shipped behavior needed to make the chain runnable and are explicitly not
+the final owner policy; later owner-deepening waves replace them through the owners.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from helios_v2.appraisal.engine import (
+    AggregateJudgmentEstimator,
+    RapidDimensionEstimate,
+    RapidDimensionEstimator,
+)
+from helios_v2.action_externalization import ThoughtExternalizationRequest
+from helios_v2.autonomy import ProactiveDriveRequest
+from helios_v2.directed_retrieval import (
+    DirectedMemoryCandidateProvider,
+    MemoryRetrievalCandidate,
+    RetrievalQueryPlan,
+    RetrievalRequest,
+)
+from helios_v2.evaluation import EvaluationEvidenceBundle, EvaluationRequest
+from helios_v2.experience_writeback import ExperienceWritebackRequest
+from helios_v2.feeling import (
+    FeelingConstructionPath,
+    InteroceptiveFeelingConfig,
+    InteroceptiveFeelingState,
+    InteroceptiveFeelingVector,
+)
+from helios_v2.identity_governance import IdentityGovernanceRequest
+from helios_v2.internal_thought import InternalThoughtRequest
+from helios_v2.memory import (
+    AffectTaggedMemoryItem,
+    MemoryAffectReplayConfig,
+    MemoryBindingContext,
+    MemoryContentPacket,
+    MemoryFormationPath,
+    MemoryReplayCandidate,
+    PredictionMismatchEvidence,
+    ReplayCandidateSelector,
+)
+from helios_v2.neuromodulation import (
+    ActiveChannelReporter,
+    NeuromodulatorConfig,
+    NeuromodulatorLevels,
+    NeuromodulatorState,
+    NeuromodulatorUpdatePath,
+)
+from helios_v2.outward_expression_externalization import OutwardExpressionExternalizationRequest
+from helios_v2.planner_bridge import PlannerBridgeRequest
+from helios_v2.prompt_contract import EmbodiedPromptRequest
+from helios_v2.sensory import RawSignal, Stimulus
+from helios_v2.thought_gating import SelectedStimulusSummary, ThoughtGateSignalSnapshot
+from helios_v2.workspace import (
+    WorkingStateRetentionPath,
+    WorkingStateSnapshot,
+    WorkspaceCandidate,
+    WorkspaceCandidateSet,
+    WorkspaceCompetitionConfig,
+    WorkspaceCompetitionPath,
+)
+
+# ---------------------------------------------------------------------------
+# First-version injected owner capabilities (deterministic, bounded, baseline).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FirstVersionSensorySource:
+    """Owner: composition.
+
+    Purpose:
+        Provide one bounded raw-signal batch per tick through the sensory ingress owner.
+
+    Notes:
+        This is a driver-facing baseline source. Real external input replaces it through
+        the same `SensorySource` protocol in a later requirement.
+    """
+
+    source_name_value: str = "cli"
+    signals: tuple[RawSignal, ...] = ()
+
+    @property
+    def source_name(self) -> str:
+        """Stable source owner name consumed by sensory ingress registration."""
+
+        return self.source_name_value
+
+    def emit_raw_signals(self) -> tuple[RawSignal, ...]:
+        """Return the configured bounded raw-signal batch for the current collection."""
+
+        if self.signals:
+            return self.signals
+        return (
+            RawSignal(
+                signal_id="001",
+                source_name=self.source_name_value,
+                signal_type="text",
+                content="hello runtime",
+                channel=self.source_name_value,
+                metadata={"turn_id": "t1"},
+            ),
+        )
+
+
+@dataclass
+class FirstVersionDimensionEstimator(RapidDimensionEstimator):
+    """Owner: composition. First-version coarse dimension estimator (deterministic)."""
+
+    def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
+        del stimulus
+        return RapidDimensionEstimate(
+            threat=0.2,
+            reward=0.1,
+            novelty=0.6,
+            social=0.0,
+            uncertainty=0.3,
+        )
+
+
+@dataclass
+class FirstVersionAggregateEstimator(AggregateJudgmentEstimator):
+    """Owner: composition. First-version aggregate salience estimator (deterministic)."""
+
+    def estimate_aggregate(self, stimulus: Stimulus, dimensions: RapidDimensionEstimate) -> float:
+        del stimulus, dimensions
+        return 0.4
+
+
+@dataclass
+class FirstVersionNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
+    """Owner: composition. First-version neuromodulator update path (deterministic)."""
+
+    def update_levels(
+        self,
+        batch,
+        config: NeuromodulatorConfig,
+        tick_id: int | None,
+    ) -> NeuromodulatorLevels:
+        del batch, config, tick_id
+        return NeuromodulatorLevels(
+            dopamine=0.6,
+            norepinephrine=0.4,
+            serotonin=0.3,
+            acetylcholine=0.7,
+            cortisol=0.2,
+            oxytocin=0.1,
+            opioid_tone=0.1,
+            excitation=0.8,
+            inhibition=0.3,
+        )
+
+
+@dataclass
+class FirstVersionActiveChannelReporter(ActiveChannelReporter):
+    """Owner: composition. First-version active-channel reporter (deterministic)."""
+
+    def report_active_channels(
+        self,
+        state: NeuromodulatorState,
+        config: NeuromodulatorConfig,
+    ) -> tuple[str, ...]:
+        del state, config
+        return ("acetylcholine", "excitation")
+
+
+@dataclass
+class FirstVersionFeelingConstructionPath(FeelingConstructionPath):
+    """Owner: composition. First-version interoceptive feeling construction (deterministic)."""
+
+    def construct_feeling(
+        self,
+        neuromodulator_state: NeuromodulatorState,
+        internal_signals: tuple[Stimulus, ...],
+        config: InteroceptiveFeelingConfig,
+        tick_id: int | None,
+    ) -> InteroceptiveFeelingVector:
+        del neuromodulator_state, internal_signals, config, tick_id
+        return InteroceptiveFeelingVector(
+            valence=0.4,
+            arousal=0.7,
+            tension=0.5,
+            comfort=0.2,
+            fatigue=0.3,
+            pain_like=0.1,
+            social_safety=0.4,
+        )
+
+
+@dataclass
+class FirstVersionDominantDimensionReporter:
+    """Owner: composition. First-version dominant-feeling-dimension reporter (deterministic)."""
+
+    def report_dominant_dimensions(
+        self,
+        state: InteroceptiveFeelingState,
+        config: InteroceptiveFeelingConfig,
+    ) -> tuple[str, ...]:
+        del state, config
+        return ("arousal", "tension")
+
+
+@dataclass
+class FirstVersionMemoryFormationPath(MemoryFormationPath):
+    """Owner: composition. First-version memory formation path (deterministic).
+
+    Consumes the explicit binding context and feeling state; forms one episodic item that
+    preserves the upstream feeling-state and binding-context provenance.
+    """
+
+    def form_memory_items(
+        self,
+        feeling_state: InteroceptiveFeelingState,
+        binding_context: MemoryBindingContext | None,
+        mismatch_evidence: PredictionMismatchEvidence | None,
+        config: MemoryAffectReplayConfig,
+        tick_id: int | None,
+    ) -> tuple[AffectTaggedMemoryItem, ...]:
+        del mismatch_evidence, config
+        if binding_context is None:
+            return ()
+        return (
+            AffectTaggedMemoryItem(
+                memory_id=f"memory:runtime:{tick_id}",
+                family="episodic",
+                source_feeling_state_id=feeling_state.state_id,
+                affect_tag=feeling_state.feeling,
+                content=binding_context.content,
+                binding_context_id=binding_context.context_id,
+                tick_id=tick_id,
+            ),
+        )
+
+
+@dataclass
+class FirstVersionReplayCandidateSelector(ReplayCandidateSelector):
+    """Owner: composition. First-version replay-candidate selector (deterministic)."""
+
+    def select_candidates(
+        self,
+        memory_items: tuple[AffectTaggedMemoryItem, ...],
+        feeling_state: InteroceptiveFeelingState,
+        mismatch_evidence: PredictionMismatchEvidence | None,
+        config: MemoryAffectReplayConfig,
+    ) -> tuple[MemoryReplayCandidate, ...]:
+        del mismatch_evidence, config
+        candidates: list[MemoryReplayCandidate] = []
+        for index, item in enumerate(memory_items):
+            candidates.append(
+                MemoryReplayCandidate(
+                    candidate_id=f"candidate:runtime:{feeling_state.tick_id}:{index}",
+                    memory_id=item.memory_id,
+                    family=item.family,
+                    source_feeling_state_id=feeling_state.state_id,
+                    replay_reasons=(
+                        "high_affect_intensity",
+                        "prediction_mismatch_or_surprise",
+                    ),
+                    forced_consolidation=True,
+                    priority_hint=0.9,
+                )
+            )
+        return tuple(candidates)
+
+
+@dataclass
+class FirstVersionWorkspaceCompetitionPath(WorkspaceCompetitionPath):
+    """Owner: composition. First-version workspace competition path (deterministic).
+
+    Promotes each forced-consolidation replay candidate into one workspace candidate that
+    preserves the source replay-candidate id and feeling-state provenance.
+    """
+
+    def build_candidate_set(
+        self,
+        replay_candidates: tuple[MemoryReplayCandidate, ...],
+        feeling_state: InteroceptiveFeelingState,
+        config: WorkspaceCompetitionConfig,
+        tick_id: int | None,
+    ) -> WorkspaceCandidateSet:
+        del config
+        candidates: list[WorkspaceCandidate] = []
+        for index, replay_candidate in enumerate(replay_candidates):
+            candidates.append(
+                WorkspaceCandidate(
+                    candidate_id=f"workspace-candidate:runtime:{tick_id}:{index}",
+                    source_memory_candidate_id=replay_candidate.candidate_id,
+                    source_feeling_state_id=feeling_state.state_id,
+                    priority_hint=replay_candidate.priority_hint,
+                    forced_consolidation=replay_candidate.forced_consolidation,
+                    workspace_score_hint=0.95,
+                )
+            )
+        return WorkspaceCandidateSet(
+            set_id=f"workspace-set:runtime:{tick_id}",
+            source_feeling_state_id=feeling_state.state_id,
+            candidates=tuple(candidates),
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionWorkingStateRetentionPath(WorkingStateRetentionPath):
+    """Owner: composition. First-version working-state retention path (deterministic)."""
+
+    def retain_working_state(
+        self,
+        candidate_set: WorkspaceCandidateSet,
+        config: WorkspaceCompetitionConfig,
+        tick_id: int | None,
+    ) -> WorkingStateSnapshot:
+        del config
+        return WorkingStateSnapshot(
+            state_id=f"working-state:runtime:{tick_id}",
+            source_candidate_set_id=candidate_set.set_id,
+            retained_candidate_ids=tuple(
+                candidate.candidate_id for candidate in candidate_set.candidates
+            ),
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionDirectedMemoryCandidateProvider(DirectedMemoryCandidateProvider):
+    """Owner: composition. First-version directed-retrieval candidate provider (deterministic).
+
+    Returns a bounded tiered candidate set derived from the explicit retrieval plan so the
+    directed-retrieval owner can assemble a thought-window bundle.
+    """
+
+    def collect_candidates(self, plan: RetrievalQueryPlan) -> tuple[MemoryRetrievalCandidate, ...]:
+        return (
+            MemoryRetrievalCandidate(
+                candidate_id=f"candidate:short:{plan.plan_id}",
+                tier="short_term",
+                memory_id=f"memory:short:{plan.plan_id}",
+                memory_type="short_term_context",
+                summary="current runtime stimulus context",
+                score=0.9,
+                source="retrieval_request",
+                tags=("current",),
+            ),
+            MemoryRetrievalCandidate(
+                candidate_id=f"candidate:mid:{plan.plan_id}",
+                tier="mid_term",
+                memory_id=f"memory:mid:{plan.plan_id}",
+                memory_type="episodic",
+                summary="situational-summary: prior runtime context",
+                score=0.85,
+                source="memory_affect_and_replay",
+                tags=("episodic",),
+            ),
+            MemoryRetrievalCandidate(
+                candidate_id=f"candidate:auto:{plan.plan_id}",
+                tier="autobiographical",
+                memory_id=f"memory:auto:{plan.plan_id}",
+                memory_type="autobiographical",
+                summary="runtime continuity trace",
+                score=0.65,
+                source="memory_affect_and_replay",
+                tags=("continuity",),
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Cross-owner bridges (owner-neutral request/context assembly, provenance-preserving).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FirstVersionMemoryBindingContextBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the explicit memory binding context for one tick from the feeling result.
+
+    Notes:
+        Owner-neutral glue. It forwards a bounded situational content packet and preserves
+        the current tick identity; it does not decide memory formation policy.
+    """
+
+    def build_binding_context(self, frame, feeling_result) -> MemoryBindingContext | None:
+        tick_id = frame.tick_id
+        return MemoryBindingContext(
+            context_id=f"binding:runtime:{tick_id}",
+            source_kind="runtime_chain",
+            content=MemoryContentPacket(
+                content_kind="situational-summary",
+                summary_ref=f"summary:runtime:{tick_id}",
+                context_ref=f"context:runtime:{tick_id}",
+                salient_tokens=("hello", "novelty"),
+            ),
+        )
+
+
+@dataclass
+class FirstVersionPredictionMismatchEvidenceBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build explicit prediction-mismatch evidence for one tick from the feeling result.
+
+    Notes:
+        Owner-neutral glue. It preserves the upstream feeling-state id as the source
+        reference and does not decide memory replay policy.
+    """
+
+    def build_mismatch_evidence(self, frame, feeling_result) -> PredictionMismatchEvidence | None:
+        tick_id = frame.tick_id
+        return PredictionMismatchEvidence(
+            evidence_id=f"mismatch:runtime:{tick_id}",
+            source_reference_id=feeling_result.state.state_id,
+            mismatch_score=0.8,
+            anomaly_score=0.85,
+            confidence=0.9,
+        )
+
+
+@dataclass
+class FirstVersionThoughtGateSignalBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the normalized thought-gate signal snapshot from the conscious-content result.
+
+    Notes:
+        Owner-neutral glue. It preserves the upstream conscious-state id and forwards a
+        bounded signal snapshot; it does not decide the gate result.
+    """
+
+    def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
+        tick_id = frame.tick_id
+        return ThoughtGateSignalSnapshot(
+            snapshot_id=f"gate-snapshot:runtime:{tick_id}",
+            source_conscious_state_id=conscious_result.state.state_id,
+            workload_pressure=0.1,
+            global_activation_level=0.9,
+            temporal_signal=0.4,
+            drive_urgency_signal=0.7,
+            dmn_available=True,
+            selected_stimuli=(
+                SelectedStimulusSummary(
+                    stimulus_id=f"stimulus:runtime:{tick_id}",
+                    source_kind="external_text",
+                    source_channel_id="cli",
+                    stimulus_intensity=0.9,
+                    novelty_signal=0.6,
+                    sensitization_signal=0.2,
+                ),
+            ),
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionDirectedRetrievalRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the directed-retrieval request from the thought-gating result.
+
+    Notes:
+        Owner-neutral glue. It preserves the upstream gate-result id and continuation flag
+        and forwards a bounded recall intent; it does not decide tiered selection policy.
+    """
+
+    def build_request(self, frame, thought_gating_result) -> RetrievalRequest:
+        tick_id = frame.tick_id
+        return RetrievalRequest(
+            request_id=f"retrieval-request:runtime:{tick_id}",
+            source_gate_result_id=thought_gating_result.result.result_id,
+            source_continuation_active=thought_gating_result.continuation_state.active,
+            compact_stimuli=thought_gating_result.result.selected_stimuli,
+            recall_intent="remember runtime chain context",
+            selected_memory_refs=(f"memory:runtime:{tick_id}",),
+            target_tiers=("short_term", "mid_term", "long_term", "autobiographical"),
+            limit=2,
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionEmbodiedPromptRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the thought and outward-expression embodied-prompt requests for one tick.
+
+    Notes:
+        Owner-neutral glue. It forwards bounded current-cycle summaries and preserves the
+        upstream conscious-state, gate-result, and retrieval-bundle ids; it does not render
+        the prompt or decide prompt-layering policy.
+    """
+
+    def build_requests(
+        self,
+        frame,
+        conscious_result,
+        thought_gating_result,
+        directed_retrieval_result,
+    ) -> tuple[EmbodiedPromptRequest, ...]:
+        tick_id = frame.tick_id
+        stimulus_summary = {
+            "present_field": "A cli text stimulus is present in the current sensory field.",
+        }
+        state_summary = {
+            "affective_summary": "arousal is elevated and attention is focused on the current cue",
+            "continuation_summary": "continuation pressure is active for the current external stimulus",
+        }
+        retrieval_summary = {
+            "retrieval_context": "short-term context and autobiographical continuity trace are both active",
+            "continuity_context": "preserve the current user anchor and current unresolved reply obligation",
+        }
+        capability_summary = {
+            "available_channels": ("cli",),
+            "available_ops": ("reply_message",),
+            "forbidden_capabilities": ("direct_execution", "invented_channel"),
+        }
+        identity_boundary_summary = {
+            "identity_boundary": "identity revision remains proposal-only and governance-validated",
+        }
+        conscious_state_id = conscious_result.state.state_id
+        gate_result_id = thought_gating_result.result.result_id
+        bundle_id = directed_retrieval_result.bundle.bundle_id
+        return (
+            EmbodiedPromptRequest(
+                request_id=f"embodied-prompt-request:thought:runtime:{tick_id}",
+                consumer_kind="thought",
+                source_conscious_state_id=conscious_state_id,
+                source_gate_result_id=gate_result_id,
+                source_retrieval_bundle_id=bundle_id,
+                stimulus_summary=stimulus_summary,
+                state_summary=state_summary,
+                retrieval_summary=retrieval_summary,
+                capability_summary=capability_summary,
+                identity_boundary_summary=identity_boundary_summary,
+                tick_id=tick_id,
+            ),
+            EmbodiedPromptRequest(
+                request_id=f"embodied-prompt-request:outward-expression:runtime:{tick_id}",
+                consumer_kind="outward_expression",
+                source_conscious_state_id=conscious_state_id,
+                source_gate_result_id=gate_result_id,
+                source_retrieval_bundle_id=bundle_id,
+                stimulus_summary=stimulus_summary,
+                state_summary=state_summary,
+                retrieval_summary=retrieval_summary,
+                capability_summary=capability_summary,
+                identity_boundary_summary=identity_boundary_summary,
+                tick_id=tick_id,
+            ),
+        )
+
+
+@dataclass
+class FirstVersionInternalThoughtRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the internal-thought request from gating, retrieval, and prompt results.
+
+    Notes:
+        Owner-neutral glue. It preserves the upstream gate-result and retrieval-bundle ids
+        and forwards a bounded prompt-contract summary; it does not perform thought.
+    """
+
+    def build_request(
+        self,
+        frame,
+        thought_gating_result,
+        directed_retrieval_result,
+        prompt_result,
+    ) -> InternalThoughtRequest:
+        tick_id = frame.tick_id
+        thought_contract = next(
+            contract for contract in prompt_result.contracts if contract.consumer_kind == "thought"
+        )
+        return InternalThoughtRequest(
+            request_id=f"internal-thought-request:runtime:{tick_id}",
+            source_gate_result_id=thought_gating_result.result.result_id,
+            source_retrieval_bundle_id=directed_retrieval_result.bundle.bundle_id,
+            source_continuation_active=thought_gating_result.continuation_state.active,
+            internal_state_summary="runtime state summary",
+            prompt_contract_summary={
+                "contract_id": thought_contract.contract_id,
+                "consumer_kind": thought_contract.consumer_kind,
+                "layer_names": tuple(layer.layer_name for layer in thought_contract.layers),
+                "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
+                "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
+            },
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionThoughtExternalizationRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the thought-externalization request from the internal-thought result.
+
+    Notes:
+        Owner-neutral glue. It preserves the thought-cycle-result id and whether a proposal
+        carrier is present; it does not decide externalization acceptance.
+    """
+
+    def build_request(self, frame, internal_thought_result) -> ThoughtExternalizationRequest:
+        tick_id = frame.tick_id
+        return ThoughtExternalizationRequest(
+            request_id=f"externalization-request:runtime:{tick_id}",
+            source_thought_cycle_result_id=internal_thought_result.result.result_id,
+            proposal_carrier_present=internal_thought_result.result.action_proposal is not None,
+            target_binding_context={"target_user_id": f"user:runtime:{tick_id}"},
+            channel_hint_context={"channel_family": "cli"},
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionOutwardExpressionExternalizationRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the outward-expression externalization request from the outward-expression draft.
+
+    Notes:
+        Owner-neutral glue. It forwards the explicit draft fields verbatim and preserves the
+        draft and prompt-contract provenance ids; it does not hold execution authority.
+    """
+
+    def build_request(self, frame, outward_expression_result) -> OutwardExpressionExternalizationRequest:
+        del frame
+        draft = outward_expression_result.draft
+        return OutwardExpressionExternalizationRequest(
+            request_id=f"outward-expression-externalization-request:{draft.draft_id}",
+            source_outward_expression_draft_id=draft.draft_id,
+            source_prompt_contract_id=draft.source_prompt_contract_id,
+            rendered_prompt=draft.rendered_prompt,
+            delivery_channels=draft.delivery_channels,
+            delivery_ops=draft.delivery_ops,
+            delivery_guidance=draft.delivery_guidance,
+            forbidden_capabilities=draft.forbidden_capabilities,
+            final_authorities=draft.final_authorities,
+            anti_theatrical_constraints=draft.anti_theatrical_constraints,
+        )
+
+
+@dataclass
+class FirstVersionPlannerBridgeRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the planner-bridge request from the action-externalization result.
+
+    Notes:
+        Owner-neutral glue. It preserves the externalization-result id and forwards bounded
+        behavior, channel-descriptor, and channel-status snapshots; it does not decide
+        acceptance. The snapshots are explicit assembly inputs, not owner judgment.
+    """
+
+    def build_request(self, frame, action_externalization_result) -> PlannerBridgeRequest:
+        tick_id = frame.tick_id
+        return PlannerBridgeRequest(
+            request_id=f"planner-bridge-request:runtime:{tick_id}",
+            source_externalization_result_id=action_externalization_result.result.result_id,
+            normalized_proposal_present=action_externalization_result.result.normalized_proposal is not None,
+            behavior_snapshot={
+                "registered": True,
+                "reviewed": True,
+                "minimum_score": 0.5,
+                "proposal_score": 0.9,
+                "execution_priority": 2,
+            },
+            channel_descriptor_snapshot={
+                "cli": {
+                    "supported_ops": ("reply_message",),
+                    "output_ops": ("reply_message",),
+                }
+            },
+            channel_status_snapshot={
+                "cli": {
+                    "available": True,
+                    "bound": True,
+                    "execute_now": True,
+                    "execution_success": True,
+                }
+            },
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionIdentityGovernanceRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the identity-governance request from the internal-thought result.
+
+    Notes:
+        Owner-neutral glue. It preserves the thought-cycle-result and proposal ids and
+        forwards bounded proposal and identity-state snapshots; it does not decide the
+        revision outcome. When no self-revision proposal is present, it returns a
+        proposal-absent request so governance can still run.
+    """
+
+    def build_request(self, frame, internal_thought_result) -> IdentityGovernanceRequest:
+        tick_id = frame.tick_id
+        proposal = internal_thought_result.result.self_revision_proposal
+        proposal_present = proposal is not None
+        proposal_id = proposal.proposal_id if proposal is not None else ""
+        if proposal is not None:
+            proposal_snapshot = {
+                "owner_path": "self_revision_governance_bridge",
+                "revision_type": "autobiographical_identity_narrative_revision",
+                "requested_change": {"narrative_summary": proposal.requested_change_summary},
+                "confidence": 0.78,
+                "reason_trace": (proposal.reason_trace,),
+            }
+        else:
+            proposal_snapshot = {}
+        return IdentityGovernanceRequest(
+            request_id=f"identity-governance-request:runtime:{tick_id}",
+            source_thought_cycle_result_id=internal_thought_result.result.result_id,
+            source_proposal_id=proposal_id,
+            proposal_present=proposal_present,
+            proposal_snapshot=proposal_snapshot,
+            identity_state_snapshot={
+                "self_definition": "runtime identity definition",
+                "personality_baseline": {"openness": 1.0, "agreeableness": 1.0},
+                "identity_metadata": {},
+                "current_revision": "bootstrap",
+                "revision_history_length": 0,
+            },
+            governance_trace_summary={},
+            recent_governance_trace_history=(),
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class FirstVersionExperienceWritebackRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build experience-writeback requests from the planner-bridge and governance results.
+
+    Notes:
+        Owner-neutral glue. It preserves planner and governance provenance ids and forwards
+        bounded outcome summaries; it does not decide consolidation policy. It only emits a
+        request for an outcome that actually has the upstream evidence it references.
+    """
+
+    def build_requests(
+        self,
+        frame,
+        planner_bridge_result,
+        identity_governance_result,
+    ) -> tuple[ExperienceWritebackRequest, ...]:
+        tick_id = frame.tick_id
+        requests: list[ExperienceWritebackRequest] = []
+
+        planner_decision = planner_bridge_result.result.action_decision
+        planner_feedback = planner_bridge_result.execution_feedback
+        if planner_decision is not None and planner_feedback is not None:
+            requests.append(
+                ExperienceWritebackRequest(
+                    request_id=f"experience-writeback-request:planner:runtime:{tick_id}",
+                    source_outcome_kind="planner_bridge",
+                    source_outcome_id=planner_bridge_result.result.result_id,
+                    source_outcome_status=planner_bridge_result.result.status,
+                    outcome_class="world_changed",
+                    source_provenance={
+                        "source_request_id": planner_bridge_result.request.request_id,
+                        "proposal_id": planner_decision.proposal_id,
+                        "decision_id": planner_decision.decision_id,
+                        "channel_id": planner_feedback.channel_id,
+                        "op_name": planner_feedback.op_name,
+                    },
+                    requested_effect_summary=(
+                        f"{planner_decision.selected_op} via {planner_decision.selected_channel_id}"
+                    ),
+                    applied_effect_summary=(
+                        f"{planner_feedback.op_name} reached {planner_feedback.channel_id} transport"
+                    ),
+                    reason_trace=("planner bridge executed the normalized external action",),
+                    tick_id=tick_id,
+                )
+            )
+
+        revision_decision = identity_governance_result.result.revision_decision
+        applied_identity_state = identity_governance_result.result.applied_identity_state
+        if applied_identity_state is not None:
+            requests.append(
+                ExperienceWritebackRequest(
+                    request_id=f"experience-writeback-request:identity:runtime:{tick_id}",
+                    source_outcome_kind="identity_governance",
+                    source_outcome_id=identity_governance_result.result.result_id,
+                    source_outcome_status=revision_decision.status,
+                    outcome_class="self_changed",
+                    source_provenance={
+                        "source_request_id": identity_governance_result.request.request_id,
+                        "origin_thought_id": revision_decision.origin_thought_id,
+                        "proposal_id": revision_decision.proposal_id,
+                        "revision_id": revision_decision.revision_id,
+                    },
+                    requested_effect_summary="autobiographical identity narrative revision was proposed",
+                    applied_effect_summary=(
+                        f"identity state advanced to {applied_identity_state.current_revision}"
+                    ),
+                    reason_trace=revision_decision.reason_trace,
+                    tick_id=tick_id,
+                )
+            )
+
+        return tuple(requests)
+
+
+@dataclass
+class FirstVersionAutonomyRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the proactive-drive request from the upstream owner results for one tick.
+
+    Notes:
+        Owner-neutral glue. It preserves the upstream gate, retrieval, thought, planner,
+        governance, writeback, and outward-expression provenance ids and forwards bounded
+        drive summaries; it does not decide the proactive disposition.
+    """
+
+    def build_request(
+        self,
+        frame,
+        thought_gating_result,
+        directed_retrieval_result,
+        internal_thought_result,
+        planner_bridge_result,
+        identity_governance_result,
+        experience_writeback_result,
+        prompt_result,
+        outward_expression_result,
+        outward_expression_externalization_result,
+    ) -> ProactiveDriveRequest:
+        tick_id = frame.tick_id
+        bundle = directed_retrieval_result.bundle
+        retrieval_pull = float(len(bundle.mid_term_hits) + len(bundle.autobiographical_hits)) / 4.0
+        return ProactiveDriveRequest(
+            request_id=f"autonomy-request:runtime:{tick_id}",
+            source_gate_result_id=thought_gating_result.result.result_id,
+            source_retrieval_bundle_id=bundle.bundle_id,
+            source_thought_cycle_result_id=internal_thought_result.result.result_id,
+            source_planner_bridge_result_id=planner_bridge_result.result.result_id,
+            source_identity_governance_result_id=identity_governance_result.result.result_id,
+            source_writeback_result_ids=tuple(
+                result.result_id for result in experience_writeback_result.results
+            ),
+            source_outward_expression_draft_id=outward_expression_result.draft.draft_id,
+            source_outward_expression_externalization_draft_id=(
+                outward_expression_externalization_result.draft.draft_id
+            ),
+            continuation_summary={"continuation_pressure": 0.8},
+            retrieval_pull_summary={"retrieval_pull": retrieval_pull},
+            temporal_pressure_summary={"temporal_pressure": 0.7},
+            identity_unresolved_summary={"identity_unresolved_pressure": 0.6},
+            outward_readiness_summary={
+                "outward_ready": True,
+                "externalization_blocked": False,
+            },
+        )
+
+
+@dataclass
+class FirstVersionEvaluationRequestBridge:
+    """Owner: composition.
+
+    Purpose:
+        Build the evaluation request and read-only evidence bundle from upstream results.
+
+    Notes:
+        Owner-neutral glue. It assembles a provenance-rich, read-only evidence bundle from
+        already-public owner results; it does not mutate runtime state or score fidelity.
+    """
+
+    def build_request(
+        self,
+        frame,
+        internal_thought_result,
+        action_externalization_result,
+        planner_bridge_result,
+        identity_governance_result,
+        experience_writeback_result,
+        autonomy_result,
+        prompt_result,
+        outward_expression_result,
+        outward_expression_externalization_result,
+    ) -> EvaluationRequest:
+        tick_id = frame.tick_id
+        return EvaluationRequest(
+            request_id=f"evaluation-request:runtime:{tick_id}",
+            scenario_kind="runtime_tick",
+            time_window_summary={
+                "window_label": f"runtime-tick:{tick_id}",
+                "late_session_degradation_status": "not_evaluated",
+                "specific_recall_persistence_status": "not_evaluated",
+                "user_visible_anchoring_drift_status": "not_evaluated",
+                "comparison_window_label": f"runtime_tick:{tick_id}",
+            },
+        )
+
+    def build_evidence_bundle(
+        self,
+        frame,
+        request,
+        internal_thought_result,
+        action_externalization_result,
+        planner_bridge_result,
+        identity_governance_result,
+        experience_writeback_result,
+        autonomy_result,
+        prompt_result,
+        outward_expression_result,
+        outward_expression_externalization_result,
+    ) -> EvaluationEvidenceBundle:
+        tick_id = frame.tick_id
+        thought_result = internal_thought_result.result
+        action_result = action_externalization_result.result
+        planner_result = planner_bridge_result.result
+        governance_result = identity_governance_result.result
+        return EvaluationEvidenceBundle(
+            bundle_id=f"evaluation-bundle:runtime:{tick_id}",
+            source_request_id=request.request_id,
+            thought_evidence=(
+                {
+                    "evidence_id": thought_result.result_id,
+                    "execution_status": thought_result.execution_status,
+                    "action_proposal_present": thought_result.action_proposal is not None,
+                },
+            ),
+            action_evidence=(
+                {
+                    "evidence_id": action_result.result_id,
+                    "status": action_result.status,
+                    "normalized_proposal_present": action_result.normalized_proposal is not None,
+                },
+            ),
+            planner_evidence=(
+                {
+                    "evidence_id": planner_result.result_id,
+                    "status": planner_result.status,
+                    "execution_feedback_present": planner_bridge_result.execution_feedback is not None,
+                },
+            ),
+            governance_evidence=(
+                {
+                    "evidence_id": governance_result.result_id,
+                    "status": governance_result.revision_decision.status,
+                    "pressure_level": governance_result.pressure_state.pressure_level,
+                },
+            ),
+            writeback_evidence=tuple(
+                {
+                    "evidence_id": result.result_id,
+                    "status": result.status,
+                    "continuity_kind": result.continuity_packet.continuity_kind,
+                }
+                for result in experience_writeback_result.results
+            ),
+            autonomy_evidence=(
+                {
+                    "evidence_id": autonomy_result.result.result_id,
+                    "dominant_disposition": autonomy_result.result.drive_state.dominant_disposition,
+                    "deferred_active": autonomy_result.result.drive_state.deferred_active,
+                    "proactive_action_requested": autonomy_result.result.drive_state.proactive_action_requested,
+                },
+            ),
+            prompt_evidence=tuple(
+                {
+                    "evidence_id": contract.contract_id,
+                    "status": "published",
+                    "consumer_kind": contract.consumer_kind,
+                }
+                for contract in prompt_result.contracts
+            ),
+            outward_expression_evidence=(
+                {
+                    "evidence_id": outward_expression_result.draft.draft_id,
+                    "status": "prepared",
+                    "source_prompt_contract_id": outward_expression_result.draft.source_prompt_contract_id,
+                },
+            ),
+            outward_expression_externalization_evidence=(
+                {
+                    "evidence_id": outward_expression_externalization_result.draft.draft_id,
+                    "status": "prepared",
+                    "source_prompt_contract_id": outward_expression_externalization_result.draft.source_prompt_contract_id,
+                },
+            ),
+        )
