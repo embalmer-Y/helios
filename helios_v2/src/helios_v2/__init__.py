@@ -11,6 +11,12 @@ from .identity_governance import IdentityGovernanceAPI
 from .internal_thought import InternalThoughtAPI
 from .memory import MemoryAffectReplayAPI
 from .neuromodulation import NeuromodulatorSystemAPI
+from .observability import (
+	LogEvent,
+	LogSink,
+	ObservabilityError,
+	RuntimeObservabilityRecorder,
+)
 from .outward_expression import OutwardExpressionAPI
 from .outward_expression_externalization import OutwardExpressionExternalizationAPI
 from .planner_bridge import PlannerBridgeAPI
@@ -30,12 +36,16 @@ __all__ = [
 	"InteroceptiveFeelingAPI",
 	"IdentityGovernanceAPI",
 	"InternalThoughtAPI",
+	"LogEvent",
+	"LogSink",
 	"MemoryAffectReplayAPI",
 	"NeuromodulatorSystemAPI",
+	"ObservabilityError",
 	"OutwardExpressionAPI",
 	"OutwardExpressionExternalizationAPI",
 	"PlannerBridgeAPI",
 	"RuntimeKernel",
+	"RuntimeObservabilityRecorder",
 	"ThoughtGatingAPI",
 	"WorkspaceCompetitionAPI",
 ]

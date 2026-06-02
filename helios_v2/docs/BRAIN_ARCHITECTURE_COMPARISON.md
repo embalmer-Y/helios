@@ -48,7 +48,7 @@ Companion progress-truth documents:
 | `17` evaluation | read-only metacognitive-style audit and provenance-based self-check | engineering substitute | `B_functional_inspiration` | formal evidence bundle and diagnostic artifact owner now exists | diagnostic depth remains shallower than the final project goal and still under-consumes richer autonomy continuity semantics | `17`, `18` |
 | `18` autonomy | self-directed continuation pressure integration, deferred continuity, bounded proactive tendency | functional analogy | `B_functional_inspiration` | owner now supports multi-tick deferred continuity with long-horizon decay, merge, and resolution accounting | still deterministic and bounded, not a rich open-ended autonomy policy or independently grounded motive system | `18` |
 | identity and governance path | persistent self-model maintenance, self-revision constraint, continuity-preserving identity updates | engineering substitute | `B_functional_inspiration` | self-revision governance owner is explicit | long-horizon self-model evolution remains more audited than genuinely developmental | `14`, `18` |
-| requirement and boundary documentation owners | explicit theory-of-system discipline rather than a brain analogue | current absence of biological analogue by design | `C_engineering_hypothesis` | documentation discipline is formalized for architecture control | grounding and architecture truth are still document-heavy and not yet backed by automated consistency checks | `19`, `20` |
+| observability plus documentation owners | structured runtime traceability plus explicit theory-of-system discipline rather than a brain analogue | engineering substitute for auditability plus current absence of biological analogue by design | `C_engineering_hypothesis` | documentation discipline is formalized and kernel-level runtime observability now exists | observability is still kernel-scoped and documentation truth is still not backed by automated consistency checks | `19`, `20`, `21` |
 
 ## 5. Explicit Gap Analysis
 
@@ -58,7 +58,7 @@ Companion progress-truth documents:
 | `gap_long_horizon_autonomy` | Autonomy now preserves deferred continuity across ticks, but the policy remains bounded and deterministic | Stronger subjective continuity requires richer persistence, conflict handling, and motive evolution than a first-version bounded policy | `18` |
 | `gap_grounded_self_revision` | Identity governance exists, but self-evolution remains tightly audited and relatively shallow | Brain-inspired self-model claims need explicit long-term continuity, not only controlled patch updates | `14`, `18` |
 | `gap_execution_closure` | Proactive tendency does not yet close into a richer external action ecology with the same strength as internal traces | A system that mostly sustains internal traces without robust external consequence remains only partially aligned with action-oriented cognition | `13`, `16`, `18` |
-| `gap_scientific_traceability` | Grounding claims are now formalized, but they are still early and mostly document-reviewed rather than systematically revalidated | Scientific-grounding language drifts easily unless later requirements keep traceability active | `19`, `20` |
+| `gap_scientific_traceability` | Grounding claims are now formalized and kernel-level runtime observability exists, but they are still only partially revalidated through downstream diagnostics | Scientific-grounding language drifts easily unless later requirements keep traceability active and consume the new evidence surfaces | `19`, `20`, `21` |
 
 ## 6. Explicit Non-Goals
 
@@ -113,7 +113,7 @@ The roadmap below turns the current gap list into an owner-ordered planning sequ
 
 | Wave | Primary owners | Priority level | Grounding claim strengthened | Main gaps targeted | Why this wave comes now | Exit signal |
 | --- | --- | --- | --- | --- | --- | --- |
-| `wave_A_behavioral_truth` | `17`, adjacent `18` evidence publication | highest | internal activation has externally consequential diagnostic truth | `gap_behavioral_consequence_binding` | current brain-like claims are weakest where internal evidence can still outrun visible outcome | evaluation artifacts explicitly score internal-to-visible consequence binding and consume richer autonomy continuity evidence |
+| `wave_A_behavioral_truth` | `17`, supporting `21`, adjacent `18` evidence publication | highest | internal activation has externally consequential diagnostic truth | `gap_behavioral_consequence_binding` | current brain-like claims are weakest where internal evidence can still outrun visible outcome, and `21` now provides the baseline execution timeline needed for better diagnostics | evaluation artifacts explicitly score internal-to-visible consequence binding and consume both richer autonomy continuity evidence and the `21` kernel timeline |
 | `wave_B_long_horizon_subjectivity` | `18`, adjacent `14` and `15` continuity surfaces | highest | subjective continuity is more than bounded carry-forward | `gap_long_horizon_autonomy`, `gap_grounded_self_revision` | autonomy now has a real owner path, so the next leverage is richer persistence, conflict handling, and self-model continuity | autonomy and identity traces expose longer-horizon continuity states that remain owner-owned and diagnostically visible |
 | `wave_C_execution_closure` | `13`, `16`, adjacent policy/externalization surfaces | medium_high | proactive tendency can close into constrained outward consequence rather than staying mostly internal | `gap_execution_closure` | stronger autonomy claims will still look shallow if proactive traces rarely become formal outward outcomes | proactive-origin action paths reach planner and outward consequence with explicit provenance and bounded rejection semantics |
 | `wave_D_grounding_governance` | `19`, `20` | medium | scientific-grounding and owner truth remain traceable rather than drifting into narrative | `gap_scientific_traceability` | once earlier owner waves move, grounding docs must keep pace or the comparison layer becomes stale | grounding and boundary docs explicitly record changed claims, retired gaps, and newly opened gaps |
@@ -123,10 +123,12 @@ The roadmap below turns the current gap list into an owner-ordered planning sequ
 #### Wave A - behavioral truth
 
 1. Primary requirement target: `17`.
-2. Adjacent requirement target: `18` only where new autonomy evidence must cross into diagnostics.
-3. Grounding rationale: systems should not receive strong brain-like credit for internal dynamics that do not reliably affect visible behavior or visible restraint.
-4. Minimum closeout markers:
+2. Supporting requirement target: `21` as the baseline structured execution-evidence substrate.
+3. Adjacent requirement target: `18` only where new autonomy evidence must cross into diagnostics.
+4. Grounding rationale: systems should not receive strong brain-like credit for internal dynamics that do not reliably affect visible behavior or visible restraint.
+5. Minimum closeout markers:
    - evaluation artifacts distinguish internal activation from external consequence more sharply,
+   - the `21` kernel timeline is consumed as evidence rather than existing as a disconnected log surface,
    - autonomy evidence includes enough continuity detail for evaluation to detect preserved vs resolved vs degraded continuity,
    - requirement-linked gap language in this document can narrow `gap_behavioral_consequence_binding` rather than merely restate it.
 

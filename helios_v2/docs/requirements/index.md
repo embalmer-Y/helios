@@ -22,6 +22,7 @@
 | 18 | Subjective Autonomy and Proactive Evolution | draft | relatively_complete | 09, 10, 11, 13, 15, 16, 17 | Establishes the sole owner of proactive-drive integration, multi-tick self-directed continuation, long-horizon deferred-continuity decay/merge/resolution, and controlled proactive externalization without collapsing into prompt theater or channel-owned triggering |
 | 19 | Architecture Boundary and Owner Documentation | draft | baseline_implementation | 01-18 | Establishes the formal v2 boundary-truth documentation set that keeps runtime owners, allowed dependencies, migration notes, and prohibited shortcuts aligned with implementation truth |
 | 20 | Brain Architecture Comparison and Scientific Grounding | draft | baseline_implementation | 19 | Establishes the formal scientific-grounding documentation set that maps v2 owner domains to cautious brain-function analogs, evidence categories, explicit non-goals, requirement-linked gap analysis, and an owner-wave gap roadmap |
+| 21 | Unified Runtime Observability and Logging | draft | baseline_implementation | 01 | Establishes the sole owner of structured runtime log events, severity/event-kind taxonomies, fail-fast sink dispatch, and an optional kernel-level emission seam that produces a correlated per-tick stage timeline across the `01-18` chain without becoming authoritative state or a cross-owner reach-through channel |
 
 ## Maturity Scale
 

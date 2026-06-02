@@ -50,6 +50,7 @@ The reference target is the v2.0.0 release standard in `ARCHITECTURE_PHILOSOPHY.
 | `18` | `relatively_complete` | `medium_high` | autonomy now has real continuity depth, but final-goal subjectivity still needs richer motive evolution and stronger outward closure | current autonomy is still deterministic, bounded, and only partially behavior-closing | second-highest pressure after `17`: close `wave_B_long_horizon_subjectivity` |
 | `19` | `baseline_implementation` | `medium` | boundary-truth docs exist, but final-goal release truth depends on keeping them synchronized with moving runtime reality | documentation governance is active but not yet fully stabilized across future waves | maintain truth while runtime continues moving |
 | `20` | `baseline_implementation` | `medium` | scientific-grounding docs now exist, but final-goal grounding still needs periodic revalidation against runtime movement | roadmap and gap analysis are document-real, not yet repeatedly retired by owner closeout | keep roadmap aligned with actual owner-wave progress |
+| `21` | `baseline_implementation` | `medium` | observability now exists as a real owner, but current scope is still kernel-level lifecycle and stage timeline rather than richer owner-level emission or durable diagnostic consumption | runtime execution is now structurally observable, but the final-goal falsifiability standard still needs deeper evidence use downstream in `17` | support `17` with structured execution evidence without letting logs become authoritative state |
 
 ## 4. What This Matrix Says In Practice
 
@@ -58,6 +59,7 @@ The reference target is the v2.0.0 release standard in `ARCHITECTURE_PHILOSOPHY.
 3. `13-18` carry the heaviest remaining runtime distance because they determine whether internal state really becomes governed action, continuity, and falsifiable subjectivity.
 4. `17` and `18` are the strongest near-term bottlenecks to the final-goal standard.
 5. `19-20` are not runtime blockers by themselves, but they are release-truth blockers if runtime reality and documentation drift apart.
+6. `21` is no longer missing, so observability absence is not the main blocker; the remaining gap is richer diagnostic consumption of the new observability surface.
 
 ## 5. Near-Term Priority Reading
 
@@ -67,4 +69,5 @@ If the goal is to reduce distance to v2.0.0 fastest, the current order is:
 2. `18` subjective autonomy and proactive evolution.
 3. `13` plus `16` execution-closure path.
 4. `14` plus `15` for longer-horizon governed continuity.
-5. `19-20` as truth-maintenance companions during every major owner wave.
+5. `21` as the observability substrate that should be consumed by `17` rather than expanded in isolation first.
+6. `19-20` as truth-maintenance companions during every major owner wave.

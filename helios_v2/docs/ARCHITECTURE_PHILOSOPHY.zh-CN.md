@@ -159,8 +159,9 @@ Helios v2.0.0 必须满足以下完整性要求：
 
 1. `01-18` 的核心运行期 owner 链条全部存在，并且都不是仅文档存在。
 2. `19-20` 的边界与科学映射文档必须与实现真相一致，不能是宣传材料。
-3. 每个一等运行期概念都必须能在 owner map、data contract 和 runtime flow 中找到位置。
-4. 不允许仍存在与目标架构冲突的长期并行旧主路径。
+3. `21` 的统一运行期可观测性 owner 必须存在，使 runtime 至少具备结构化、只读、可关联的阶段执行记录能力。
+4. 每个一等运行期概念都必须能在 owner map、data contract 和 runtime flow 中找到位置。
+5. 不允许仍存在与目标架构冲突的长期并行旧主路径。
 
 ### 5.2 运行闭环标准
 
@@ -230,6 +231,7 @@ Helios v2.0.0 必须不是“只能主观感受像不像”，而必须可以被
 2. evaluation 能重建从刺激到 gate 到 retrieval 到 thought 到 proposal 到 planner 到 visible output 到 writeback 的关键链条。
 3. 系统必须能区分“真的做了内部闭环”与“只是 prompt 看起来像做了”。
 4. 架构声明若与运行真相不符，评估结果必须能暴露该偏差。
+5. runtime observability 必须至少能输出按 `tick_id` 和 `stage_name` 关联的结构化执行时间线，供后续诊断与证伪消费。
 
 ## 6. Helios v2.0.0 的 release gate 约束
 
@@ -241,6 +243,7 @@ Helios v2.0.0 必须不是“只能主观感受像不像”，而必须可以被
 4. 旧 reply-first 主路径仍在实际上主导外部行为生成。
 5. evaluation 无法只读重建关键因果链。
 6. identity governance 或 experience writeback 缺失，导致连续性闭环不成立。
+7. runtime 缺少结构化、可关联的可观测性 owner，导致关键阶段执行无法被稳定重建。
 
 ## 7. Helios v2 的强约束
 
