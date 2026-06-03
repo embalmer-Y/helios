@@ -33,6 +33,7 @@ from helios_v2.appraisal.engine import (
 )
 from helios_v2.action_externalization import ThoughtExternalizationRequest
 from helios_v2.autonomy import ProactiveDriveRequest
+from helios_v2.channel import ChannelSubsystemAPI
 from helios_v2.directed_retrieval import (
     DirectedMemoryCandidateProvider,
     MemoryRetrievalCandidate,
@@ -122,6 +123,94 @@ class FirstVersionSensorySource:
                 metadata={"turn_id": "t1"},
             ),
         )
+
+
+@dataclass
+class SubsystemBackedSensorySource:
+    """Owner: composition (channel-bound assembly only).
+
+    Purpose:
+        Feed the `RawSignal` objects drained from the channel subsystem into the sensory
+        ingress owner through the standard `SensorySource` protocol.
+
+    Notes:
+        This adapter holds the current tick's drained signals (set by the assembly after the
+        channel inbound drain stage runs) and returns them on `emit_raw_signals`. It performs
+        no normalization; sensory owns that. It replaces `FirstVersionSensorySource` only in
+        the explicit channel-bound assembly.
+    """
+
+    source_name_value: str = "cli"
+    _pending: tuple[RawSignal, ...] = ()
+
+    @property
+    def source_name(self) -> str:
+        """Stable source owner name consumed by sensory ingress registration."""
+
+        return self.source_name_value
+
+    def set_pending(self, signals: tuple[RawSignal, ...]) -> None:
+        """Owner: composition. Set the drained raw signals for the current tick."""
+
+        self._pending = signals
+
+    def emit_raw_signals(self) -> tuple[RawSignal, ...]:
+        """Return and clear the current tick's drained raw signals."""
+
+        pending = self._pending
+        self._pending = ()
+        return pending
+
+
+@dataclass
+class ChannelSubsystemStateProvider:
+    """Owner: composition (channel-bound assembly only).
+
+    Purpose:
+        Provide the planner-bridge request's `channel_descriptor_snapshot` and
+        `channel_status_snapshot` from the channel subsystem's real per-driver state,
+        replacing the hardcoded shim for the channel-bound assembly.
+
+    Notes:
+        Owner-neutral glue. It projects the subsystem's `ChannelStateSnapshot` into the
+        planner's expected snapshot shape. It carries transport facts only and never
+        recommends a channel selection; the planner still owns selection/acceptance. A
+        connected driver is reported available, bound, and executable so the planner produces
+        the same executed path as the shim; the real transport happens in the dispatch stage.
+    """
+
+    subsystem: ChannelSubsystemAPI
+
+    def channel_descriptor_snapshot(self) -> dict[str, dict[str, object]]:
+        """Owner: composition. Project real driver descriptors into the planner snapshot shape."""
+
+        snapshot = self.subsystem.channel_state_snapshot()
+        descriptors: dict[str, dict[str, object]] = {}
+        for descriptor in snapshot.descriptors:
+            if "outbound" not in descriptor.directions:
+                continue
+            descriptors[descriptor.driver_id] = {
+                "supported_ops": tuple(descriptor.output_ops),
+                "output_ops": tuple(descriptor.output_ops),
+            }
+        return descriptors
+
+    def channel_status_snapshot(self) -> dict[str, dict[str, object]]:
+        """Owner: composition. Project real driver statuses into the planner snapshot shape."""
+
+        snapshot = self.subsystem.channel_state_snapshot()
+        statuses: dict[str, dict[str, object]] = {}
+        for status in snapshot.statuses:
+            connected = status.connected
+            statuses[status.driver_id] = {
+                "available": connected,
+                "bound": connected,
+                # The planner accepts and marks executed; the real transport is performed by
+                # the outbound dispatch stage after the planner stage.
+                "execute_now": True,
+                "execution_success": True,
+            }
+        return statuses
 
 
 @dataclass
@@ -760,6 +849,43 @@ class FirstVersionPlannerBridgeRequestBridge:
                     "execution_success": True,
                 }
             },
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class ChannelBackedPlannerBridgeRequestBridge:
+    """Owner: composition (channel-bound assembly only).
+
+    Purpose:
+        Build the planner-bridge request from the action-externalization result, sourcing the
+        channel descriptor/status snapshots from the real channel subsystem state instead of
+        the hardcoded shim.
+
+    Notes:
+        Owner-neutral glue. It mirrors `FirstVersionPlannerBridgeRequestBridge` for the
+        behavior snapshot and provenance, but delegates the channel snapshots to the injected
+        `ChannelSubsystemStateProvider`. It does not decide acceptance; the planner still owns
+        selection/acceptance, and the real transport happens in the outbound dispatch stage.
+    """
+
+    state_provider: ChannelSubsystemStateProvider
+
+    def build_request(self, frame, action_externalization_result) -> PlannerBridgeRequest:
+        tick_id = frame.tick_id
+        return PlannerBridgeRequest(
+            request_id=f"planner-bridge-request:runtime:{tick_id}",
+            source_externalization_result_id=action_externalization_result.result.result_id,
+            normalized_proposal_present=action_externalization_result.result.normalized_proposal is not None,
+            behavior_snapshot={
+                "registered": True,
+                "reviewed": True,
+                "minimum_score": 0.5,
+                "proposal_score": 0.9,
+                "execution_priority": 2,
+            },
+            channel_descriptor_snapshot=self.state_provider.channel_descriptor_snapshot(),
+            channel_status_snapshot=self.state_provider.channel_status_snapshot(),
             tick_id=tick_id,
         )
 

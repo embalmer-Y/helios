@@ -538,3 +538,106 @@ def test_repeated_deferring_ticks_persist_continuity_thread() -> None:
     # accumulates age beyond the initial forming age, proving cross-tick persistence.
     assert all(count >= 1 for count in counts)
     assert max(ages) >= 2
+
+
+# --- Requirement 31: CLI channel driver + channel-bound assembly wiring ---
+
+
+from helios_v2.composition import CHANNEL_BOUND_STAGE_ORDER, CHANNEL_DRIVERS_READY
+
+
+def _assemble_channel(sink, **kwargs):
+    """Assemble an opt-in channel-bound runtime with a network-free fake-provider gateway."""
+
+    if "gateway" not in kwargs:
+        kwargs["gateway"] = _ready_gateway(kwargs.get("config"))
+    return assemble_runtime(channel_cli=True, cli_output_sink=sink, **kwargs)
+
+
+def test_channel_bound_assembly_registers_extended_stage_order() -> None:
+    sink: list[str] = []
+    handle = _assemble_channel(sink.append)
+
+    assert len(CHANNEL_BOUND_STAGE_ORDER) == 21
+    assert CHANNEL_BOUND_STAGE_ORDER[0] == "channel_inbound_drain"
+    assert "channel_outbound_dispatch" in CHANNEL_BOUND_STAGE_ORDER
+
+    handle.startup()
+    result = handle.tick()
+    assert tuple(result.stage_results.keys()) == CHANNEL_BOUND_STAGE_ORDER
+
+
+def test_channel_drivers_ready_is_a_registered_critical_dependency() -> None:
+    sink: list[str] = []
+    handle = _assemble_channel(sink.append)
+    spec_names = {spec.name for spec in handle.kernel.dependency_specs}
+    assert CHANNEL_DRIVERS_READY in spec_names
+    # CLI declares no credential, so startup passes the gate.
+    handle.startup()
+
+
+def test_channel_round_trip_renders_reply_to_sink() -> None:
+    # Operator line injected through the CLI driver becomes a stimulus; an externalizing
+    # decision is transported to the injected sink.
+    provider = FakeThoughtProvider(
+        thought_text="acting now",
+        sufficiency=0.9,
+        wants_to_continue=False,
+        intends_action=True,
+    )
+    sink: list[str] = []
+    handle = _assemble_channel(sink.append, gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    # Feed an operator line into the CLI driver's bounded backlog before the tick.
+    handle.channel_subsystem._drivers["cli"].submit_line("hello helios")
+
+    result = handle.tick()
+
+    # The inbound line was drained into a RawSignal and normalized.
+    drain_result = result.stage_results["channel_inbound_drain"]
+    assert drain_result.drain_result.drained_count == 1
+
+    # The planner accepted and the outbound dispatch transported the reply to the sink.
+    planner_result = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner_result.status == "executed"
+    dispatch_result = result.stage_results["channel_outbound_dispatch"]
+    assert dispatch_result.dispatch_result.dispatched_count == 1
+    assert dispatch_result.outcomes[0].status == "delivered"
+    assert len(sink) == 1
+    assert sink[0].startswith("[operator]")
+
+
+def test_channel_internal_only_tick_with_no_input_completes() -> None:
+    # No operator input and a no-action thought: the tick must still complete through the
+    # full channel-bound chain with nothing dispatched (internal-only closure from 28).
+    provider = FakeThoughtProvider(
+        thought_text="still thinking, no action",
+        sufficiency=0.1,
+        wants_to_continue=True,
+        continue_reason="unresolved",
+        intends_action=False,
+    )
+    sink: list[str] = []
+    handle = _assemble_channel(sink.append, gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    result = handle.tick()
+
+    assert tuple(result.stage_results.keys()) == CHANNEL_BOUND_STAGE_ORDER
+    drain_result = result.stage_results["channel_inbound_drain"]
+    assert drain_result.drain_result.drained_count == 0
+    planner_result = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner_result.status == "no_actionable_proposal"
+    dispatch_result = result.stage_results["channel_outbound_dispatch"]
+    assert dispatch_result.dispatch_result.dispatched_count == 0
+    assert sink == []
+
+
+def test_default_assembly_is_unchanged_by_channel_wiring() -> None:
+    # Regression guard: the default (non-channel) assembly keeps the canonical 19-stage order.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+    assert "channel_inbound_drain" not in result.stage_results

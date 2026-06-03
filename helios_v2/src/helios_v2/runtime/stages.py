@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Callable, Protocol, TypeVar, runtime_checkable
 
 from helios_v2.consciousness import (
     CommitConsciousContentOp,
@@ -134,6 +134,14 @@ from helios_v2.neuromodulation import (
     UpdateNeuromodulatorsOp,
 )
 from helios_v2.sensory import PublishStimulusBatchOp, SensoryIngressAPI, Stimulus, StimulusBatch
+from helios_v2.channel import (
+    ChannelSubsystemAPI,
+    OutboundDispatchOutcome,
+    OutboundPacket,
+    SubsystemDispatchResult,
+    SubsystemDrainResult,
+)
+from helios_v2.sensory import RawSignal
 from helios_v2.thought_gating import (
     ContinuationPressureState,
     EvaluateThoughtGateOp,
@@ -167,6 +175,43 @@ class SensoryIngressStageResult:
 
     batch: StimulusBatch
     publish_op: PublishStimulusBatchOp
+
+
+@dataclass(frozen=True)
+class ChannelInboundDrainStageResult:
+    """Structured runtime-visible result emitted by the channel inbound drain stage adapter.
+
+    Owner: runtime (channel-bound assembly only).
+
+    Carries the `RawSignal` tuple drained from the channel subsystem this tick, the total
+    pending remainder still queued across drivers, the drained count, and per-driver overflow
+    counts. The downstream subsystem-backed sensory source consumes `raw_signals`; the
+    framework owns the transport, sensory owns normalization.
+    """
+
+    drain_result: SubsystemDrainResult
+
+    @property
+    def raw_signals(self) -> tuple[RawSignal, ...]:
+        return self.drain_result.raw_signals
+
+
+@dataclass(frozen=True)
+class ChannelOutboundDispatchStageResult:
+    """Structured runtime-visible result emitted by the channel outbound dispatch stage adapter.
+
+    Owner: runtime (channel-bound assembly only).
+
+    Carries the dispatch outcomes for the planner-accepted decisions transported this tick.
+    The planner still owns selection/acceptance; this stage only transports.
+    """
+
+    packets: tuple[OutboundPacket, ...]
+    dispatch_result: SubsystemDispatchResult
+
+    @property
+    def outcomes(self) -> tuple[OutboundDispatchOutcome, ...]:
+        return self.dispatch_result.outcomes
 
 
 @dataclass(frozen=True)
@@ -678,6 +723,39 @@ def _require_stage_result(frame: RuntimeFrame, stage_name: str, expected_type: t
             f"Runtime stage expected upstream result '{stage_name}' to be {expected_type.__name__}"
         )
     return stage_result
+
+
+@dataclass
+class ChannelInboundDrainRuntimeStage(RuntimeStage):
+    """Runtime-owned adapter that drains the channel subsystem at the tick boundary.
+
+    Owner: runtime (channel-bound assembly only).
+
+    This stage runs before sensory ingress. It calls `subsystem.drain_inbound(budget)`, hands
+    the drained `RawSignal` tuple to the injected sensory sink (the subsystem-backed sensory
+    source) so the immediately-following sensory stage normalizes exactly this tick's signals,
+    and exposes the drain result. It performs no normalization; sensory owns that. It is
+    registered only in the explicit channel-bound assembly variant, never in the default
+    19-stage runtime.
+    """
+
+    subsystem: ChannelSubsystemAPI
+    sensory_sink: Callable[[tuple[RawSignal, ...]], None]
+    inbound_budget: int = 16
+
+    @property
+    def stage_name(self) -> str:
+        """Stable runtime stage name for the channel inbound drain."""
+
+        return "channel_inbound_drain"
+
+    def run(self, frame: RuntimeFrame) -> ChannelInboundDrainStageResult:
+        """Drain the subsystem under the configured budget and feed the sensory sink."""
+
+        del frame
+        drain_result = self.subsystem.drain_inbound(self.inbound_budget)
+        self.sensory_sink(drain_result.raw_signals)
+        return ChannelInboundDrainStageResult(drain_result=drain_result)
 
 
 @dataclass
@@ -1396,6 +1474,66 @@ class PlannerBridgeRuntimeStage(RuntimeStage):
             publish_decision_op=publish_decision_op,
             publish_rejection_op=publish_rejection_op,
             publish_feedback_op=publish_feedback_op,
+        )
+
+
+@dataclass
+class ChannelOutboundDispatchRuntimeStage(RuntimeStage):
+    """Runtime-owned adapter that transports planner-accepted decisions to channel drivers.
+
+    Owner: runtime (channel-bound assembly only).
+
+    This stage runs after the planner bridge stage. It reads the planner-accepted
+    `ActionDecision` (executed or accepted) from the upstream planner stage result, converts
+    it to an `OutboundPacket` (carrying the validated outbound params and the planner-provided
+    execution priority), and calls `subsystem.dispatch_outbound`. The planner still owns
+    selection and acceptance; this stage only transports. A tick with no accepted decision
+    dispatches nothing and completes cleanly (internal-only tick closure from `28` holds).
+    It is registered only in the explicit channel-bound assembly variant.
+    """
+
+    subsystem: ChannelSubsystemAPI
+    outbound_budget: int = 16
+    upstream_stage_name: str = "planner_executor_feedback_bridge"
+
+    @property
+    def stage_name(self) -> str:
+        """Stable runtime stage name for the channel outbound dispatch."""
+
+        return "channel_outbound_dispatch"
+
+    def run(self, frame: RuntimeFrame) -> ChannelOutboundDispatchStageResult:
+        """Transport the planner-accepted decision (if any) to its target driver."""
+
+        planner_result = _require_stage_result(
+            frame,
+            self.upstream_stage_name,
+            PlannerBridgeStageResult,
+        )
+        decision = planner_result.result.action_decision
+        # Only an accepted/executed result carries a decision to transport. A rejected,
+        # consistency-failed, or internal-only result has no decision and dispatches nothing.
+        if decision is None or planner_result.result.status not in {"executed", "accepted"}:
+            return ChannelOutboundDispatchStageResult(
+                packets=(),
+                dispatch_result=self.subsystem.dispatch_outbound((), self.outbound_budget),
+            )
+        packet = OutboundPacket(
+            packet_id=f"outbound:{decision.decision_id}",
+            target_driver_id=decision.selected_channel_id,
+            op_name=decision.selected_op,
+            payload=dict(decision.validated_params),
+            execution_priority=decision.execution_priority,
+            provenance={
+                "decision_id": decision.decision_id,
+                "proposal_id": decision.proposal_id,
+                "planner_result_id": planner_result.result.result_id,
+            },
+        )
+        dispatch_result = self.subsystem.dispatch_outbound((packet,), self.outbound_budget)
+        return ChannelOutboundDispatchStageResult(
+            packets=(packet,),
+            dispatch_result=dispatch_result,
         )
 
 

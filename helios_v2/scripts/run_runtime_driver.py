@@ -59,6 +59,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Assemble the deterministic internal-thought path and omit the LLM critical "
         "dependency, for offline runs. Explicit opt-in; never a hidden fallback.",
     )
+    parser.add_argument(
+        "--channel-cli",
+        action="store_true",
+        help="Assemble the opt-in channel-bound runtime with a local CLI driver. Each tick "
+        "reads one line from real stdin (a reader adapter) and writes Helios replies to "
+        "stdout; observability events route to --out or stderr to avoid mixing. Local only, "
+        "no network.",
+    )
     return parser.parse_args(argv)
 
 
@@ -69,10 +77,42 @@ def _run(args: argparse.Namespace, stream: TextIO) -> int:
         sinks=(JsonLineStreamLogSink(stream=stream),),
         minimum_severity=args.min_severity,
     )
+    if args.channel_cli:
+        return _run_channel_cli(args, recorder)
     handle = assemble_runtime(recorder=recorder, deterministic_thought=args.deterministic)
     handle.startup()
     results = handle.run_ticks(args.ticks)
     return len(results)
+
+
+def _run_channel_cli(args: argparse.Namespace, recorder: RuntimeObservabilityRecorder) -> int:
+    """Owner: composition driver (channel-bound local run).
+
+    Assemble the channel-bound runtime with a CLI driver whose output sink writes to real
+    stdout, and feed one real stdin line into the driver per tick before ticking. This is the
+    only place real stdio is touched, through an injected sink and an explicit read loop;
+    owners never call `print`. Local only; no network.
+    """
+
+    def _cli_sink(rendered: str) -> None:
+        sys.stdout.write(rendered + "\n")
+        sys.stdout.flush()
+
+    handle = assemble_runtime(
+        recorder=recorder,
+        deterministic_thought=args.deterministic,
+        channel_cli=True,
+        cli_output_sink=_cli_sink,
+    )
+    handle.startup()
+    driver = handle.channel_subsystem._drivers["cli"]
+    for _ in range(args.ticks):
+        line = sys.stdin.readline()
+        if line == "":
+            break
+        driver.submit_line(line.rstrip("\n"))
+        handle.tick()
+    return args.ticks
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -90,7 +130,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     if args.out is None:
-        _run(args, sys.stdout)
+        # For a channel-cli local run, stdout carries the conversation, so observability
+        # events go to stderr to avoid mixing the two streams.
+        event_stream = sys.stderr if args.channel_cli else sys.stdout
+        _run(args, event_stream)
         return 0
     out_path = Path(args.out)
     if out_path.parent and not out_path.parent.exists():

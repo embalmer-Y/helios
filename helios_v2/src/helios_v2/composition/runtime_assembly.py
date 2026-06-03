@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from typing import Callable
 
 from helios_v2.action_externalization import (
     ActionExternalizationConfig,
@@ -87,6 +88,8 @@ from helios_v2.feeling import InteroceptiveFeelingVector
 from helios_v2.runtime import (
     ActionExternalizationRuntimeStage,
     AutonomyRuntimeStage,
+    ChannelInboundDrainRuntimeStage,
+    ChannelOutboundDispatchRuntimeStage,
     DirectedRetrievalRuntimeStage,
     EmbodiedPromptRuntimeStage,
     EvaluationRuntimeStage,
@@ -111,6 +114,7 @@ from helios_v2.runtime import (
     WorkspaceConsciousContentMaterialBridge,
 )
 from helios_v2.appraisal import RapidSalienceAppraisalEngine
+from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
 from helios_v2.sensory import RawSignal, SensoryIngress
 from helios_v2.thought_gating import (
     FirstVersionThoughtGatePath,
@@ -120,6 +124,8 @@ from helios_v2.thought_gating import (
 from helios_v2.workspace import WorkspaceCompetitionConfig, WorkspaceCompetitionEngine
 
 from .bridges import (
+    ChannelBackedPlannerBridgeRequestBridge,
+    ChannelSubsystemStateProvider,
     FirstVersionActiveChannelReporter,
     FirstVersionAggregateEstimator,
     FirstVersionAutonomyRequestBridge,
@@ -145,11 +151,14 @@ from .bridges import (
     FirstVersionThoughtGateSignalBridge,
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
+    SubsystemBackedSensorySource,
     TimelineViewHolder,
 )
 from .dependencies import (
+    ChannelReadinessDependencyProvider,
     FirstVersionDependencyProvider,
     LlmReadinessDependencyProvider,
+    channel_critical_dependency_spec,
     default_critical_dependency_specs,
     llm_critical_dependency_spec,
 )
@@ -172,6 +181,35 @@ CANONICAL_STAGE_ORDER: tuple[str, ...] = (
     "internal_thought_loop_owner",
     "action_proposal_externalization_contract",
     "planner_executor_feedback_bridge",
+    "identity_governance_self_revision_integration",
+    "execution_writeback_and_autobiographical_consolidation",
+    "subjective_autonomy_and_proactive_evolution",
+    "evaluation_fidelity_and_diagnostic_provenance",
+)
+
+# The channel-bound assembly variant inserts two transport stages around the cognition
+# chain: the inbound drain runs first (feeding sensory), and the outbound dispatch runs
+# right after the planner bridge (transporting the accepted decision). This order is the
+# wiring truth for the opt-in channel-bound runtime only; the default runtime keeps
+# `CANONICAL_STAGE_ORDER` unchanged.
+CHANNEL_BOUND_STAGE_ORDER: tuple[str, ...] = (
+    "channel_inbound_drain",
+    "sensory_ingress",
+    "rapid_salience_appraisal",
+    "neuromodulator_system",
+    "interoceptive_feeling_layer",
+    "memory_affect_and_replay",
+    "workspace_competition_and_working_state",
+    "reportable_conscious_content",
+    "thought_gating_and_continuation_pressure",
+    "directed_retrieval_into_thought_window",
+    "embodied_subjective_prompt_and_action_autonomy",
+    "outward_expression_owner",
+    "outward_expression_execution_externalization_owner",
+    "internal_thought_loop_owner",
+    "action_proposal_externalization_contract",
+    "planner_executor_feedback_bridge",
+    "channel_outbound_dispatch",
     "identity_governance_self_revision_integration",
     "execution_writeback_and_autobiographical_consolidation",
     "subjective_autonomy_and_proactive_evolution",
@@ -479,6 +517,7 @@ class RuntimeHandle:
     ingress: SensoryIngress
     timeline_holder: TimelineViewHolder | None = None
     timeline_sink: InMemoryLogSink | None = None
+    channel_subsystem: "ChannelSubsystem | None" = None
     _reconstructor: ExecutionTimelineReconstructor = field(
         default_factory=ExecutionTimelineReconstructor
     )
@@ -537,6 +576,8 @@ def assemble_runtime(
     recorder: RuntimeObservabilityRecorder | None = None,
     gateway: LlmGatewayAPI | None = None,
     deterministic_thought: bool = False,
+    channel_cli: bool = False,
+    cli_output_sink: "Callable[[str], None] | None" = None,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -617,7 +658,32 @@ def assemble_runtime(
         )
 
     ingress = SensoryIngress()
-    ingress.register_source(FirstVersionSensorySource(signals=resolved_config.source_signals))
+    # Channel-bound assembly: build the subsystem + CLI driver and route inbound through it.
+    channel_subsystem: ChannelSubsystem | None = None
+    subsystem_sensory_source: SubsystemBackedSensorySource | None = None
+    if channel_cli:
+        channel_subsystem = ChannelSubsystem()
+        sink = cli_output_sink if cli_output_sink is not None else _NullCliSink()
+        cli_driver = CliChannelDriver(output_sink=sink, config=CliDriverConfig())
+        channel_subsystem.register_driver(cli_driver)
+        channel_subsystem.apply_management_op(cli_driver.driver_id, "connect", None)
+        subsystem_sensory_source = SubsystemBackedSensorySource(
+            source_name_value=cli_driver.driver_id
+        )
+        ingress.register_source(subsystem_sensory_source)
+        # Wire the channel readiness gate when the caller did not override the dependency
+        # surface. CLI declares no credential, so it is always ready; the gate still routes
+        # through the fail-fast startup so a future critical driver trips it.
+        if dependency_specs is None:
+            resolved_specs = list(resolved_specs) + [channel_critical_dependency_spec()]
+        if dependency_provider is None:
+            resolved_provider = ChannelReadinessDependencyProvider(
+                subsystem=channel_subsystem,
+                bound_driver_ids=(cli_driver.driver_id,),
+                baseline_provider=resolved_provider,
+            )
+    else:
+        ingress.register_source(FirstVersionSensorySource(signals=resolved_config.source_signals))
 
     appraisal = RapidSalienceAppraisalEngine(
         dimension_estimator=FirstVersionDimensionEstimator(),
@@ -747,7 +813,13 @@ def assemble_runtime(
         ),
         PlannerBridgeRuntimeStage(
             planner_bridge_layer=planner_bridge,
-            request_provider=FirstVersionPlannerBridgeRequestBridge(),
+            request_provider=(
+                ChannelBackedPlannerBridgeRequestBridge(
+                    state_provider=ChannelSubsystemStateProvider(subsystem=channel_subsystem)
+                )
+                if channel_subsystem is not None
+                else FirstVersionPlannerBridgeRequestBridge()
+            ),
         ),
         IdentityGovernanceRuntimeStage(
             identity_governance_layer=identity_governance,
@@ -767,11 +839,35 @@ def assemble_runtime(
         ),
     ]
 
+    if channel_subsystem is not None and subsystem_sensory_source is not None:
+        # Insert the two transport stages: inbound drain first (feeding the subsystem-backed
+        # sensory source), outbound dispatch right after the planner bridge. The cognition
+        # chain between them is unchanged.
+        stages.insert(
+            0,
+            ChannelInboundDrainRuntimeStage(
+                subsystem=channel_subsystem,
+                sensory_sink=subsystem_sensory_source.set_pending,
+            ),
+        )
+        planner_index = next(
+            index
+            for index, stage in enumerate(stages)
+            if stage.stage_name == "planner_executor_feedback_bridge"
+        )
+        stages.insert(
+            planner_index + 1,
+            ChannelOutboundDispatchRuntimeStage(subsystem=channel_subsystem),
+        )
+        expected_order = CHANNEL_BOUND_STAGE_ORDER
+    else:
+        expected_order = CANONICAL_STAGE_ORDER
+
     registered_order = tuple(stage.stage_name for stage in stages)
-    if registered_order != CANONICAL_STAGE_ORDER:
+    if registered_order != expected_order:
         raise CompositionError(
-            "Assembled runtime stage order does not match the canonical order: "
-            f"expected {CANONICAL_STAGE_ORDER}, got {registered_order}"
+            "Assembled runtime stage order does not match the expected order: "
+            f"expected {expected_order}, got {registered_order}"
         )
     for stage in stages:
         kernel.register_stage(stage)
@@ -781,7 +877,21 @@ def assemble_runtime(
         ingress=ingress,
         timeline_holder=timeline_holder,
         timeline_sink=timeline_sink,
+        channel_subsystem=channel_subsystem,
     )
+
+
+@dataclass
+class _NullCliSink:
+    """Owner: composition. A no-op CLI output sink used when no real sink is injected.
+
+    Tests and real entry points inject their own sink (an in-memory collector or a stdout
+    writer). This default keeps the assembly total without writing anywhere; it never calls
+    `print`.
+    """
+
+    def __call__(self, rendered: str) -> None:
+        del rendered
 
 
 def _find_in_memory_sink(

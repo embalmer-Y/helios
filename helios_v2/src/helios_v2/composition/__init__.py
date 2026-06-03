@@ -6,15 +6,19 @@ degraded or fallback assembly path.
 """
 
 from .dependencies import (
+    CHANNEL_DRIVERS_READY,
     FirstVersionDependencyProvider,
     LLM_PROFILES_READY,
+    ChannelReadinessDependencyProvider,
     LlmReadinessDependencyProvider,
     RUNTIME_COGNITION_BASELINE,
+    channel_critical_dependency_spec,
     default_critical_dependency_specs,
     llm_critical_dependency_spec,
 )
 from .runtime_assembly import (
     CANONICAL_STAGE_ORDER,
+    CHANNEL_BOUND_STAGE_ORDER,
     CompositionConfig,
     CompositionError,
     RuntimeHandle,
@@ -24,6 +28,9 @@ from .runtime_assembly import (
 
 __all__ = [
     "CANONICAL_STAGE_ORDER",
+    "CHANNEL_BOUND_STAGE_ORDER",
+    "CHANNEL_DRIVERS_READY",
+    "ChannelReadinessDependencyProvider",
     "CompositionConfig",
     "CompositionError",
     "FirstVersionDependencyProvider",
@@ -32,6 +39,7 @@ __all__ = [
     "RUNTIME_COGNITION_BASELINE",
     "RuntimeHandle",
     "assemble_runtime",
+    "channel_critical_dependency_spec",
     "default_composition_config",
     "default_critical_dependency_specs",
     "llm_critical_dependency_spec",

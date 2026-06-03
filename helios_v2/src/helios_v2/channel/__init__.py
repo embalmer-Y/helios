@@ -25,9 +25,19 @@ from .contracts import (
     SubsystemDrainResult,
 )
 from .engine import ChannelSubsystem, InMemoryChannelDriver
+from .drivers import (
+    CLI_DRIVER_ID,
+    CLI_INPUT_PACKET_TYPE,
+    CLI_OUTPUT_OP,
+    CliChannelDriver,
+    CliDriverConfig,
+)
 
 __all__ = [
     "CHANNEL_QOS_METADATA_KEY",
+    "CLI_DRIVER_ID",
+    "CLI_INPUT_PACKET_TYPE",
+    "CLI_OUTPUT_OP",
     "ChannelConfigField",
     "ChannelConfigSnapshot",
     "ChannelDirection",
@@ -43,6 +53,8 @@ __all__ = [
     "ChannelStateSnapshot",
     "ChannelSubsystem",
     "ChannelSubsystemAPI",
+    "CliChannelDriver",
+    "CliDriverConfig",
     "InMemoryChannelDriver",
     "InboundDrainResult",
     "InboundPacket",
