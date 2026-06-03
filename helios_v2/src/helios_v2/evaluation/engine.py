@@ -48,6 +48,7 @@ def _warning(
 _CONSEQUENCE_BINDING_LABELS: dict[str, str] = {
     "no_activation": "no internal activation reached the chain",
     "internally_activated_only": "internal activation did not produce a normalized action",
+    "internal_only_decision": "the system fired a thought and explicitly chose not to act this cycle",
     "blocked": "action was normalized but execution was blocked or failed",
     "rejected": "action was normalized but policy-rejected before execution",
     "executed": "action executed externally but was not yet written back to continuity",
@@ -57,6 +58,7 @@ _CONSEQUENCE_BINDING_LABELS: dict[str, str] = {
 _CONSEQUENCE_BINDING_SCORES: dict[str, float] = {
     "no_activation": 0.0,
     "internally_activated_only": 0.2,
+    "internal_only_decision": 0.5,
     "blocked": 0.4,
     "rejected": 0.4,
     "executed": 0.8,
@@ -94,6 +96,10 @@ def _classify_consequence_outcome(
     if not has_thought:
         return "no_activation"
     if action_status != "normalized":
+        # An explicit internal-only decision (the planner recorded no actionable proposal)
+        # is distinct from an activation that simply failed to normalize an action.
+        if planner_status == "no_actionable_proposal":
+            return "internal_only_decision"
         return "internally_activated_only"
     if planner_status == "executed":
         return "continuity_written" if any_written else "executed"

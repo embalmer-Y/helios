@@ -52,4 +52,31 @@ Per requirement section 6.
 
 ## 8. Status
 
-Status on 2026-06-03: authored as the wave_C opener at `27` close. `not_started` (documentation only); implementation pending.
+Status on 2026-06-03: implemented and validated as `baseline_implementation`.
+
+Delivered files:
+
+1. `helios_v2/src/helios_v2/planner_bridge/contracts.py` (`no_actionable_proposal` status + all-None payload validation + `build_evaluate_op_internal_only`/`evaluate_internal_only` API)
+2. `helios_v2/src/helios_v2/planner_bridge/engine.py` (`evaluate_internal_only`, `build_evaluate_op_internal_only`, internal-only validation)
+3. `helios_v2/src/helios_v2/experience_writeback/contracts.py` (`internal_thought_cycle` source kind, `internal_only` outcome class, `written_internal_only` status, `internal_thought_cycle` continuity kind)
+4. `helios_v2/src/helios_v2/experience_writeback/engine.py` (internal-only mapping in all five maps + request validation)
+5. `helios_v2/src/helios_v2/evaluation/engine.py` (`internal_only_decision` consequence-binding label/score + classifier branch)
+6. `helios_v2/src/helios_v2/runtime/stages.py` (planner-bridge stage branches to internal-only on non-normalized externalization; writeback stage maps `internal_thought_cycle` provenance)
+7. `helios_v2/src/helios_v2/composition/bridges.py` (writeback request bridge emits the internal-only continuity request)
+8. `helios_v2/tests/test_planner_bridge_engine.py`, `helios_v2/tests/test_experience_writeback_engine.py`, `helios_v2/tests/test_runtime_composition.py` (internal-only owner + end-to-end tests)
+9. `helios_v2/docs/requirements/index.md`, `helios_v2/docs/ARCHITECTURE_BOUNDARIES.md`, `helios_v2/docs/BRAIN_ARCHITECTURE_COMPARISON.md`
+
+Validated outcomes:
+
+1. `pytest helios_v2/tests -q` -> 328 passed, network-free
+2. Real LLM smoke (`run_llm_smoke.py --ticks 3 --stimulus "...you don't need to reply"`): all ticks completed with `consequence_outcome=internal_only_decision` (the path that crashed before R28).
+
+Implementation notes:
+
+1. The internal-only outcome is owned by each owner: `13` produces a `no_actionable_proposal` result with no decision; `15` records an `internal_only` continuity writeback with real provenance to the planner result; `17` classifies the tick as `internal_only_decision`. Autonomy needed no contract change because the internal-only planner result and internal-only writeback supply real, non-empty provenance.
+2. The externalizing path is unchanged; deciding there is no proposal to route is an orchestration fact derived from the upstream externalization status, mapped into the planner owner's internal-only result.
+3. Known adjacent shim gap (not in `28` scope): the autonomy owner's drive summaries are still hardcoded by the autonomy request bridge, so `dominant_disposition` does not yet reflect the thought owner's no-action decision. That is a separate later requirement; `28` closes the tick through the chain.
+
+## 9. Out-of-Scope Confirmation
+
+`28` does not implement outward channel execution (real transport of a normalized proposal), which remains the later wave_C outward-closure requirement, and does not feed autonomy drive inputs from real cognition.

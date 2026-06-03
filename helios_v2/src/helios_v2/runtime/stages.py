@@ -1332,7 +1332,13 @@ class PlannerBridgeRuntimeStage(RuntimeStage):
         return "planner_executor_feedback_bridge"
 
     def run(self, frame: RuntimeFrame) -> PlannerBridgeStageResult:
-        """Execute planner bridge against the declared upstream externalization stage result."""
+        """Execute planner bridge against the declared upstream externalization stage result.
+
+        When the upstream externalization result is normalized, the bridge owner evaluates
+        the proposal as before. When it is not normalized (a fired tick that produced no
+        action proposal, for example a model continue/no-action decision), the bridge owner
+        produces an explicit internal-only `no_actionable_proposal` result instead of raising.
+        """
 
         action_externalization_result = _require_stage_result(
             frame,
@@ -1343,6 +1349,30 @@ class PlannerBridgeRuntimeStage(RuntimeStage):
         if request.source_externalization_result_id != action_externalization_result.result.result_id:
             raise RuntimeStageExecutionError(
                 "Planner-bridge requests must preserve the upstream externalization-result provenance"
+            )
+        externalization_is_normalized = (
+            action_externalization_result.result.status == "normalized"
+            and action_externalization_result.result.normalized_proposal is not None
+        )
+        if not externalization_is_normalized:
+            # Internal-only tick: no proposal to route. The bridge owner records the explicit
+            # absence of an action rather than crashing. No decision, rejection, or feedback.
+            result = self.planner_bridge_layer.evaluate_internal_only(
+                action_externalization_result.result,
+                request,
+            )
+            evaluate_op = self.planner_bridge_layer.build_evaluate_op_internal_only(
+                action_externalization_result.result,
+                request,
+            )
+            return PlannerBridgeStageResult(
+                evaluate_op=evaluate_op,
+                request=request,
+                result=result,
+                execution_feedback=None,
+                publish_decision_op=None,
+                publish_rejection_op=None,
+                publish_feedback_op=None,
             )
         evaluate_op = self.planner_bridge_layer.build_evaluate_op(action_externalization_result.result, request)
         result, execution_feedback = self.planner_bridge_layer.evaluate_proposal(
@@ -1457,6 +1487,9 @@ class ExperienceWritebackRuntimeStage(RuntimeStage):
         expected_outcome_ids = {
             "planner_bridge": planner_bridge_result.result.result_id,
             "identity_governance": identity_governance_result.result.result_id,
+            # An internal-only continuity writeback references the internal-only planner
+            # result, so its expected source-outcome id is the planner result id.
+            "internal_thought_cycle": planner_bridge_result.result.result_id,
         }
         for request in requests:
             expected_outcome_id = expected_outcome_ids[request.source_outcome_kind]

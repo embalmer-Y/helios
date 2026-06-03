@@ -29,6 +29,11 @@ def _validate_request(request: ExperienceWritebackRequest) -> None:
             raise ExperienceWritebackError(
                 "Self-outcome writeback requests must originate from identity_governance"
             )
+    if request.outcome_class == "internal_only":
+        if request.source_outcome_kind != "internal_thought_cycle":
+            raise ExperienceWritebackError(
+                "Internal-only writeback requests must originate from internal_thought_cycle"
+            )
 
 
 @runtime_checkable
@@ -90,6 +95,7 @@ class FirstVersionExperienceWritebackPath(ExperienceWritebackPath):
             "world_failed": "failed_action",
             "self_changed": "identity_change",
             "self_blocked": "blocked_identity_change",
+            "internal_only": "internal_thought_cycle",
         }[outcome_class]
 
     def _status_for(self, outcome_class: str) -> str:
@@ -99,6 +105,7 @@ class FirstVersionExperienceWritebackPath(ExperienceWritebackPath):
             "world_failed": "written_unresolved_outcome",
             "self_changed": "written_identity_change",
             "self_blocked": "written_unresolved_outcome",
+            "internal_only": "written_internal_only",
         }[outcome_class]
 
     def _build_summary(self, request: ExperienceWritebackRequest) -> str:
@@ -108,6 +115,7 @@ class FirstVersionExperienceWritebackPath(ExperienceWritebackPath):
             "world_failed": "External action failed after selection",
             "self_changed": "Identity governance changed the self",
             "self_blocked": "Identity governance rejected the proposed self-change",
+            "internal_only": "A thinking cycle concluded without outward action",
         }[request.outcome_class]
         return (
             f"{prefix}: requested {request.requested_effect_summary}; "
@@ -126,6 +134,7 @@ class FirstVersionExperienceWritebackPath(ExperienceWritebackPath):
             "world_failed": {"episodic": 0.78, "autobiographical": 0.72, "semantic": 0.58},
             "self_changed": {"episodic": 0.65, "autobiographical": 0.92, "semantic": 0.76},
             "self_blocked": {"episodic": 0.60, "autobiographical": 0.82, "semantic": 0.60},
+            "internal_only": {"episodic": 0.55, "autobiographical": 0.50, "semantic": 0.40},
         }
         base_value = base_priorities[outcome_class][family]
         return max(config.legal_min_priority, min(config.legal_max_priority, base_value))
@@ -156,6 +165,11 @@ class FirstVersionExperienceWritebackPath(ExperienceWritebackPath):
                 "episodic": "preserve the rejected self-revision event",
                 "autobiographical": "retain continuity around denied self-change",
                 "semantic": "extract stable governance constraints",
+            },
+            "internal_only": {
+                "episodic": "preserve that a thinking cycle occurred without outward action",
+                "autobiographical": "retain continuity of an internally consequential cycle",
+                "semantic": "extract stable patterns of internal-only deliberation",
             },
         }
         return salience_reasons[outcome_class][family]

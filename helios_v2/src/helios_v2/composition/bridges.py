@@ -861,6 +861,27 @@ class FirstVersionExperienceWritebackRequestBridge:
                     tick_id=tick_id,
                 )
             )
+        elif planner_bridge_result.result.status == "no_actionable_proposal":
+            # Internal-only tick: the thought cycle fired but produced no proposal to route.
+            # Record it as an explicit internal-only continuity writeback so the cycle is
+            # preserved rather than dropped. Provenance links to the planner result and its
+            # source request (which traces to the thought-cycle externalization).
+            requests.append(
+                ExperienceWritebackRequest(
+                    request_id=f"experience-writeback-request:internal:runtime:{tick_id}",
+                    source_outcome_kind="internal_thought_cycle",
+                    source_outcome_id=planner_bridge_result.result.result_id,
+                    source_outcome_status=planner_bridge_result.result.status,
+                    outcome_class="internal_only",
+                    source_provenance={
+                        "source_request_id": planner_bridge_result.request.request_id,
+                    },
+                    requested_effect_summary="no outward action this cycle",
+                    applied_effect_summary="thinking cycle concluded internally without outward action",
+                    reason_trace=("thought cycle produced no actionable proposal",),
+                    tick_id=tick_id,
+                )
+            )
 
         revision_decision = identity_governance_result.result.revision_decision
         applied_identity_state = identity_governance_result.result.applied_identity_state

@@ -31,6 +31,7 @@ def _validate_unit_interval(name: str, value: float) -> None:
 ExperienceSourceOutcomeKind = Literal[
     "planner_bridge",
     "identity_governance",
+    "internal_thought_cycle",
 ]
 ContinuityOutcomeClass = Literal[
     "world_changed",
@@ -38,12 +39,14 @@ ContinuityOutcomeClass = Literal[
     "world_failed",
     "self_changed",
     "self_blocked",
+    "internal_only",
 ]
 ExperienceWritebackStatus = Literal[
     "written",
     "written_blocked_outcome",
     "written_identity_change",
     "written_unresolved_outcome",
+    "written_internal_only",
 ]
 ContinuityKind = Literal[
     "external_action",
@@ -51,6 +54,7 @@ ContinuityKind = Literal[
     "failed_action",
     "identity_change",
     "blocked_identity_change",
+    "internal_thought_cycle",
 ]
 TargetMemoryFamily = Literal[
     "episodic",
@@ -66,6 +70,7 @@ ExperienceWritebackLearnedParameterCategory = Literal[
 _SOURCE_OUTCOME_KINDS = {
     "planner_bridge",
     "identity_governance",
+    "internal_thought_cycle",
 }
 _OUTCOME_CLASSES = {
     "world_changed",
@@ -73,12 +78,14 @@ _OUTCOME_CLASSES = {
     "world_failed",
     "self_changed",
     "self_blocked",
+    "internal_only",
 }
 _WRITEBACK_STATUSES = {
     "written",
     "written_blocked_outcome",
     "written_identity_change",
     "written_unresolved_outcome",
+    "written_internal_only",
 }
 _CONTINUITY_KINDS = {
     "external_action",
@@ -86,6 +93,7 @@ _CONTINUITY_KINDS = {
     "failed_action",
     "identity_change",
     "blocked_identity_change",
+    "internal_thought_cycle",
 }
 _TARGET_MEMORY_FAMILIES = {
     "episodic",

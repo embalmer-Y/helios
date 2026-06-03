@@ -30,6 +30,17 @@ def _validate_externalization_result(externalization_result: ThoughtExternalizat
         raise PlannerBridgeError("Planner bridge requires a normalized ThoughtExternalizationResult")
 
 
+def _validate_internal_only_externalization_result(
+    externalization_result: ThoughtExternalizationResult,
+) -> None:
+    if not externalization_result.result_id:
+        raise PlannerBridgeError("ThoughtExternalizationResult must declare a non-empty result_id")
+    if externalization_result.status == "normalized" or externalization_result.normalized_proposal is not None:
+        raise PlannerBridgeError(
+            "Internal-only planner-bridge evaluation requires a non-normalized ThoughtExternalizationResult"
+        )
+
+
 def _validate_request(
     externalization_result: ThoughtExternalizationResult,
     request: PlannerBridgeRequest,
@@ -275,6 +286,34 @@ class PlannerBridgeEngine(PlannerBridgeAPI):
             raise PlannerBridgeError("PlannerBridgeResult must preserve the source request id")
         return result, feedback
 
+    def evaluate_internal_only(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+    ) -> PlannerBridgeResult:
+        """Produce the explicit internal-only (`no_actionable_proposal`) bridge result.
+
+        This is a deterministic owner outcome with no policy path: there is no proposal to
+        evaluate, so there is nothing for the bridge path to decide. The owner records the
+        explicit absence of an action, preserving request provenance.
+        """
+
+        _validate_internal_only_externalization_result(externalization_result)
+        _validate_request(externalization_result, request)
+        if request.normalized_proposal_present:
+            raise PlannerBridgeError(
+                "Internal-only planner-bridge evaluation requires normalized_proposal_present to be False"
+            )
+        return PlannerBridgeResult(
+            result_id=f"planner-bridge-result:{request.request_id}",
+            source_request_id=request.request_id,
+            status="no_actionable_proposal",
+            action_decision=None,
+            rejection_reason=None,
+            execution_consistency_failure=None,
+            tick_id=request.tick_id,
+        )
+
     def build_evaluate_op(
         self,
         externalization_result: ThoughtExternalizationResult,
@@ -284,6 +323,23 @@ class PlannerBridgeEngine(PlannerBridgeAPI):
         _validate_request(externalization_result, request)
         return EvaluatePlannerBridgeOp(
             op_name="evaluate_planner_bridge",
+            owner="planner_executor_feedback_bridge",
+            request_id=request.request_id,
+            externalization_result_id=externalization_result.result_id,
+            normalized_proposal_present=request.normalized_proposal_present,
+        )
+
+    def build_evaluate_op_internal_only(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+    ) -> EvaluatePlannerBridgeOp:
+        """Return the request op describing an internal-only planner-bridge evaluation."""
+
+        _validate_internal_only_externalization_result(externalization_result)
+        _validate_request(externalization_result, request)
+        return EvaluatePlannerBridgeOp(
+            op_name="evaluate_planner_bridge_internal_only",
             owner="planner_executor_feedback_bridge",
             request_id=request.request_id,
             externalization_result_id=externalization_result.result_id,

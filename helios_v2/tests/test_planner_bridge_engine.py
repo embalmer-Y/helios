@@ -297,3 +297,97 @@ def test_engine_requires_explicit_bridge_capability() -> None:
 
     with pytest.raises(PlannerBridgeError, match="explicit bridge capability"):
         engine.evaluate_proposal(_externalization_result(), _bridge_request())
+
+
+# --- Requirement 28: internal-only (no actionable proposal) bridge result ---
+
+
+def _internal_request_continue() -> InternalThoughtRequest:
+    return InternalThoughtRequest(
+        request_id="internal-thought-request:continue",
+        source_gate_result_id="thought-gate-result:001",
+        source_retrieval_bundle_id="thought-window-bundle:001",
+        source_continuation_active=True,
+        internal_state_summary="current internal state summary",
+        prompt_contract_summary={"mode": "internal_thought", "voice": "structured"},
+        tick_id=1,
+    )
+
+
+def _non_normalized_externalization_result():
+    # A continuation-active thought cycle emits no action proposal, so externalization
+    # produces a non-normalized result (no proposal to route).
+    thought_engine = InternalThoughtEngine(
+        config=_build_internal_config(),
+        thought_path=FirstVersionInternalThoughtPath(),
+    )
+    continuation = ContinuationPressureState(
+        active=True,
+        level=0.5,
+        origin_thought_id="thought:prior",
+        reason="prior_cycle_unfinished",
+        expires_at_tick=5,
+        carry_count=1,
+    )
+    thought_result, _ = thought_engine.run_thought_cycle(
+        _gate_result(),
+        _bundle(),
+        continuation,
+        _internal_request_continue(),
+    )
+    assert thought_result.action_proposal is None
+    externalization_engine = ActionExternalizationEngine(
+        config=_build_externalization_config(),
+        externalization_path=FirstVersionThoughtExternalizationPath(),
+    )
+    request = ThoughtExternalizationRequest(
+        request_id="externalization-request:continue",
+        source_thought_cycle_result_id=thought_result.result_id,
+        proposal_carrier_present=False,
+        target_binding_context={"target_user_id": "user:001"},
+        channel_hint_context={"channel_family": "cli"},
+        tick_id=1,
+    )
+    return externalization_engine.externalize_action_proposal(thought_result, request)
+
+
+def _internal_only_bridge_request(externalization_result_id: str) -> PlannerBridgeRequest:
+    return PlannerBridgeRequest(
+        request_id="planner-bridge-request:internal-only",
+        source_externalization_result_id=externalization_result_id,
+        normalized_proposal_present=False,
+        behavior_snapshot={},
+        channel_descriptor_snapshot={},
+        channel_status_snapshot={},
+        tick_id=1,
+    )
+
+
+def test_engine_produces_internal_only_result_for_no_proposal() -> None:
+    engine = PlannerBridgeEngine(
+        config=_build_bridge_config(),
+        bridge_path=FirstVersionPlannerBridgePath(),
+    )
+    externalization_result = _non_normalized_externalization_result()
+    request = _internal_only_bridge_request(externalization_result.result_id)
+
+    evaluate_op = engine.build_evaluate_op_internal_only(externalization_result, request)
+    result = engine.evaluate_internal_only(externalization_result, request)
+
+    assert evaluate_op.op_name == "evaluate_planner_bridge_internal_only"
+    assert evaluate_op.normalized_proposal_present is False
+    assert result.status == "no_actionable_proposal"
+    assert result.action_decision is None
+    assert result.rejection_reason is None
+    assert result.execution_consistency_failure is None
+
+
+def test_internal_only_rejects_normalized_result() -> None:
+    engine = PlannerBridgeEngine(
+        config=_build_bridge_config(),
+        bridge_path=FirstVersionPlannerBridgePath(),
+    )
+    # A normalized externalization result must go through the externalizing path, not the
+    # internal-only path.
+    with pytest.raises(PlannerBridgeError):
+        engine.evaluate_internal_only(_externalization_result(), _bridge_request())

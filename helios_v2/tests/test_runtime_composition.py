@@ -382,3 +382,85 @@ def test_structured_envelope_drives_owner_decision_in_assembled_runtime() -> Non
     assert thought_result.execution_status == "completed"
     assert thought_result.continuation_requested is False
     assert thought_result.action_proposal is not None
+
+
+# --- Requirement 28: internal-only tick closure ---
+
+
+def test_continue_no_action_tick_completes_through_full_chain() -> None:
+    # An "insufficient + wants_to_continue + no action" envelope produces no proposal. The
+    # full chain (planner, writeback, autonomy, evaluation) must complete the tick as an
+    # explicit internal-only outcome rather than crashing (the R27-surfaced boundary).
+    provider = FakeThoughtProvider(
+        thought_text="still working through this, no action yet",
+        sufficiency=0.1,
+        wants_to_continue=True,
+        continue_reason="unresolved",
+        intends_action=False,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    result = handle.tick()
+
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+
+    thought_result = result.stage_results["internal_thought_loop_owner"].result
+    assert thought_result.continuation_requested is True
+    assert thought_result.action_proposal is None
+
+    planner_result = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner_result.status == "no_actionable_proposal"
+    assert planner_result.action_decision is None
+
+    writeback_stage = result.stage_results["execution_writeback_and_autobiographical_consolidation"]
+    statuses = {r.status for r in writeback_stage.results}
+    assert "written_internal_only" in statuses
+
+    artifact = result.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
+    assert artifact.gap_summary["consequence_path_outcome"] == "internal_only_decision"
+
+
+def test_no_action_but_complete_tick_also_closes_internally() -> None:
+    # "sufficient + no continue + no action": the cycle concludes without acting. This must
+    # also complete through the chain as an internal-only outcome.
+    provider = FakeThoughtProvider(
+        thought_text="resolved, nothing to do",
+        sufficiency=0.95,
+        wants_to_continue=False,
+        intends_action=False,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    result = handle.tick()
+
+    thought_result = result.stage_results["internal_thought_loop_owner"].result
+    assert thought_result.continuation_requested is False
+    assert thought_result.action_proposal is None
+
+    planner_result = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner_result.status == "no_actionable_proposal"
+
+    artifact = result.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
+    assert artifact.gap_summary["consequence_path_outcome"] == "internal_only_decision"
+
+
+def test_externalizing_tick_still_executes_after_internal_only_support() -> None:
+    # Regression guard: the externalizing path is unchanged by the internal-only addition.
+    provider = FakeThoughtProvider(
+        thought_text="acting now",
+        sufficiency=0.9,
+        wants_to_continue=False,
+        intends_action=True,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    result = handle.tick()
+
+    planner_result = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner_result.status == "executed"
+    assert planner_result.action_decision is not None
+    artifact = result.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
+    assert artifact.gap_summary["consequence_path_outcome"] == "continuity_written"

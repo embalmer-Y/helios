@@ -36,6 +36,7 @@ BridgeStatus = Literal[
     "execution_consistency_failed",
     "executed",
     "execution_failed",
+    "no_actionable_proposal",
 ]
 BridgeRejectionReason = Literal[
     "behavior_not_registered",
@@ -60,6 +61,7 @@ _BRIDGE_STATUSES = {
     "execution_consistency_failed",
     "executed",
     "execution_failed",
+    "no_actionable_proposal",
 }
 _BRIDGE_REJECTION_REASONS = {
     "behavior_not_registered",
@@ -245,6 +247,16 @@ class PlannerBridgeResult:
                 raise PlannerBridgeError(
                     "Execution-consistency-failed PlannerBridgeResult must publish rejection_reason"
                 )
+        elif self.status == "no_actionable_proposal":
+            if (
+                self.action_decision is not None
+                or self.rejection_reason is not None
+                or self.execution_consistency_failure is not None
+            ):
+                raise PlannerBridgeError(
+                    "No-actionable-proposal PlannerBridgeResult must not publish action_decision, "
+                    "rejection_reason, or execution_consistency_failure"
+                )
         else:
             if self.action_decision is None:
                 raise PlannerBridgeError(
@@ -345,12 +357,44 @@ class PlannerBridgeAPI(Protocol):
     ) -> tuple[PlannerBridgeResult, NormalizedExecutionFeedback | None]:
         """Return one formal bridge result and optional normalized execution feedback."""
 
+    def evaluate_internal_only(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+    ) -> PlannerBridgeResult:
+        """Owner: planner executor feedback bridge.
+
+        Purpose:
+            Produce the explicit internal-only bridge result for a fired tick that produced
+            no normalized action proposal to route. This represents "the system fired a
+            thought and chose not to act" as a first-class outcome rather than an error.
+
+        Inputs:
+            `externalization_result` - a non-normalized `ThoughtExternalizationResult`.
+            `request` - the planner-bridge request whose `normalized_proposal_present` is False.
+
+        Returns:
+            A `PlannerBridgeResult` with status `no_actionable_proposal` and no action
+            decision, rejection, or consistency failure.
+
+        Raises:
+            PlannerBridgeError if the externalization result is normalized (the externalizing
+            path must be used instead) or the request claims a proposal is present.
+        """
+
     def build_evaluate_op(
         self,
         externalization_result: ThoughtExternalizationResult,
         request: PlannerBridgeRequest,
     ) -> EvaluatePlannerBridgeOp:
         """Return one request op describing planner-bridge evaluation."""
+
+    def build_evaluate_op_internal_only(
+        self,
+        externalization_result: ThoughtExternalizationResult,
+        request: PlannerBridgeRequest,
+    ) -> EvaluatePlannerBridgeOp:
+        """Return one request op describing an internal-only planner-bridge evaluation."""
 
     def build_publish_decision_op(
         self,

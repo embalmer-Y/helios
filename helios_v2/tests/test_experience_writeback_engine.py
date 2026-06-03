@@ -153,3 +153,54 @@ def test_engine_requires_explicit_writeback_capability() -> None:
                 outcome_class="world_changed",
             )
         )
+
+
+# --- Requirement 28: internal-only continuity writeback ---
+
+
+def test_engine_writes_internal_only_continuity() -> None:
+    engine = ExperienceWritebackEngine(
+        config=_build_config(),
+        writeback_path=FirstVersionExperienceWritebackPath(),
+    )
+    request = ExperienceWritebackRequest(
+        request_id="experience-writeback-request:internal:001",
+        source_outcome_kind="internal_thought_cycle",
+        source_outcome_id="planner-bridge-result:001",
+        source_outcome_status="no_actionable_proposal",
+        outcome_class="internal_only",
+        source_provenance={"source_request_id": "planner-bridge-request:001"},
+        requested_effect_summary="no outward action this cycle",
+        applied_effect_summary="thinking cycle concluded internally without outward action",
+        reason_trace=("thought cycle produced no actionable proposal",),
+        tick_id=1,
+    )
+
+    result = engine.write_experience(request)
+
+    assert result.status == "written_internal_only"
+    assert result.continuity_packet.continuity_kind == "internal_thought_cycle"
+    assert result.continuity_packet.outcome_class == "internal_only"
+    assert len(result.consolidation_candidates) == 3
+
+
+def test_internal_only_outcome_must_originate_from_internal_thought_cycle() -> None:
+    engine = ExperienceWritebackEngine(
+        config=_build_config(),
+        writeback_path=FirstVersionExperienceWritebackPath(),
+    )
+    bad_request = ExperienceWritebackRequest(
+        request_id="experience-writeback-request:bad-internal",
+        source_outcome_kind="planner_bridge",
+        source_outcome_id="planner-bridge-result:001",
+        source_outcome_status="no_actionable_proposal",
+        outcome_class="internal_only",
+        source_provenance={"source_request_id": "planner-bridge-request:001"},
+        requested_effect_summary="no outward action this cycle",
+        applied_effect_summary="thinking cycle concluded internally",
+        reason_trace=("mismatched origin",),
+        tick_id=1,
+    )
+
+    with pytest.raises(ExperienceWritebackError):
+        engine.write_experience(bad_request)
