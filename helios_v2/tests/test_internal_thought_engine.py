@@ -242,25 +242,45 @@ def test_engine_requires_explicit_thought_capability() -> None:
 
 @dataclass
 class FakeThoughtGateway:
-    """Deterministic gateway double for the LLM-backed path; never touches the network."""
+    """Deterministic gateway double for the LLM-backed path; never touches the network.
+
+    Returns a structured JSON thought envelope (R27). `output_text` becomes the envelope's
+    `thought` field; the default envelope is "sufficient, no continue, intends action" so the
+    owner externalizes, matching the pre-R27 behavioral expectation of these R26 cases.
+    """
 
     output_text: str = "a concise model thought for the current cycle"
     finish_reason: str = "stop"
+    sufficiency: float = 0.9
+    wants_to_continue: bool = False
+    continue_reason: str = ""
+    intends_action: bool = True
+    intends_revision: bool = False
     seen_profiles: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         self.seen_profiles = []
 
     def complete(self, request):
+        import json
+
         from helios_v2.llm import LlmCompletion, LlmUsage
 
         self.seen_profiles.append(request.target_profile)
+        envelope = {
+            "thought": self.output_text,
+            "sufficiency": self.sufficiency,
+            "wants_to_continue": self.wants_to_continue,
+            "continue_reason": self.continue_reason,
+            "proposed_action": {"intends_action": self.intends_action, "summary": ""},
+            "self_revision": {"intends_revision": self.intends_revision, "summary": ""},
+        }
         return LlmCompletion(
             completion_id=f"llm-completion:{request.request_id}",
             source_request_id=request.request_id,
             profile_name=request.target_profile,
             model="fake-model",
-            output_text=self.output_text,
+            output_text=json.dumps(envelope),
             finish_reason=self.finish_reason,
             usage=LlmUsage(prompt_tokens=4, completion_tokens=6, total_tokens=10),
             latency_ms=1.0,
@@ -314,28 +334,25 @@ def test_llm_backed_path_uses_completion_text_and_marks_llm_used() -> None:
     assert gateway.seen_profiles == ["thought-default"]
 
 
-def test_llm_backed_judgment_matches_deterministic_owner_judgment() -> None:
-    # Judgment must be owned by the owner and reproducible: for the same retrieval window and
-    # continuation state, the LLM-backed path and the deterministic path produce identical
-    # owner-held decisions (sufficiency, continuation, proposal presence).
-    config = _build_config()
-    llm_engine = InternalThoughtEngine(config=config, thought_path=_llm_path(FakeThoughtGateway()))
-    det_engine = InternalThoughtEngine(config=config, thought_path=FirstVersionInternalThoughtPath())
+def test_llm_backed_judgment_is_owner_held_for_proposal_fields() -> None:
+    # The model supplies content and intent only. The owner owns proposal scope, behavior,
+    # channels, and intensity. With a "sufficient + intends_action" envelope the owner emits
+    # an external reply proposal whose fields are owner-set, not model-set.
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_llm_path(FakeThoughtGateway()))
 
-    llm_result, _ = llm_engine.run_thought_cycle(
-        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
-    )
-    det_result, _ = det_engine.run_thought_cycle(
+    result, _ = engine.run_thought_cycle(
         _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
     )
 
-    assert llm_result.sufficiency_level == det_result.sufficiency_level
-    assert llm_result.continuation_requested == det_result.continuation_requested
-    assert llm_result.continuation_reason == det_result.continuation_reason
-    assert (llm_result.action_proposal is None) == (det_result.action_proposal is None)
-    assert (
-        llm_result.self_revision_proposal is None
-    ) == (det_result.self_revision_proposal is None)
+    assert result.execution_status == "completed"
+    assert result.action_proposal is not None
+    assert result.action_proposal.scope == "external"
+    assert result.action_proposal.behavior_name == "reply_message"
+    assert result.action_proposal.preferred_channels == ("cli",)
+    assert result.action_proposal.outbound_intensity == 0.75
+    # The owner blends the model sufficiency (0.9) with retrieval sufficiency (0.8):
+    # 0.6*0.9 + 0.4*0.8 = 0.86.
+    assert result.sufficiency_level == 0.86
 
 
 def test_llm_backed_path_hard_stops_on_gateway_failure_without_fallback() -> None:
@@ -384,4 +401,293 @@ def test_llm_backed_path_preserves_fired_path_validation() -> None:
             _bundle(),
             ContinuationPressureState.inactive(),
             _request(),
+        )
+
+
+# --- Requirement 27: structured thought output driving owner judgment ---
+
+import json as _json
+
+
+@dataclass
+class JsonThoughtGateway:
+    """Gateway double returning a configurable structured JSON envelope (network-free)."""
+
+    payload: object = None
+    raw_text: str | None = None
+    seen_formats: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        self.seen_formats = []
+
+    def complete(self, request):
+        from helios_v2.llm import LlmCompletion, LlmUsage
+
+        self.seen_formats.append(request.response_format)
+        text = self.raw_text if self.raw_text is not None else _json.dumps(self.payload)
+        return LlmCompletion(
+            completion_id=f"llm-completion:{request.request_id}",
+            source_request_id=request.request_id,
+            profile_name=request.target_profile,
+            model="fake-model",
+            output_text=text,
+            finish_reason="stop",
+            usage=LlmUsage(prompt_tokens=4, completion_tokens=6, total_tokens=10),
+            latency_ms=1.0,
+        )
+
+    def check_static_readiness(self, profile_names):  # pragma: no cover
+        raise NotImplementedError
+
+    def probe_live_readiness(self, profile_names):  # pragma: no cover
+        raise NotImplementedError
+
+
+def _structured_path(gateway):
+    from helios_v2.internal_thought.engine import LlmBackedInternalThoughtPath
+
+    return LlmBackedInternalThoughtPath(gateway=gateway, profile_name="thought-default")
+
+
+def _envelope(
+    *,
+    thought="model thought",
+    sufficiency=0.9,
+    wants_to_continue=False,
+    continue_reason="",
+    intends_action=False,
+    intends_revision=False,
+):
+    return {
+        "thought": thought,
+        "sufficiency": sufficiency,
+        "wants_to_continue": wants_to_continue,
+        "continue_reason": continue_reason,
+        "proposed_action": {"intends_action": intends_action, "summary": ""},
+        "self_revision": {"intends_revision": intends_revision, "summary": ""},
+    }
+
+
+def test_structured_path_requests_json_object_format() -> None:
+    gateway = JsonThoughtGateway(payload=_envelope())
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert gateway.seen_formats == ["json_object"]
+
+
+def test_structured_sufficient_with_action_intent_externalizes() -> None:
+    gateway = JsonThoughtGateway(
+        payload=_envelope(sufficiency=0.9, wants_to_continue=False, intends_action=True)
+    )
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "completed"
+    assert result.continuation_requested is False
+    assert result.action_proposal is not None
+    assert result.thought.content == "model thought"
+
+
+def test_structured_no_action_intent_does_not_externalize() -> None:
+    # Model concludes the cycle is complete but warrants no action: a valid outcome the
+    # retrieval-only baseline could not express.
+    gateway = JsonThoughtGateway(
+        payload=_envelope(sufficiency=0.9, wants_to_continue=False, intends_action=False)
+    )
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "completed"
+    assert result.continuation_requested is False
+    assert result.action_proposal is None
+
+
+def test_structured_insufficient_with_continue_intent_continues() -> None:
+    gateway = JsonThoughtGateway(
+        payload=_envelope(
+            sufficiency=0.2,
+            wants_to_continue=True,
+            continue_reason="need to explore the prior context further",
+            intends_action=False,
+        )
+    )
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "completed"
+    assert result.continuation_requested is True
+    assert result.action_proposal is None
+    assert result.memory_handoff is not None
+    assert result.continuation_reason == "need to explore the prior context further"
+
+
+def test_structured_same_context_different_envelope_changes_decision() -> None:
+    # Falsifiable behavioral influence: identical retrieval/continuation context, two
+    # different envelopes produce different owner decisions.
+    engine_ext = InternalThoughtEngine(
+        config=_build_config(),
+        thought_path=_structured_path(
+            JsonThoughtGateway(payload=_envelope(sufficiency=0.9, wants_to_continue=False, intends_action=True))
+        ),
+    )
+    engine_cont = InternalThoughtEngine(
+        config=_build_config(),
+        thought_path=_structured_path(
+            JsonThoughtGateway(
+                payload=_envelope(
+                    sufficiency=0.1,
+                    wants_to_continue=True,
+                    continue_reason="unresolved",
+                    intends_action=False,
+                )
+            )
+        ),
+    )
+
+    ext_result, _ = engine_ext.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+    cont_result, _ = engine_cont.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert ext_result.continuation_requested is False
+    assert ext_result.action_proposal is not None
+    assert cont_result.continuation_requested is True
+    assert cont_result.action_proposal is None
+
+
+def test_structured_model_sufficiency_blends_into_final() -> None:
+    # _bundle() has short=1, mid=1, auto=1 -> retrieval sufficiency = 0.35+0.20+0.15+0.10 = 0.80.
+    # With model_signal_weight=0.6 and model_sufficiency=0.5: 0.6*0.5 + 0.4*0.80 = 0.62.
+    gateway = JsonThoughtGateway(
+        payload=_envelope(sufficiency=0.5, wants_to_continue=False, intends_action=True)
+    )
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.sufficiency_level == 0.62
+
+
+def test_structured_continuation_carry_overrides_model_intent() -> None:
+    # Runtime-carried continuation must force continuation regardless of model intent.
+    gateway = JsonThoughtGateway(
+        payload=_envelope(sufficiency=0.95, wants_to_continue=False, intends_action=True)
+    )
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(),
+        _bundle(),
+        ContinuationPressureState(
+            active=True,
+            level=0.5,
+            origin_thought_id="thought:prior",
+            reason="prior_cycle_unfinished",
+            expires_at_tick=5,
+            carry_count=1,
+        ),
+        _request(source_continuation_active=True),
+    )
+
+    assert result.continuation_requested is True
+    assert result.action_proposal is None
+
+
+def test_structured_malformed_json_yields_insufficient() -> None:
+    gateway = JsonThoughtGateway(raw_text="this is not json")
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, trace = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "insufficient_generation"
+    assert result.thought is None
+    assert result.action_proposal is None
+    assert trace.llm_used is True
+
+
+def test_structured_missing_required_field_yields_insufficient() -> None:
+    gateway = JsonThoughtGateway(payload={"thought": "x"})  # missing sufficiency/booleans
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "insufficient_generation"
+    assert result.thought is None
+
+
+def test_structured_out_of_range_sufficiency_yields_insufficient() -> None:
+    gateway = JsonThoughtGateway(payload=_envelope(sufficiency=1.7))
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "insufficient_generation"
+
+
+def test_structured_wrong_typed_boolean_yields_insufficient() -> None:
+    payload = _envelope()
+    payload["wants_to_continue"] = "yes"  # wrong type
+    gateway = JsonThoughtGateway(payload=payload)
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "insufficient_generation"
+
+
+def test_structured_empty_thought_yields_insufficient() -> None:
+    gateway = JsonThoughtGateway(payload=_envelope(thought="   "))
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert result.execution_status == "insufficient_generation"
+
+
+def test_structured_gateway_failure_is_hard_stop() -> None:
+    from helios_v2.llm import LlmError
+
+    @dataclass
+    class _Raising:
+        def complete(self, request):
+            raise LlmError("provider down")
+
+        def check_static_readiness(self, profile_names):  # pragma: no cover
+            raise NotImplementedError
+
+        def probe_live_readiness(self, profile_names):  # pragma: no cover
+            raise NotImplementedError
+
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(_Raising()))
+
+    with pytest.raises(LlmError):
+        engine.run_thought_cycle(
+            _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
         )

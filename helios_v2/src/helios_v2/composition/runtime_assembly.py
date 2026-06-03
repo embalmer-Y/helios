@@ -44,6 +44,7 @@ from helios_v2.identity_governance import (
     IdentityGovernanceEngine,
 )
 from helios_v2.internal_thought import (
+    FirstVersionInternalThoughtPath,
     InternalThoughtConfig,
     InternalThoughtEngine,
     LlmBackedInternalThoughtPath,
@@ -535,6 +536,7 @@ def assemble_runtime(
     config: CompositionConfig | None = None,
     recorder: RuntimeObservabilityRecorder | None = None,
     gateway: LlmGatewayAPI | None = None,
+    deterministic_thought: bool = False,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -552,6 +554,10 @@ def assemble_runtime(
         `gateway` - optional `25` LLM gateway. When omitted a production gateway backed by
             the OpenAI-compatible provider is built from the config's LLM profiles. Tests
             inject a deterministic fake-provider gateway to stay network-free.
+        `deterministic_thought` - when True, assemble the deterministic internal-thought path
+            and omit the LLM gateway and the `llm_profiles_ready` critical dependency, for
+            explicit offline runs. This is an explicit opt-in assembly choice, never a hidden
+            runtime fallback when the LLM is unavailable.
 
     Returns:
         A `RuntimeHandle` wrapping a fully wired `RuntimeKernel` and the ingress owner.
@@ -561,34 +567,54 @@ def assemble_runtime(
 
     Notes:
         This function is the only place that holds the full wiring. It constructs owners,
-        owner-neutral bridges, the LLM-backed internal-thought path, and the kernel, then
-        registers the nineteen stages in order. The internal-thought consumer is bound to a
-        named LLM profile and that profile's static readiness is a critical dependency.
+        owner-neutral bridges, the internal-thought path, and the kernel, then registers the
+        nineteen stages in order. By default the internal-thought consumer is bound to a
+        named LLM profile and that profile's static readiness is a critical dependency; the
+        `deterministic_thought` opt-in assembles the deterministic path without that
+        dependency.
     """
 
     resolved_config = config if config is not None else default_composition_config()
     thought_profile_name = resolved_config.llm.thought_profile_name
-    resolved_gateway: LlmGatewayAPI = (
-        gateway
-        if gateway is not None
-        else LlmGateway(
-            provider=OpenAICompatibleProvider(),
-            registry=LlmProfileRegistry(profiles=resolved_config.llm.profiles),
+
+    if deterministic_thought:
+        # Explicit opt-in offline assembly: deterministic thought path, no LLM dependency.
+        resolved_gateway = None
+        thought_path = FirstVersionInternalThoughtPath()
+        resolved_specs = (
+            dependency_specs if dependency_specs is not None else default_critical_dependency_specs()
         )
-    )
-    resolved_specs = (
-        dependency_specs
-        if dependency_specs is not None
-        else default_critical_dependency_specs() + [llm_critical_dependency_spec()]
-    )
-    resolved_provider = (
-        dependency_provider
-        if dependency_provider is not None
-        else LlmReadinessDependencyProvider(
+        resolved_provider = (
+            dependency_provider
+            if dependency_provider is not None
+            else FirstVersionDependencyProvider()
+        )
+    else:
+        resolved_gateway = (
+            gateway
+            if gateway is not None
+            else LlmGateway(
+                provider=OpenAICompatibleProvider(),
+                registry=LlmProfileRegistry(profiles=resolved_config.llm.profiles),
+            )
+        )
+        thought_path = LlmBackedInternalThoughtPath(
             gateway=resolved_gateway,
-            bound_profile_names=(thought_profile_name,),
+            profile_name=thought_profile_name,
         )
-    )
+        resolved_specs = (
+            dependency_specs
+            if dependency_specs is not None
+            else default_critical_dependency_specs() + [llm_critical_dependency_spec()]
+        )
+        resolved_provider = (
+            dependency_provider
+            if dependency_provider is not None
+            else LlmReadinessDependencyProvider(
+                gateway=resolved_gateway,
+                bound_profile_names=(thought_profile_name,),
+            )
+        )
 
     ingress = SensoryIngress()
     ingress.register_source(FirstVersionSensorySource(signals=resolved_config.source_signals))
@@ -644,10 +670,7 @@ def assemble_runtime(
     )
     internal_thought = InternalThoughtEngine(
         config=resolved_config.internal_thought,
-        thought_path=LlmBackedInternalThoughtPath(
-            gateway=resolved_gateway,
-            profile_name=thought_profile_name,
-        ),
+        thought_path=thought_path,
     )
     action_externalization = ActionExternalizationEngine(
         config=resolved_config.action_externalization,

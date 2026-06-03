@@ -7,17 +7,24 @@ It is a thin entry point only. It contains no owner policy, no bridge logic, and
 assembly logic; all of that lives in `helios_v2.composition`. It runs a bounded, explicitly
 specified number of ticks and then stops; it never starts an unbounded background loop.
 
+LLM requirement: by default the assembled runtime is LLM-backed (the internal-thought owner
+sources content from the `25` gateway). A real run therefore requires a statically-ready
+bound LLM profile (the profile's api-key environment variable must be set), or startup fails
+fast through the dependency gate. This driver reads `os.environ`; it does not auto-load
+`.env`. For an offline run with no LLM, pass `--deterministic` to assemble the deterministic
+thought path and omit the LLM critical dependency.
+
 Examples:
 
     python helios_v2/scripts/run_runtime_driver.py --ticks 3
     python helios_v2/scripts/run_runtime_driver.py --ticks 5 --out logs/runtime_events.jsonl
+    python helios_v2/scripts/run_runtime_driver.py --ticks 3 --deterministic
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 from typing import TextIO
 
@@ -46,6 +53,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         choices=("debug", "info", "notice", "warning", "error", "critical"),
         help="Minimum severity dispatched to the sink (default: debug).",
     )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Assemble the deterministic internal-thought path and omit the LLM critical "
+        "dependency, for offline runs. Explicit opt-in; never a hidden fallback.",
+    )
     return parser.parse_args(argv)
 
 
@@ -56,7 +69,7 @@ def _run(args: argparse.Namespace, stream: TextIO) -> int:
         sinks=(JsonLineStreamLogSink(stream=stream),),
         minimum_severity=args.min_severity,
     )
-    handle = assemble_runtime(recorder=recorder)
+    handle = assemble_runtime(recorder=recorder, deterministic_thought=args.deterministic)
     handle.startup()
     results = handle.run_ticks(args.ticks)
     return len(results)

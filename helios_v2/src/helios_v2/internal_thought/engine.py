@@ -3,18 +3,20 @@
 Ships two fired-path thought implementations:
 
 1. `FirstVersionInternalThoughtPath` - deterministic content synthesis (test/default-off).
-2. `LlmBackedInternalThoughtPath` - real cognition content from the `25` LLM gateway.
+2. `LlmBackedInternalThoughtPath` - real cognition content from the `25` LLM gateway, now
+   driven by a structured thought envelope the owner parses into evidence.
 
 Both paths share one owner-private judgment helper (`_derive_thought_judgment`) so the
 sufficiency, continuation, recall-intent, memory-handoff, and proposal decisions stay owned
-by this owner and remain reproducible given a fixed thought content. The model supplies
-content only; it never owns judgment.
+by this owner and remain reproducible given fixed inputs. The model supplies content and
+structured self-assessment evidence; it never owns the final judgment.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from helios_v2.directed_retrieval import ThoughtWindowBundle
 from helios_v2.llm import LlmGatewayAPI, LlmMessage, LlmRequest
@@ -34,6 +36,11 @@ from .contracts import (
     ThoughtContent,
     ThoughtCycleResult,
 )
+
+# Owner-level constant: how strongly the model's self-assessed sufficiency signal moves the
+# final sufficiency relative to the retrieval-derived signal. Explicit and bounded; the
+# owner still anchors on retrieval evidence so the model cannot claim sufficiency alone.
+_MODEL_SIGNAL_WEIGHT = 0.6
 
 
 def _validate_gate_result(gate_result: ThoughtGateResult) -> None:
@@ -67,6 +74,145 @@ def _validate_continuation_alignment(
         raise InternalThoughtError("InternalThoughtRequest must preserve the current continuation active flag")
 
 
+class StructuredThoughtParseError(InternalThoughtError):
+    """Owner-private failure raised when a model structured-thought envelope is invalid.
+
+    This is a subclass of `InternalThoughtError` so it is caught explicitly by the
+    LLM-backed path and mapped to an explicit non-success result, never silently coerced
+    and never used as a retrieval-only fallback.
+    """
+
+
+@dataclass(frozen=True)
+class StructuredThoughtEvidence:
+    """Owner-private parsed evidence from the model's structured thought envelope.
+
+    Owner: internal thought loop.
+
+    This is model-supplied evidence, never the final decision. The owner validates and
+    bounds every field here and then maps it into the final judgment. It is intentionally
+    not a cross-owner public contract in this slice.
+
+    Failure semantics:
+        Built only by `_parse_structured_thought`, which raises `StructuredThoughtParseError`
+        on malformed, missing-required, out-of-range, or wrong-typed fields.
+    """
+
+    thought_text: str
+    model_sufficiency: float
+    wants_to_continue: bool
+    continue_reason: str
+    intends_action: bool
+    action_summary: str
+    intends_self_revision: bool
+    self_revision_summary: str
+
+
+def _require_bool(payload: dict[str, Any], key: str) -> bool:
+    value = payload.get(key)
+    if not isinstance(value, bool):
+        raise StructuredThoughtParseError(
+            f"Structured thought envelope field '{key}' must be a boolean"
+        )
+    return value
+
+
+def _optional_str(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise StructuredThoughtParseError(
+            f"Structured thought envelope field '{key}' must be a string when present"
+        )
+    return value.strip()
+
+
+def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence:
+    """Owner: internal thought loop.
+
+    Purpose:
+        Parse and validate the model's JSON structured-thought envelope into bounded,
+        typed owner-private evidence.
+
+    Inputs:
+        `completion_text` - the raw `json_object` completion text from the gateway.
+
+    Returns:
+        A `StructuredThoughtEvidence` value with a clamped sufficiency and validated fields.
+
+    Raises:
+        StructuredThoughtParseError on non-JSON, non-object, missing-required, out-of-range,
+        or wrong-typed fields. The owner never silently coerces invalid evidence.
+
+    Notes:
+        An empty `thought` string is allowed through here (it parses), so the caller can map
+        it to the existing empty-content non-success result; every other invalid shape is a
+        parse error.
+    """
+
+    try:
+        payload = json.loads(completion_text)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise StructuredThoughtParseError(
+            "Structured thought envelope is not valid JSON"
+        ) from error
+    if not isinstance(payload, dict):
+        raise StructuredThoughtParseError("Structured thought envelope must be a JSON object")
+
+    thought_value = payload.get("thought")
+    if not isinstance(thought_value, str):
+        raise StructuredThoughtParseError(
+            "Structured thought envelope must declare a string 'thought' field"
+        )
+
+    sufficiency_value = payload.get("sufficiency")
+    if isinstance(sufficiency_value, bool) or not isinstance(sufficiency_value, (int, float)):
+        raise StructuredThoughtParseError(
+            "Structured thought envelope must declare a numeric 'sufficiency' field"
+        )
+    if sufficiency_value < 0.0 or sufficiency_value > 1.0:
+        raise StructuredThoughtParseError(
+            "Structured thought envelope 'sufficiency' must be within [0, 1]"
+        )
+
+    wants_to_continue = _require_bool(payload, "wants_to_continue")
+    continue_reason = _optional_str(payload, "continue_reason")
+    if wants_to_continue and not continue_reason:
+        raise StructuredThoughtParseError(
+            "Structured thought envelope must declare 'continue_reason' when wants_to_continue is true"
+        )
+
+    action_payload = payload.get("proposed_action", {})
+    if not isinstance(action_payload, dict):
+        raise StructuredThoughtParseError(
+            "Structured thought envelope 'proposed_action' must be an object when present"
+        )
+    intends_action = _require_bool(action_payload, "intends_action") if action_payload else False
+    action_summary = _optional_str(action_payload, "summary") if action_payload else ""
+
+    revision_payload = payload.get("self_revision", {})
+    if not isinstance(revision_payload, dict):
+        raise StructuredThoughtParseError(
+            "Structured thought envelope 'self_revision' must be an object when present"
+        )
+    intends_self_revision = (
+        _require_bool(revision_payload, "intends_revision") if revision_payload else False
+    )
+    self_revision_summary = _optional_str(revision_payload, "summary") if revision_payload else ""
+
+    return StructuredThoughtEvidence(
+        thought_text=thought_value.strip(),
+        model_sufficiency=float(sufficiency_value),
+        wants_to_continue=wants_to_continue,
+        continue_reason=continue_reason,
+        intends_action=intends_action,
+        action_summary=action_summary,
+        intends_self_revision=intends_self_revision,
+        self_revision_summary=self_revision_summary,
+    )
+
+
 @dataclass(frozen=True)
 class _ThoughtJudgment:
     """Owner-private judgment outcome shared by every internal-thought path.
@@ -92,26 +238,32 @@ def _derive_thought_judgment(
     continuation_state: ContinuationPressureState,
     request: InternalThoughtRequest,
     thought: ThoughtContent,
+    evidence: StructuredThoughtEvidence | None = None,
 ) -> _ThoughtJudgment:
     """Owner: internal thought loop.
 
     Purpose:
         Decide the owner-held fired-cycle judgment (sufficiency, continuation, recall intent,
         memory handoff, action proposal, self-revision proposal) from the retrieval window,
-        continuation state, request, and the produced thought content.
+        continuation state, request, the produced thought content, and optional model-supplied
+        structured evidence.
 
     Inputs:
         `retrieval_bundle` - the directed-retrieval thought window for the cycle.
         `continuation_state` - the current continuation-pressure state.
         `request` - the validated fired-path request.
         `thought` - the produced thought content (deterministic or LLM-derived).
+        `evidence` - optional model-supplied structured evidence. When None, the helper uses
+            the retrieval-only baseline (the deterministic path's exact prior behavior).
 
     Returns:
         A `_ThoughtJudgment` carrying every owner-held decision for the cycle.
 
     Notes:
-        Judgment is owned here, never by the model or the gateway. It is deterministic given
-        the inputs, so the same thought content always yields the same judgment.
+        Judgment is owned here, never by the model or the gateway. When evidence is present,
+        the model's signals influence the decision under explicit bounded rules, but the
+        owner still enforces the runtime-carry and low-context floors and owns proposal
+        scope/channels/intensity/governance. Deterministic given inputs.
     """
 
     short_term = retrieval_bundle.short_term_context
@@ -119,12 +271,49 @@ def _derive_thought_judgment(
     autobiographical = retrieval_bundle.autobiographical_hits
     long_term = retrieval_bundle.long_term_hits
     total_hits = len(short_term) + len(mid_term) + len(long_term) + len(autobiographical)
-    sufficiency_level = min(
+    retrieval_sufficiency = min(
         1.0,
         0.35 + 0.20 * len(short_term) + 0.15 * len(mid_term) + 0.10 * len(autobiographical),
     )
-    continuation_requested = continuation_state.active or total_hits <= 1
-    continuation_reason = "need_more_context" if continuation_requested else "sufficient_for_current_cycle"
+
+    # Owner floors that the model cannot override: a runtime-carried continuation forces
+    # continuation, and an empty/near-empty window cannot be declared sufficient.
+    runtime_forces_continue = continuation_state.active
+    low_context_forces_continue = total_hits <= 1
+
+    if evidence is None:
+        sufficiency_level = round(retrieval_sufficiency, 4)
+        model_wants_continue = False
+        model_intends_action = False
+        model_intends_self_revision = False
+        model_continue_reason = ""
+    else:
+        # Bounded blend: the model's self-assessed sufficiency measurably moves the result
+        # while the owner stays anchored on retrieval evidence.
+        blended = (
+            _MODEL_SIGNAL_WEIGHT * evidence.model_sufficiency
+            + (1.0 - _MODEL_SIGNAL_WEIGHT) * retrieval_sufficiency
+        )
+        sufficiency_level = round(min(1.0, max(0.0, blended)), 4)
+        model_wants_continue = evidence.wants_to_continue
+        model_intends_action = evidence.intends_action
+        model_intends_self_revision = evidence.intends_self_revision
+        model_continue_reason = evidence.continue_reason
+
+    if runtime_forces_continue or low_context_forces_continue:
+        continuation_requested = True
+        continuation_reason = "need_more_context"
+    elif evidence is None:
+        # Retrieval-only baseline (deterministic path): exactly the prior behavior.
+        continuation_requested = False
+        continuation_reason = "sufficient_for_current_cycle"
+    elif model_wants_continue:
+        continuation_requested = True
+        continuation_reason = model_continue_reason or "need_more_context"
+    else:
+        continuation_requested = False
+        continuation_reason = "sufficient_for_current_cycle"
+
     recall_intent = (
         "continue retrieval around current unresolved thought"
         if continuation_requested
@@ -144,18 +333,30 @@ def _derive_thought_judgment(
             source_thought_id=thought.thought_id,
         )
     else:
-        action_proposal = ThoughtActionProposalCarrier(
-            proposal_id=f"thought-action:{request.request_id}",
-            scope="external",
-            behavior_name="reply_message",
-            requested_op="reply_message",
-            preferred_channels=("cli",),
-            outbound_text=thought.content,
-            outbound_intensity=0.75,
-            reason_trace=("thought judged sufficient for current cycle",),
-            governance_hints={"requires_identity_review": False},
-        )
-    if autobiographical and sufficiency_level >= 0.75:
+        # Emit an action proposal only when the cycle closes and either the deterministic
+        # baseline applies (evidence is None) or the model expressed an action intent. This
+        # lets a model conclude "thought complete, no action required" without externalizing.
+        emit_action = evidence is None or model_intends_action
+        if emit_action:
+            action_proposal = ThoughtActionProposalCarrier(
+                proposal_id=f"thought-action:{request.request_id}",
+                scope="external",
+                behavior_name="reply_message",
+                requested_op="reply_message",
+                preferred_channels=("cli",),
+                outbound_text=thought.content,
+                outbound_intensity=0.75,
+                reason_trace=("thought judged sufficient for current cycle",),
+                governance_hints={"requires_identity_review": False},
+            )
+    # Self-revision: the existing autobiographical/sufficiency constraint is necessary; when
+    # evidence is present the model's revision intent is also required. The model's intent is
+    # never sufficient on its own.
+    self_revision_allowed_by_owner = bool(autobiographical) and sufficiency_level >= 0.75
+    self_revision_requested = self_revision_allowed_by_owner and (
+        evidence is None or model_intends_self_revision
+    )
+    if self_revision_requested:
         self_revision_proposal = SelfRevisionProposalCarrier(
             proposal_id=f"self-revision:{request.request_id}",
             revision_kind="identity_narrative_refinement",
@@ -344,13 +545,26 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
             request_id=f"llm-thought:{request.request_id}",
             target_profile=self.profile_name,
             messages=self._build_messages(request, retrieval_bundle, continuation_state),
-            response_format="text",
+            response_format="json_object",
             metadata={"consumer": "internal_thought", "tick_id": request.tick_id},
         )
         # LlmError (unknown profile, missing key, provider failure) propagates as a hard stop.
         completion = self.gateway.complete(llm_request)
-        content_text = completion.output_text.strip()
-        if not content_text:
+        # Parse + validate the structured envelope into owner-private evidence. A malformed,
+        # missing-required, out-of-range, or wrong-typed envelope is an explicit non-success
+        # result; the owner never silently coerces it or falls back to retrieval-only judgment.
+        try:
+            evidence = _parse_structured_thought(completion.output_text)
+        except StructuredThoughtParseError:
+            result = _assemble_insufficient_result(
+                request,
+                gate_result,
+                continuation_reason="malformed_structured_thought",
+                recall_intent="retry structured thought generation for current unresolved cycle",
+            )
+            trace = _assemble_trace(result, llm_used=True, fallback_used=False)
+            return result, trace
+        if not evidence.thought_text:
             result = _assemble_insufficient_result(
                 request,
                 gate_result,
@@ -362,12 +576,18 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
         thought = ThoughtContent(
             thought_id=f"thought:{request.request_id}",
             thought_type="llm_reflective_synthesis",
-            content=content_text,
+            content=evidence.thought_text,
             source_path=self.thought_source_path,
             llm_used=True,
             fallback_used=False,
         )
-        judgment = _derive_thought_judgment(retrieval_bundle, continuation_state, request, thought)
+        judgment = _derive_thought_judgment(
+            retrieval_bundle,
+            continuation_state,
+            request,
+            thought,
+            evidence=evidence,
+        )
         result = _assemble_completed_result(request, gate_result, thought, judgment)
         trace = _assemble_trace(result, llm_used=True, fallback_used=False)
         return result, trace
@@ -378,7 +598,12 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
         retrieval_bundle: ThoughtWindowBundle,
         continuation_state: ContinuationPressureState,
     ) -> tuple[LlmMessage, ...]:
-        """Adapt the fired-path inputs into neutral system/user messages (consumer-owned)."""
+        """Adapt the fired-path inputs into neutral system/user messages (consumer-owned).
+
+        The system message documents the structured JSON envelope the owner will parse. The
+        envelope expresses self-assessment and intent only; channel, intensity, op, and
+        governance decisions remain owner-owned and are not requested from the model.
+        """
 
         summary = request.prompt_contract_summary
         layer_names = summary.get("layer_names", ())
@@ -391,6 +616,16 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
             "Produce one concise internal thought for the current cycle.",
             "Do not perform theatrical self-narration; reflect the current state and context only.",
             f"Active prompt-contract layers: {layer_text}.",
+            "Respond with a single JSON object only, no prose outside it, with this shape:",
+            "{",
+            '  "thought": "<concise internal thought>",',
+            '  "sufficiency": <number 0..1, how complete this cycle\'s thinking is>,',
+            '  "wants_to_continue": <true if more thinking is needed this line of thought>,',
+            '  "continue_reason": "<why you want to continue, required if wants_to_continue is true>",',
+            '  "proposed_action": {"intends_action": <true if an outward action is warranted>, "summary": "<optional>"},',
+            '  "self_revision": {"intends_revision": <true if your self-model should change>, "summary": "<optional>"}',
+            "}",
+            "Set wants_to_continue to false and intends_action to false when no action is warranted.",
         ]
         system_message = LlmMessage(role="system", content="\n".join(system_lines))
 

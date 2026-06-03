@@ -25,15 +25,33 @@ from helios_v2.runtime.contracts import RuntimeDependencyStatus
 
 @dataclass
 class FakeThoughtProvider:
-    """Deterministic provider double for composition tests; never touches the network."""
+    """Deterministic provider double for composition tests; never touches the network.
 
-    output_text: str = "deterministic llm thought for the current cycle"
+    Returns a structured JSON thought envelope (R27): `thought_text` becomes the envelope's
+    `thought`; the default envelope is "sufficient + intends_action" so the owner externalizes.
+    """
+
+    thought_text: str = "deterministic llm thought for the current cycle"
     finish_reason: str = "stop"
+    sufficiency: float = 0.9
+    wants_to_continue: bool = False
+    continue_reason: str = ""
+    intends_action: bool = True
     calls: list[str] = field(default_factory=list)
 
     def complete(self, profile, request, api_key) -> ProviderCompletion:
+        import json
+
         self.calls.append(profile.profile_name)
-        return ProviderCompletion(output_text=self.output_text, finish_reason=self.finish_reason)
+        envelope = {
+            "thought": self.thought_text,
+            "sufficiency": self.sufficiency,
+            "wants_to_continue": self.wants_to_continue,
+            "continue_reason": self.continue_reason,
+            "proposed_action": {"intends_action": self.intends_action, "summary": ""},
+            "self_revision": {"intends_revision": False, "summary": ""},
+        }
+        return ProviderCompletion(output_text=json.dumps(envelope), finish_reason=self.finish_reason)
 
 
 @dataclass
@@ -270,7 +288,7 @@ def test_long_horizon_continuity_state_flows_into_evaluation_evidence() -> None:
 
 
 def test_default_runtime_uses_llm_backed_thought_path() -> None:
-    provider = FakeThoughtProvider(output_text="a real model thought")
+    provider = FakeThoughtProvider(thought_text="a real model thought")
     handle = _assemble(gateway=_ready_gateway(provider=provider))
     handle.startup()
 
@@ -323,3 +341,44 @@ def test_llm_inference_failure_is_a_hard_stop_no_fallback() -> None:
     # Inference failure must surface as a hard stop, never a silent deterministic fallback.
     with pytest.raises(LlmError):
         handle.tick()
+
+
+# --- Requirement 27: structured-output-driven judgment + deterministic offline assembly ---
+
+
+def test_deterministic_thought_assembly_runs_offline_without_llm_dependency() -> None:
+    # Explicit opt-in offline assembly: deterministic thought path, no LLM critical dependency.
+    handle = assemble_runtime(deterministic_thought=True)
+    spec_names = {spec.name for spec in handle.kernel.dependency_specs}
+    assert LLM_PROFILES_READY not in spec_names
+    assert RUNTIME_COGNITION_BASELINE in spec_names
+
+    handle.startup()
+    result = handle.tick()
+
+    thought = result.stage_results["internal_thought_loop_owner"].result.thought
+    assert thought is not None
+    assert thought.llm_used is False
+    assert thought.source_path == "deterministic_first_version"
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+
+
+def test_structured_envelope_drives_owner_decision_in_assembled_runtime() -> None:
+    # The structured envelope drives the assembled runtime's thought-owner decision. A
+    # "sufficient + intends_action" envelope makes the owner externalize (action proposal
+    # present) end to end through the full chain.
+    provider = FakeThoughtProvider(
+        thought_text="resolved for this cycle",
+        sufficiency=0.9,
+        wants_to_continue=False,
+        intends_action=True,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    result = handle.tick()
+
+    thought_result = result.stage_results["internal_thought_loop_owner"].result
+    assert thought_result.execution_status == "completed"
+    assert thought_result.continuation_requested is False
+    assert thought_result.action_proposal is not None
