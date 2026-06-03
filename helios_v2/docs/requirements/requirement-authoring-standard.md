@@ -244,6 +244,16 @@ If design or task changes alter ordering, ownership, rollout strategy, or implem
 
 If implementation changes alter owner maturity, the index update must include both the new maturity label and enough change context for a reviewer to understand why that maturity changed.
 
+### 8.1 Progress flow map sync rule
+
+The module progress flow maps `docs/PROGRESS_FLOW.en.md` and `docs/PROGRESS_FLOW.zh-CN.md` are living implementation-facing documents. A requirement change set MUST update both maps in the same change set whenever it materially changes:
+
+1. an owner's maturity color (the map colors must match the `index.md` `Maturity` column),
+2. the runtime stage chain order or membership,
+3. owner boundaries (a new owner, a merged owner, or a closed gap).
+
+Both maps must be updated together (English and Chinese), and each map's "Last synced" line must name the requirement that last touched it. A change set that alters owner maturity, the stage chain, or owner boundaries without updating both progress flow maps is incomplete, exactly like a stale `index.md`.
+
 ## 9. Requirement Template
 Use this template when creating a new `requirement.md`.
 
