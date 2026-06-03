@@ -79,7 +79,7 @@ driver bg loop receives pkt --> driver bounded backlog (overflow policy + count)
    composition source adapter (later) feeds raw_signals into 02 sensory.register_source/collect
 ```
 
-The framework emits `RawSignal`; it does not normalize. The QoS marker is placed in `RawSignal.metadata` under a reserved key (decision 6 below) or a dedicated field (decision in 5.x). Sensory preserves it onto `Stimulus.metadata` unchanged (sensory already passes metadata through).
+The framework emits `RawSignal`; it does not normalize. The QoS marker is placed in `RawSignal.metadata` under the reserved key `channel_qos` (decision 5.4). Sensory preserves it onto `Stimulus.metadata` unchanged (sensory already passes metadata through).
 
 ### 4.3 NAPI-style bounded drain
 
@@ -95,7 +95,7 @@ ChannelQosClass = Literal["control", "interactive", "bulk", "background"]   # tr
 InboundPacket carries qos_class derived only from transport-visible facts.
 ```
 
-The framework may order the ready set or choose drop victims by `qos_class` (transport scheduling only). It never maps `qos_class` to cognitive importance. The marker rides `RawSignal.metadata["channel_qos"]` (or a dedicated field) and is preserved onto `Stimulus`. Only `03` appraisal interprets it as a salience input. First version: taxonomy + propagation only; multi-lane scheduling and selective dropping are design-reserved.
+The framework may order the ready set or choose drop victims by `qos_class` (transport scheduling only). It never maps `qos_class` to cognitive importance. The marker rides `RawSignal.metadata["channel_qos"]` (reserved key, see 5.4) and is preserved onto `Stimulus`. Only `03` appraisal interprets it as a salience input. First version: taxonomy + propagation only; multi-lane scheduling and selective dropping are design-reserved.
 
 ### 4.5 Outbound flow (planner decision -> driver)
 
@@ -142,8 +142,19 @@ The framework maps `InboundPacket -> RawSignal` with `signal_id=packet_id`, `sou
 - `OutboundDispatchOutcome`: `packet_id`, `target_driver_id`, `status: Literal["delivered","failed","driver_unavailable","dropped_overflow"]`, `detail: str`.
 - `SubsystemDispatchResult`: `outcomes: tuple[OutboundDispatchOutcome,...]`, `dispatched_count: int`, `deferred_count: int`.
 
-### 5.4 QoS marker carriage decision
-The QoS marker rides `RawSignal.metadata["channel_qos"]` as a reserved key (no `RawSignal` contract change needed; `metadata` is already free-form and sensory already preserves it onto `Stimulus.metadata`). A dedicated `RawSignal.qos_class` field is the alternative; the metadata-key approach is preferred for first version because it keeps `02` sensory unchanged. This will be confirmed at implementation; if a typed field is chosen, `sensory/contracts.py` gains an optional `qos_class` passthrough.
+### 5.4 QoS marker carriage decision (resolved: metadata reserved key)
+Decision: the QoS marker rides `RawSignal.metadata["channel_qos"]` as a reserved string-valued key. No `RawSignal`/`Stimulus` contract change is made.
+
+Rationale (grounded in `02` sensory's actual responsibility):
+1. `02` sensory is a narrow normalization owner. `_normalize_signal` passes `RawSignal.metadata` through to `Stimulus.metadata` verbatim (frozen `MappingProxyType`), never reading or validating any key. The metadata mapping is already the cross-owner opaque-provenance channel; QoS carriage is exactly that use.
+2. `ChannelQosClass` is a transport-intrinsic type owned by `30` channel. A typed `qos_class` field on `RawSignal`/`Stimulus` would force `02` to reference a `30`-owned type, inverting the owner dependency direction (`02` is upstream of `30`). The only way to avoid the inversion with a typed field is to degrade it to `str`, which discards the sole benefit of a typed field while still mutating the sensory contract.
+3. With the metadata key, typed enum validation stays fully inside the channel owner (enforced when constructing `InboundPacket.qos_class`); at the owner boundary it degrades to a reserved key + string value, which is precisely what the metadata channel exists for.
+
+Carriage contract:
+- The framework writes `RawSignal.metadata["channel_qos"] = <qos_class string>` when mapping `InboundPacket -> RawSignal`. The constant key is `CHANNEL_QOS_METADATA_KEY = "channel_qos"`, exported from `channel/contracts.py`.
+- `02` sensory preserves it onto `Stimulus.metadata` unchanged (no sensory change).
+- `03` appraisal is the only owner that reads `stimulus.metadata["channel_qos"]` as a salience input (out of scope for `30`; appraisal wiring is a later requirement).
+- `sensory/contracts.py` is unchanged by this requirement.
 
 ## 6. Module Changes
 
@@ -151,7 +162,7 @@ The QoS marker rides `RawSignal.metadata["channel_qos"]` as a reserved key (no `
 2. `channel/engine.py`: `ChannelSubsystem` (registry + drain + dispatch + readiness + state snapshot) and a deterministic `Fake/InMemoryChannelDriver` for tests (a real driver is `31`).
 3. `channel/__init__.py`: export the public surface.
 4. `composition/dependencies.py`: optional `channel_drivers_ready` capability + readiness provider, added only when a critical driver is bound (mechanism ships here; binding is later).
-5. `sensory/contracts.py`: only if a typed `qos_class` passthrough is chosen over the metadata key.
+5. `sensory/contracts.py`: unchanged (QoS rides the `channel_qos` metadata reserved key; see 5.4).
 
 ## 7. Migration Plan
 
