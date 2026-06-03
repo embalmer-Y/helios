@@ -4,7 +4,6 @@ __pycache__/
 *.pyc
 logs/
 .env
-memory/
 data/
 
 # 守护进程
