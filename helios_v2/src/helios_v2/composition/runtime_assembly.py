@@ -12,6 +12,7 @@ result, and it provides no degraded or fallback assembly path.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from helios_v2.action_externalization import (
@@ -43,9 +44,16 @@ from helios_v2.identity_governance import (
     IdentityGovernanceEngine,
 )
 from helios_v2.internal_thought import (
-    FirstVersionInternalThoughtPath,
     InternalThoughtConfig,
     InternalThoughtEngine,
+    LlmBackedInternalThoughtPath,
+)
+from helios_v2.llm import (
+    LlmGateway,
+    LlmGatewayAPI,
+    LlmProfile,
+    LlmProfileRegistry,
+    OpenAICompatibleProvider,
 )
 from helios_v2.memory import MemoryAffectReplayConfig, MemoryAffectReplayEngine
 from helios_v2.neuromodulation import NeuromodulatorConfig, NeuromodulatorEngine, NeuromodulatorLevels
@@ -138,7 +146,12 @@ from .bridges import (
     FirstVersionWorkspaceCompetitionPath,
     TimelineViewHolder,
 )
-from .dependencies import FirstVersionDependencyProvider, default_critical_dependency_specs
+from .dependencies import (
+    FirstVersionDependencyProvider,
+    LlmReadinessDependencyProvider,
+    default_critical_dependency_specs,
+    llm_critical_dependency_spec,
+)
 
 # The single source of wiring truth: the canonical brain-aligned stage order. The
 # assembly validates the registered stage names equal this tuple exactly.
@@ -196,6 +209,33 @@ def _uniform_feeling_vector(value: float) -> InteroceptiveFeelingVector:
 
 
 @dataclass(frozen=True)
+class LlmCompositionConfig:
+    """Owner: composition.
+
+    Purpose:
+        Declare the LLM profile registry and the per-consumer profile bindings used to
+        assemble LLM-backed owners.
+
+    Notes:
+        `profiles` seeds the `25` `LlmProfileRegistry`. `thought_profile_name` binds the
+        internal-thought consumer to one registered profile. Binding is a composition
+        concern; the gateway stays ignorant of consumer identity.
+    """
+
+    profiles: tuple[LlmProfile, ...]
+    thought_profile_name: str
+
+    def __post_init__(self) -> None:
+        if not self.profiles:
+            raise CompositionError("LlmCompositionConfig must declare at least one profile")
+        names = {profile.profile_name for profile in self.profiles}
+        if self.thought_profile_name not in names:
+            raise CompositionError(
+                "LlmCompositionConfig thought_profile_name must reference a declared profile"
+            )
+
+
+@dataclass(frozen=True)
 class CompositionConfig:
     """Owner: composition.
 
@@ -224,6 +264,7 @@ class CompositionConfig:
     experience_writeback: ExperienceWritebackConfig
     autonomy: AutonomyConfig
     evaluation: EvaluationConfig
+    llm: LlmCompositionConfig
     source_signals: tuple[RawSignal, ...] = ()
 
 
@@ -403,6 +444,17 @@ def default_composition_config() -> CompositionConfig:
                 "long_range_diagnostic_policy",
             ),
         ),
+        llm=LlmCompositionConfig(
+            profiles=(
+                LlmProfile(
+                    profile_name="thought-default",
+                    model=os.getenv("HELIOS_LLM_MODEL", "deepseek/deepseek-v4-flash"),
+                    api_key_env="OPENAI_API_KEY",
+                    base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                ),
+            ),
+            thought_profile_name="thought-default",
+        ),
     )
 
 
@@ -482,6 +534,7 @@ def assemble_runtime(
     dependency_provider: RuntimeDependencyProvider | None = None,
     config: CompositionConfig | None = None,
     recorder: RuntimeObservabilityRecorder | None = None,
+    gateway: LlmGatewayAPI | None = None,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -489,11 +542,16 @@ def assemble_runtime(
         Assemble the full nineteen-stage runtime in canonical order and return a handle.
 
     Inputs:
-        `dependency_specs` - critical dependency specs; defaults to the first-version set.
-        `dependency_provider` - availability provider; defaults to the first-version provider.
+        `dependency_specs` - critical dependency specs; defaults to the baseline set plus
+            the LLM static-readiness critical dependency.
+        `dependency_provider` - availability provider; defaults to the LLM-readiness
+            provider wrapping the baseline provider for the bound thought profile.
         `config` - per-owner first-version configs; defaults to `default_composition_config()`.
         `recorder` - optional `21` observability recorder; when omitted the runtime is
             uninstrumented and behaves exactly as the bare kernel.
+        `gateway` - optional `25` LLM gateway. When omitted a production gateway backed by
+            the OpenAI-compatible provider is built from the config's LLM profiles. Tests
+            inject a deterministic fake-provider gateway to stay network-free.
 
     Returns:
         A `RuntimeHandle` wrapping a fully wired `RuntimeKernel` and the ingress owner.
@@ -503,15 +561,33 @@ def assemble_runtime(
 
     Notes:
         This function is the only place that holds the full wiring. It constructs owners,
-        owner-neutral bridges, and the kernel, then registers the nineteen stages in order.
+        owner-neutral bridges, the LLM-backed internal-thought path, and the kernel, then
+        registers the nineteen stages in order. The internal-thought consumer is bound to a
+        named LLM profile and that profile's static readiness is a critical dependency.
     """
 
     resolved_config = config if config is not None else default_composition_config()
+    thought_profile_name = resolved_config.llm.thought_profile_name
+    resolved_gateway: LlmGatewayAPI = (
+        gateway
+        if gateway is not None
+        else LlmGateway(
+            provider=OpenAICompatibleProvider(),
+            registry=LlmProfileRegistry(profiles=resolved_config.llm.profiles),
+        )
+    )
     resolved_specs = (
-        dependency_specs if dependency_specs is not None else default_critical_dependency_specs()
+        dependency_specs
+        if dependency_specs is not None
+        else default_critical_dependency_specs() + [llm_critical_dependency_spec()]
     )
     resolved_provider = (
-        dependency_provider if dependency_provider is not None else FirstVersionDependencyProvider()
+        dependency_provider
+        if dependency_provider is not None
+        else LlmReadinessDependencyProvider(
+            gateway=resolved_gateway,
+            bound_profile_names=(thought_profile_name,),
+        )
     )
 
     ingress = SensoryIngress()
@@ -568,7 +644,10 @@ def assemble_runtime(
     )
     internal_thought = InternalThoughtEngine(
         config=resolved_config.internal_thought,
-        thought_path=FirstVersionInternalThoughtPath(),
+        thought_path=LlmBackedInternalThoughtPath(
+            gateway=resolved_gateway,
+            profile_name=thought_profile_name,
+        ),
     )
     action_externalization = ActionExternalizationEngine(
         config=resolved_config.action_externalization,

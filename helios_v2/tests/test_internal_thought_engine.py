@@ -235,3 +235,153 @@ def test_engine_requires_explicit_thought_capability() -> None:
             ContinuationPressureState.inactive(),
             _request(),
         )
+
+
+# --- Requirement 26: LLM-backed internal thought path ---
+
+
+@dataclass
+class FakeThoughtGateway:
+    """Deterministic gateway double for the LLM-backed path; never touches the network."""
+
+    output_text: str = "a concise model thought for the current cycle"
+    finish_reason: str = "stop"
+    seen_profiles: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        self.seen_profiles = []
+
+    def complete(self, request):
+        from helios_v2.llm import LlmCompletion, LlmUsage
+
+        self.seen_profiles.append(request.target_profile)
+        return LlmCompletion(
+            completion_id=f"llm-completion:{request.request_id}",
+            source_request_id=request.request_id,
+            profile_name=request.target_profile,
+            model="fake-model",
+            output_text=self.output_text,
+            finish_reason=self.finish_reason,
+            usage=LlmUsage(prompt_tokens=4, completion_tokens=6, total_tokens=10),
+            latency_ms=1.0,
+        )
+
+    def check_static_readiness(self, profile_names):  # pragma: no cover - not used here
+        raise NotImplementedError
+
+    def probe_live_readiness(self, profile_names):  # pragma: no cover - not used here
+        raise NotImplementedError
+
+
+@dataclass
+class RaisingThoughtGateway:
+    def complete(self, request):
+        from helios_v2.llm import LlmError
+
+        raise LlmError("provider unavailable")
+
+    def check_static_readiness(self, profile_names):  # pragma: no cover
+        raise NotImplementedError
+
+    def probe_live_readiness(self, profile_names):  # pragma: no cover
+        raise NotImplementedError
+
+
+def _llm_path(gateway):
+    from helios_v2.internal_thought import LlmBackedInternalThoughtPath
+
+    return LlmBackedInternalThoughtPath(gateway=gateway, profile_name="thought-default")
+
+
+def test_llm_backed_path_uses_completion_text_and_marks_llm_used() -> None:
+    gateway = FakeThoughtGateway(output_text="model-produced thought")
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_llm_path(gateway))
+
+    result, trace = engine.run_thought_cycle(
+        _gate_result(),
+        _bundle(),
+        ContinuationPressureState.inactive(),
+        _request(),
+    )
+
+    assert result.execution_status == "completed"
+    assert result.thought is not None
+    assert result.thought.content == "model-produced thought"
+    assert result.thought.llm_used is True
+    assert result.thought.fallback_used is False
+    assert result.thought.source_path == "llm_backed_v1"
+    assert trace.llm_used is True
+    assert gateway.seen_profiles == ["thought-default"]
+
+
+def test_llm_backed_judgment_matches_deterministic_owner_judgment() -> None:
+    # Judgment must be owned by the owner and reproducible: for the same retrieval window and
+    # continuation state, the LLM-backed path and the deterministic path produce identical
+    # owner-held decisions (sufficiency, continuation, proposal presence).
+    config = _build_config()
+    llm_engine = InternalThoughtEngine(config=config, thought_path=_llm_path(FakeThoughtGateway()))
+    det_engine = InternalThoughtEngine(config=config, thought_path=FirstVersionInternalThoughtPath())
+
+    llm_result, _ = llm_engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+    det_result, _ = det_engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+
+    assert llm_result.sufficiency_level == det_result.sufficiency_level
+    assert llm_result.continuation_requested == det_result.continuation_requested
+    assert llm_result.continuation_reason == det_result.continuation_reason
+    assert (llm_result.action_proposal is None) == (det_result.action_proposal is None)
+    assert (
+        llm_result.self_revision_proposal is None
+    ) == (det_result.self_revision_proposal is None)
+
+
+def test_llm_backed_path_hard_stops_on_gateway_failure_without_fallback() -> None:
+    from helios_v2.llm import LlmError
+
+    engine = InternalThoughtEngine(
+        config=_build_config(), thought_path=_llm_path(RaisingThoughtGateway())
+    )
+
+    with pytest.raises(LlmError):
+        engine.run_thought_cycle(
+            _gate_result(),
+            _bundle(),
+            ContinuationPressureState.inactive(),
+            _request(),
+        )
+
+
+def test_llm_backed_path_empty_completion_yields_insufficient_generation() -> None:
+    gateway = FakeThoughtGateway(output_text="   ")
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_llm_path(gateway))
+
+    result, trace = engine.run_thought_cycle(
+        _gate_result(),
+        _bundle(),
+        ContinuationPressureState.inactive(),
+        _request(),
+    )
+
+    assert result.execution_status == "insufficient_generation"
+    assert result.thought is None
+    assert result.action_proposal is None
+    assert result.self_revision_proposal is None
+    assert trace.llm_used is True
+    assert trace.execution_status == "insufficient_generation"
+
+
+def test_llm_backed_path_preserves_fired_path_validation() -> None:
+    engine = InternalThoughtEngine(
+        config=_build_config(), thought_path=_llm_path(FakeThoughtGateway())
+    )
+
+    with pytest.raises(InternalThoughtError, match="fired"):
+        engine.run_thought_cycle(
+            _gate_result(decision="no_fire"),
+            _bundle(),
+            ContinuationPressureState.inactive(),
+            _request(),
+        )

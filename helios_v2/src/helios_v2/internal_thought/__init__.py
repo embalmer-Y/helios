@@ -16,7 +16,11 @@ from .contracts import (
     ThoughtCycleResult,
     ThoughtExecutionStatus,
 )
-from .engine import FirstVersionInternalThoughtPath, InternalThoughtEngine
+from .engine import (
+    FirstVersionInternalThoughtPath,
+    InternalThoughtEngine,
+    LlmBackedInternalThoughtPath,
+)
 
 __all__ = [
     "FirstVersionInternalThoughtPath",
@@ -27,6 +31,7 @@ __all__ = [
     "InternalThoughtLearnedParameterCategory",
     "InternalThoughtRequest",
     "InternalThoughtTrace",
+    "LlmBackedInternalThoughtPath",
     "MemoryHandoffDirective",
     "PublishThoughtCycleResultOp",
     "RunInternalThoughtOp",
