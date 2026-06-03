@@ -464,3 +464,77 @@ def test_externalizing_tick_still_executes_after_internal_only_support() -> None
     assert planner_result.action_decision is not None
     artifact = result.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
     assert artifact.gap_summary["consequence_path_outcome"] == "continuity_written"
+
+
+# --- Requirement 29: cognition-derived autonomy drive inputs ---
+
+
+def _autonomy(result):
+    return result.stage_results["subjective_autonomy_and_proactive_evolution"].result
+
+
+def test_executed_action_drives_autonomy_externalize() -> None:
+    provider = FakeThoughtProvider(
+        thought_text="acting now",
+        sufficiency=0.9,
+        wants_to_continue=False,
+        intends_action=True,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    autonomy = _autonomy(handle.tick())
+    assert autonomy.drive_state.dominant_disposition == "externalize"
+    assert autonomy.drive_state.activity_mode == "outward_proactive"
+
+
+def test_continue_no_action_drives_non_externalize_disposition() -> None:
+    provider = FakeThoughtProvider(
+        thought_text="still thinking",
+        sufficiency=0.1,
+        wants_to_continue=True,
+        continue_reason="unresolved",
+        intends_action=False,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    autonomy = _autonomy(handle.tick())
+    # The thought owner chose not to act; autonomy must not externalize.
+    assert autonomy.drive_state.dominant_disposition != "externalize"
+
+
+def test_concluded_no_action_defers_and_forms_continuity_thread() -> None:
+    # A concluded no-action tick defers and forms a 24 continuity thread. Before R29 the
+    # hardcoded constants forced externalize every tick, so active_thread_count was always 0.
+    provider = FakeThoughtProvider(
+        thought_text="resolved, nothing to do",
+        sufficiency=0.95,
+        wants_to_continue=False,
+        intends_action=False,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    autonomy = _autonomy(handle.tick())
+    assert autonomy.drive_state.dominant_disposition == "defer"
+    assert autonomy.long_horizon_state.active_thread_count >= 1
+
+
+def test_repeated_deferring_ticks_persist_continuity_thread() -> None:
+    provider = FakeThoughtProvider(
+        thought_text="resolved, nothing to do",
+        sufficiency=0.95,
+        wants_to_continue=False,
+        intends_action=False,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    results = handle.run_ticks(3)
+    ages = [_autonomy(r).long_horizon_state.max_thread_age for r in results]
+    counts = [_autonomy(r).long_horizon_state.active_thread_count for r in results]
+    # Threads form on every deferring tick (previously always 0), and at least one tick
+    # accumulates age beyond the initial forming age, proving cross-tick persistence.
+    assert all(count >= 1 for count in counts)
+    assert max(ages) >= 2

@@ -916,13 +916,45 @@ class FirstVersionAutonomyRequestBridge:
     """Owner: composition.
 
     Purpose:
-        Build the proactive-drive request from the upstream owner results for one tick.
+        Build the proactive-drive request from the upstream owner results for one tick,
+        deriving the autonomy drive inputs from the thought owner's real fired-cycle
+        decision plus the planner and continuation results.
 
     Notes:
         Owner-neutral glue. It preserves the upstream gate, retrieval, thought, planner,
-        governance, writeback, and outward-expression provenance ids and forwards bounded
-        drive summaries; it does not decide the proactive disposition.
+        governance, writeback, and outward-expression provenance ids and translates the
+        thought owner's decision into the bounded drive inputs the autonomy owner consumes.
+        It does NOT select the proactive disposition; the autonomy owner applies its own rule
+        to these inputs. The mapping below is a deterministic translation table from
+        cognition outcome to bounded pressures, not a disposition decision.
+
+    Derivation constants (explicit, documented; see requirement 29):
+        - An action-bearing tick raises continuation/temporal/identity pressure so the
+          autonomy owner's `outward_drive >= 1.6` action threshold is reachable when the
+          planner executed (externalize) or blocked (defer with a blocked-outward record).
+        - A continue/no-action tick keeps outward_drive below the action threshold so the
+          autonomy owner falls through to reflect/explore/defer, and keeps continuation
+          pressure high enough on a continue decision that a carry-forward deferral forms
+          (which is what activates the 24 continuity-thread layer on repeated continue ticks).
     """
+
+    # Action-bearing tick pressures (chosen so outward_drive = 0.9+0.4+0.4 = 1.7 >= 1.6).
+    _ACTION_CONTINUATION_PRESSURE: float = 0.9
+    _ACTION_TEMPORAL_PRESSURE: float = 0.4
+    _ACTION_IDENTITY_PRESSURE: float = 0.4
+    # Non-action tick pressures (kept below the 1.6 action threshold).
+    _CONTINUE_CONTINUATION_PRESSURE: float = 0.8
+    _CONCLUDED_CONTINUATION_PRESSURE: float = 0.3
+    _BASELINE_TEMPORAL_PRESSURE: float = 0.3
+    _UNRESOLVED_IDENTITY_PRESSURE: float = 0.6
+    _RESOLVED_IDENTITY_PRESSURE: float = 0.2
+
+    _PLANNER_EXECUTED_STATUSES = ("executed", "accepted")
+    _PLANNER_BLOCKED_STATUSES = (
+        "policy_rejected",
+        "execution_consistency_failed",
+        "execution_failed",
+    )
 
     def build_request(
         self,
@@ -940,6 +972,40 @@ class FirstVersionAutonomyRequestBridge:
         tick_id = frame.tick_id
         bundle = directed_retrieval_result.bundle
         retrieval_pull = float(len(bundle.mid_term_hits) + len(bundle.autobiographical_hits)) / 4.0
+
+        thought = internal_thought_result.result
+        planner_status = planner_bridge_result.result.status
+        continuation_active = thought_gating_result.continuation_state.active
+
+        has_action = thought.action_proposal is not None
+        planner_executed = planner_status in self._PLANNER_EXECUTED_STATUSES
+        planner_blocked = planner_status in self._PLANNER_BLOCKED_STATUSES
+        wants_continue = bool(thought.continuation_requested) or bool(continuation_active)
+        has_self_revision = thought.self_revision_proposal is not None
+
+        # Outward readiness derives only from whether the thought owner produced an action
+        # proposal and how the planner handled it. No action proposal -> neither ready nor
+        # blocked, so the autonomy owner cannot externalize this tick.
+        outward_ready = has_action and planner_executed
+        externalization_blocked = has_action and planner_blocked
+
+        if has_action:
+            continuation_pressure = self._ACTION_CONTINUATION_PRESSURE
+            temporal_pressure = self._ACTION_TEMPORAL_PRESSURE
+            identity_unresolved_pressure = self._ACTION_IDENTITY_PRESSURE
+        else:
+            continuation_pressure = (
+                self._CONTINUE_CONTINUATION_PRESSURE
+                if wants_continue
+                else self._CONCLUDED_CONTINUATION_PRESSURE
+            )
+            temporal_pressure = self._BASELINE_TEMPORAL_PRESSURE
+            identity_unresolved_pressure = (
+                self._UNRESOLVED_IDENTITY_PRESSURE
+                if has_self_revision
+                else self._RESOLVED_IDENTITY_PRESSURE
+            )
+
         return ProactiveDriveRequest(
             request_id=f"autonomy-request:runtime:{tick_id}",
             source_gate_result_id=thought_gating_result.result.result_id,
@@ -954,13 +1020,15 @@ class FirstVersionAutonomyRequestBridge:
             source_outward_expression_externalization_draft_id=(
                 outward_expression_externalization_result.draft.draft_id
             ),
-            continuation_summary={"continuation_pressure": 0.8},
-            retrieval_pull_summary={"retrieval_pull": retrieval_pull},
-            temporal_pressure_summary={"temporal_pressure": 0.7},
-            identity_unresolved_summary={"identity_unresolved_pressure": 0.6},
+            continuation_summary={"continuation_pressure": round(min(1.0, max(0.0, continuation_pressure)), 4)},
+            retrieval_pull_summary={"retrieval_pull": round(min(1.0, max(0.0, retrieval_pull)), 4)},
+            temporal_pressure_summary={"temporal_pressure": round(min(1.0, max(0.0, temporal_pressure)), 4)},
+            identity_unresolved_summary={
+                "identity_unresolved_pressure": round(min(1.0, max(0.0, identity_unresolved_pressure)), 4)
+            },
             outward_readiness_summary={
-                "outward_ready": True,
-                "externalization_blocked": False,
+                "outward_ready": outward_ready,
+                "externalization_blocked": externalization_blocked,
             },
         )
 
