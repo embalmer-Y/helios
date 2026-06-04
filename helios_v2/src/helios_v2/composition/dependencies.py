@@ -21,7 +21,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from helios_v2.channel import ChannelSubsystemAPI
+from helios_v2.embedding import EmbeddingGatewayAPI
 from helios_v2.llm import LlmGatewayAPI
+from helios_v2.persistence import ExperienceStore, PersistenceError
 from helios_v2.runtime import RuntimeDependencySpec
 from helios_v2.runtime.contracts import RuntimeDependencyProvider, RuntimeDependencyStatus
 
@@ -41,6 +43,20 @@ LLM_PROFILES_READY = "llm_profiles_ready"
 # no critical driver, so it does not add this spec and is unaffected (the CLI driver in
 # `31` declares no credential and never trips the gate).
 CHANNEL_DRIVERS_READY = "channel_drivers_ready"
+
+# Stable capability name for durable experience-store readiness. A runtime assembled with
+# persistence enabled (`33`) adds this critical dependency; readiness is the backend's
+# ability to initialize (create/open its durable file), checked at startup so an
+# un-initializable or unwritable store fails fast rather than running non-persistently.
+# The default (non-persistent) runtime does not add this spec and is unaffected.
+EXPERIENCE_STORE_READY = "experience_store_ready"
+
+# Stable capability name for bound embedding-profile static readiness. A runtime assembled
+# with semantic memory enabled (`34`) adds this critical dependency; static readiness is
+# checked network-free through the `34` embedding gateway so the startup gate fails fast on a
+# missing key. The default and recency-only persistent runtimes do not add it and are
+# unaffected. There is no degraded recency fallback when semantic memory is enabled.
+EMBEDDING_PROFILE_READY = "embedding_profile_ready"
 
 
 def default_critical_dependency_specs() -> list[RuntimeDependencySpec]:
@@ -121,6 +137,56 @@ def channel_critical_dependency_spec() -> RuntimeDependencySpec:
         name=CHANNEL_DRIVERS_READY,
         required=True,
         description="Bound channel driver static readiness (driver registered and credential present).",
+    )
+
+
+def experience_store_critical_dependency_spec() -> RuntimeDependencySpec:
+    """Owner: composition.
+
+    Purpose:
+        Return the critical-dependency spec for durable experience-store readiness.
+
+    Inputs:
+        None.
+
+    Returns:
+        A required spec for the `experience_store_ready` capability.
+
+    Notes:
+        This spec is added to the default set only when the assembled runtime enables
+        persistence (`33`). The default (non-persistent) runtime does not add it and is
+        unaffected. There is no degraded non-persistent path when persistence is enabled.
+    """
+
+    return RuntimeDependencySpec(
+        name=EXPERIENCE_STORE_READY,
+        required=True,
+        description="Durable experience-store readiness (backend initializes and is writable).",
+    )
+
+
+def embedding_profile_critical_dependency_spec() -> RuntimeDependencySpec:
+    """Owner: composition.
+
+    Purpose:
+        Return the critical-dependency spec for bound embedding-profile static readiness.
+
+    Inputs:
+        None.
+
+    Returns:
+        A required spec for the `embedding_profile_ready` capability.
+
+    Notes:
+        This spec is added to the default set only when the assembled runtime enables semantic
+        memory (`34`). The default and recency-only persistent runtimes do not add it and are
+        unaffected. There is no degraded recency fallback when semantic memory is enabled.
+    """
+
+    return RuntimeDependencySpec(
+        name=EMBEDDING_PROFILE_READY,
+        required=True,
+        description="Bound embedding profile static readiness (profile registered and api key set).",
     )
 
 
@@ -283,5 +349,127 @@ class ChannelReadinessDependencyProvider:
                 name=name,
                 available=False,
                 detail=f"bound channel drivers not statically ready: {', '.join(unready) or 'none-bound'}",
+            )
+        return self.baseline_provider.get_dependency_status(name)
+
+
+@dataclass
+class ExperienceStoreReadinessDependencyProvider:
+    """Owner: composition.
+
+    Purpose:
+        Report critical-dependency availability for a runtime assembled with persistence
+        enabled. It delegates the `EXPERIENCE_STORE_READY` capability to the `33` store's
+        ability to initialize its durable backend, and delegates every other capability to a
+        wrapped baseline provider.
+
+    Failure semantics:
+        Reports `EXPERIENCE_STORE_READY` unavailable when the store backend cannot initialize
+        (for example an unwritable path), so the existing startup gate fails fast. There is no
+        degraded non-persistent path.
+
+    Notes:
+        This is owner-neutral assembly glue. It holds no cognitive policy; it only routes a
+        capability name to the store's `initialize`. `initialize` is idempotent, so probing
+        readiness here does not double-create the backend.
+    """
+
+    store: ExperienceStore
+    baseline_provider: RuntimeDependencyProvider = field(default_factory=FirstVersionDependencyProvider)
+
+    def get_dependency_status(self, name: str) -> RuntimeDependencyStatus:
+        """Owner: composition.
+
+        Purpose:
+            Return the availability status for one declared critical dependency.
+
+        Inputs:
+            `name` - the declared critical-dependency name to check.
+
+        Returns:
+            A `RuntimeDependencyStatus`. For `EXPERIENCE_STORE_READY` the status reflects
+            whether the durable backend initializes successfully; other names defer to the
+            wrapped baseline provider.
+
+        Raises:
+            None. A backend initialization failure is captured into an unavailable status,
+            not raised, so the startup gate (not this provider) performs the fail-fast.
+        """
+
+        if name == EXPERIENCE_STORE_READY:
+            try:
+                self.store.initialize()
+            except PersistenceError as error:
+                return RuntimeDependencyStatus(
+                    name=name,
+                    available=False,
+                    detail=f"experience store backend not ready: {error}",
+                )
+            return RuntimeDependencyStatus(
+                name=name,
+                available=True,
+                detail="experience store backend initialized and writable",
+            )
+        return self.baseline_provider.get_dependency_status(name)
+
+
+@dataclass
+class EmbeddingReadinessDependencyProvider:
+    """Owner: composition.
+
+    Purpose:
+        Report critical-dependency availability for a runtime assembled with semantic memory
+        enabled. It delegates the `EMBEDDING_PROFILE_READY` capability to the `34` embedding
+        gateway's network-free static readiness check for the bound profile names, and
+        delegates every other capability to a wrapped baseline provider.
+
+    Failure semantics:
+        Reports `EMBEDDING_PROFILE_READY` unavailable when any bound profile is not statically
+        ready (unknown profile or unset api key), so the existing startup gate fails fast.
+        Performs no network call.
+
+    Notes:
+        Owner-neutral assembly glue. It holds no cognitive policy; it only routes a capability
+        name to the gateway's readiness query. The live probe is never invoked here, keeping
+        the startup gate deterministic and network-free.
+    """
+
+    gateway: EmbeddingGatewayAPI
+    bound_profile_names: tuple[str, ...]
+    baseline_provider: RuntimeDependencyProvider = field(default_factory=FirstVersionDependencyProvider)
+
+    def get_dependency_status(self, name: str) -> RuntimeDependencyStatus:
+        """Owner: composition.
+
+        Purpose:
+            Return the availability status for one declared critical dependency.
+
+        Inputs:
+            `name` - the declared critical-dependency name to check.
+
+        Returns:
+            A `RuntimeDependencyStatus`. For `EMBEDDING_PROFILE_READY` the status reflects the
+            gateway's static readiness for all bound profiles; other names defer to the
+            wrapped baseline provider.
+
+        Raises:
+            None.
+        """
+
+        if name == EMBEDDING_PROFILE_READY:
+            report = self.gateway.check_static_readiness(self.bound_profile_names)
+            if report.all_static_ready():
+                return RuntimeDependencyStatus(
+                    name=name,
+                    available=True,
+                    detail="all bound embedding profiles are statically ready",
+                )
+            unready = tuple(
+                entry.profile_name for entry in report.entries if not entry.static_ready
+            )
+            return RuntimeDependencyStatus(
+                name=name,
+                available=False,
+                detail=f"bound embedding profiles not statically ready: {', '.join(unready) or 'none-bound'}",
             )
         return self.baseline_provider.get_dependency_status(name)

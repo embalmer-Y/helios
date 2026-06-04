@@ -224,3 +224,219 @@ def test_engine_requires_explicit_evaluation_capability() -> None:
 
     with pytest.raises(EvaluationError, match="explicit evaluation capability"):
         engine.evaluate(_build_request(), _build_bundle())
+
+
+# ---------------------------------------------------------------------------
+# R32: execution-truth-corroborated consequence binding.
+# ---------------------------------------------------------------------------
+
+
+def _timeline_evidence(tick_id: int, stage_statuses: tuple[tuple[str, str], ...], *, completed: bool = True):
+    """Build one execution-timeline evidence entry projecting the given stage statuses."""
+
+    stages = [
+        {
+            "stage_name": name,
+            "stage_index": index,
+            "status": status,
+            "duration_ms": 0.1,
+            "error_type": None if status == "completed" else "StageError",
+        }
+        for index, (name, status) in enumerate(stage_statuses)
+    ]
+    return (
+        {
+            "evidence_id": f"execution-timeline-evidence:tick:{tick_id}",
+            "tick_id": tick_id,
+            "completed": completed,
+            "stage_count": len(stages),
+            "stages": stages,
+        },
+    )
+
+
+def _prior_claim_evidence(tick_id: int, outcome: str):
+    return (
+        {
+            "evidence_id": f"prior-consequence-claim:tick:{tick_id}",
+            "tick_id": tick_id,
+            "consequence_path_outcome": outcome,
+            "planner_status": "executed",
+            "action_status": "normalized",
+            "continuity_written": outcome == "continuity_written",
+        },
+    )
+
+
+def _bundle_with_corroboration(
+    *,
+    prior_claim_evidence=(),
+    timeline_evidence=(),
+):
+    return EvaluationEvidenceBundle(
+        bundle_id="evaluation-bundle:corr",
+        source_request_id="evaluation-request:001",
+        thought_evidence=(({"evidence_id": "thought:corr", "execution_status": "completed"}),),
+        action_evidence=(({"evidence_id": "action:corr", "status": "normalized"}),),
+        planner_evidence=(({"evidence_id": "planner:corr", "status": "executed"}),),
+        governance_evidence=(({"evidence_id": "gov:corr", "status": "accepted"}),),
+        writeback_evidence=(({"evidence_id": "wb:corr", "status": "written"}),),
+        autonomy_evidence=(({"evidence_id": "autonomy:corr", "deferred_active": False}),),
+        prompt_evidence=(({"evidence_id": "prompt:corr", "status": "published"}),),
+        outward_expression_evidence=(({"evidence_id": "oe:corr", "status": "prepared"}),),
+        outward_expression_externalization_evidence=(({"evidence_id": "oee:corr", "status": "prepared"}),),
+        execution_timeline_evidence=timeline_evidence,
+        prior_consequence_claim_evidence=prior_claim_evidence,
+    )
+
+
+def _engine() -> EvaluationEngine:
+    return EvaluationEngine(config=_build_config(), evaluation_path=FirstVersionEvaluationPath())
+
+
+def test_engine_publishes_consequence_claim_for_evaluated_tick() -> None:
+    engine = _engine()
+    request = EvaluationRequest(
+        request_id="evaluation-request:001",
+        scenario_kind="runtime_tick",
+        time_window_summary={"window_label": "tick-7", "current_tick_id": 7},
+    )
+
+    artifact = engine.evaluate(request, _build_bundle())
+
+    claim = artifact.long_range_diagnostics["consequence_claim"]
+    assert claim["consequence_path_outcome"] == "continuity_written"
+    assert claim["tick_id"] == 7
+    assert claim["planner_status"] == "executed"
+    assert claim["continuity_written"] is True
+
+
+def test_engine_corroborates_continuity_written_against_complete_timeline() -> None:
+    engine = _engine()
+    timeline = _timeline_evidence(
+        3,
+        (
+            ("internal_thought_loop_owner", "completed"),
+            ("planner_executor_feedback_bridge", "completed"),
+            ("execution_writeback_and_autobiographical_consolidation", "completed"),
+        ),
+    )
+    bundle = _bundle_with_corroboration(
+        prior_claim_evidence=_prior_claim_evidence(3, "continuity_written"),
+        timeline_evidence=timeline,
+    )
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    assert artifact.gap_summary["consequence_corroboration"] == "corroborated"
+    warning_kinds = {w.warning_kind for w in artifact.fidelity_warnings}
+    assert "consequence_discrepancy" not in warning_kinds
+
+
+def test_engine_flags_discrepancy_when_implied_stage_missing() -> None:
+    engine = _engine()
+    # continuity_written claimed, but the writeback stage never ran in a complete timeline.
+    timeline = _timeline_evidence(
+        3,
+        (
+            ("internal_thought_loop_owner", "completed"),
+            ("planner_executor_feedback_bridge", "completed"),
+        ),
+    )
+    bundle = _bundle_with_corroboration(
+        prior_claim_evidence=_prior_claim_evidence(3, "continuity_written"),
+        timeline_evidence=timeline,
+    )
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    assert artifact.gap_summary["consequence_corroboration"] == "discrepant"
+    assert "writeback_not_completed" in artifact.gap_summary["consequence_corroboration_detail"]
+    discrepancy = [w for w in artifact.fidelity_warnings if w.warning_kind == "consequence_discrepancy"]
+    assert len(discrepancy) == 1
+    refs = set(discrepancy[0].evidence_refs)
+    assert "prior-consequence-claim:tick:3" in refs
+    assert "execution-timeline-evidence:tick:3" in refs
+
+
+def test_engine_flags_discrepancy_when_implied_stage_failed() -> None:
+    engine = _engine()
+    timeline = _timeline_evidence(
+        3,
+        (
+            ("internal_thought_loop_owner", "completed"),
+            ("planner_executor_feedback_bridge", "failed"),
+        ),
+    )
+    bundle = _bundle_with_corroboration(
+        prior_claim_evidence=_prior_claim_evidence(3, "executed"),
+        timeline_evidence=timeline,
+    )
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    assert artifact.gap_summary["consequence_corroboration"] == "discrepant"
+    assert "planner_bridge_failed" in artifact.gap_summary["consequence_corroboration_detail"]
+
+
+def test_engine_corroboration_unverifiable_without_timeline() -> None:
+    engine = _engine()
+    bundle = _bundle_with_corroboration(
+        prior_claim_evidence=_prior_claim_evidence(3, "continuity_written"),
+        timeline_evidence=(),
+    )
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    assert artifact.gap_summary["consequence_corroboration"] == "unverifiable_no_timeline"
+    assert artifact.gap_summary["consequence_corroboration_detail"] == "timeline_absent"
+    warning_kinds = {w.warning_kind for w in artifact.fidelity_warnings}
+    assert "consequence_discrepancy" not in warning_kinds
+
+
+def test_engine_corroboration_unverifiable_without_prior_claim() -> None:
+    engine = _engine()
+    bundle = _bundle_with_corroboration(
+        prior_claim_evidence=(),
+        timeline_evidence=_timeline_evidence(
+            3, (("planner_executor_feedback_bridge", "completed"),)
+        ),
+    )
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    assert artifact.gap_summary["consequence_corroboration"] == "unverifiable_no_timeline"
+    assert artifact.gap_summary["consequence_corroboration_detail"] == "no_prior_claim"
+
+
+def test_engine_corroboration_unverifiable_on_tick_mismatch() -> None:
+    engine = _engine()
+    bundle = _bundle_with_corroboration(
+        prior_claim_evidence=_prior_claim_evidence(2, "continuity_written"),
+        timeline_evidence=_timeline_evidence(
+            3,
+            (
+                ("planner_executor_feedback_bridge", "completed"),
+                ("execution_writeback_and_autobiographical_consolidation", "completed"),
+            ),
+        ),
+    )
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    assert artifact.gap_summary["consequence_corroboration"] == "unverifiable_no_timeline"
+    assert artifact.gap_summary["consequence_corroboration_detail"] == "tick_mismatch"
+
+
+def test_engine_corroboration_is_strictly_additive_to_existing_scoring() -> None:
+    engine = _engine()
+    bundle = _build_bundle()
+
+    artifact = engine.evaluate(_build_request(), bundle)
+
+    # Existing scoring and outcome taxonomy are unchanged by R32.
+    assert artifact.gap_summary["consequence_path_outcome"] == "continuity_written"
+    assert artifact.dimension_scores["internal_to_visible_consequence"] == 1.0
+    assert artifact.dimension_scores["thought_fidelity"] == 1.0
+    # The corroboration verdict is published additively; with no prior claim it is unverifiable.
+    assert artifact.gap_summary["consequence_corroboration"] == "unverifiable_no_timeline"

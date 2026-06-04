@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R31 (CLI channel driver + channel-bound assembly). Test baseline: 393 passed. HEAD-era: R31.
+> Last synced: R35 (memory-grounded novelty appraisal; P3 first cognitive-owner de-shim). Test baseline: 476 passed. HEAD-era: R35.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -17,6 +17,9 @@ runtime are still future).
 It is intentionally implementation-facing: the colors reflect shipped code and validation
 evidence, not planned architecture quality, and must match the `Maturity` column in
 `requirements/index.md`.
+
+For the detailed by-owner reference (each owner's responsibility, role in the loop,
+completeness, and next development/optimization step), see the companion `OWNER_GUIDE.md`.
 
 ## 2. Legend
 
@@ -40,7 +43,7 @@ flowchart TD
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
     BODY([Internal body signal - interoceptive source]):::infra
     S02[02 Sensory Ingress - relatively complete]:::deep
-    S03[03 Rapid Salience Appraisal - baseline/shim in]:::base
+    S03[03 Rapid Salience Appraisal - novelty real (semantic)/4 dims shim]:::base
     S04[04 Neuromodulator System - baseline/shim in]:::base
     S05[05 Interoceptive Feeling - baseline/shim in]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
@@ -57,7 +60,7 @@ flowchart TD
     S14[14 Identity Governance - baseline]:::base
     S15[15 Experience Writeback - baseline]:::base
     S18[18 Subjective Autonomy - rel. complete/cognition-derived]:::deep
-    S17[17 Evaluation - baseline]:::base
+    S17[17 Evaluation - baseline/corroborates execution truth]:::base
     CH[30 Channel Driver Subsystem + 31 CLI driver - real local round trip, opt-in]:::infra
 
     S02 --> S03 --> S04 --> S05 --> S06 --> S07 --> S08 --> S09 --> S10
@@ -79,36 +82,68 @@ flowchart TD
     COMP[22 Composition Root - done]:::infra
     EV23[23 Timeline-aware Eval - done]:::infra
     TH24[24 Continuity Threads - done, now active]:::infra
+    PER[33 Durable Experience Store - infra done, opt-in]:::infra
+    EMB[34 Embedding Gateway - infra done, opt-in]:::infra
     K01 -. startup gate + dispatch .-> S02
     OBS -. per-tick timeline .-> EV23
     EV23 --> S17
     TH24 --> S18
     COMP -. assembles all 19 stages .-> K01
+    S15 -. durable append (opt-in persistence) .-> PER
+    PER -. recency or semantic re-entry across restart (opt-in) .-> S10
+    EMB -. embed-at-write + embed-at-query (opt-in semantic) .-> PER
 ```
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 393 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 476 tests pass, network-free, plus real
   LLM smoke.
 - Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
-  25).
+  25, 33, 34).
+- P3 began (R35): the `03` appraisal owner's novelty dimension is now a real signal under the
+  semantic-memory assembly (novelty = 1 - max cosine similarity of the stimulus to stored
+  experience, via the 34 embedding substrate + 33 store), the first cognitive consumer of the
+  embedding base. `03` owns the novelty salience mapping; composition injects an owner-neutral
+  similarity-fact source, so `03` imports neither the embedding nor persistence owner. The
+  other four `03` dimensions stay shim (later P3 slices); default and recency-only assemblies
+  keep constant novelty 0.6. First-version comparison is cross-register (stimulus vs 15 result
+  summaries), noted and not over-claimed.
 - Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
   is real) - owners are real with contracts and tests, but their inputs are still
   composition-injected deterministic shim. In the default assembly 13's channel
   descriptor/status snapshots are still shim-injected; in the opt-in channel-bound assembly
   they come from the real `30` channel-state snapshot.
+- wave_A behavioral truth closed at baseline (R32): the 17 evaluation owner now corroborates
+  the prior tick's self-reported consequence outcome against that same tick's 21 execution
+  timeline and publishes a `corroborated`/`discrepant`/`unverifiable_no_timeline` verdict,
+  escalating contradictions to a `consequence_discrepancy` warning. The causal chain is now
+  falsifiable against execution truth, not self-report alone. 17 stays baseline because its
+  inputs remain shim; the corroboration is strictly additive (no scoring redesign).
+- P2 opened (R33) and deepened (R34): a durable experience-store owner (33) persists the 15
+  continuity stream to a SQLite file and, on an opt-in persistent assembly, surfaces it back
+  through the 10 directed-retrieval candidate path so a prior session's experience re-enters
+  the thought window after a process restart. With R34 an embedding capability owner (34,
+  mirroring the 25 LLM gateway) embeds each record at write and recall is now semantic
+  (bounded cosine similarity, `source="experience_store_semantic"`) rather than recency-only,
+  so the system recalls experience relevant to the current query across restarts. Both are
+  opt-in and default-off: the default assembly is byte-for-byte unchanged. Persistence owner
+  never imports the embedding owner (query embedding is injected). `experience_store_ready` /
+  `embedding_profile_ready` fail fast when their backends/profiles are not ready; semantic
+  memory requires a durable store (else CompositionError); an embedding failure is a hard stop
+  with no recency fallback.
 - Transport owner now real for CLI (30 + 31): the channel driver subsystem framework plus the
   first concrete `CliChannelDriver` are shipped and wired through an opt-in 21-stage
   channel-bound assembly. A real local round trip works end to end: an operator line drains
   into a QoS-tagged RawSignal, sensory normalizes it, the cognition chain runs, and an
   externalizing decision is dispatched to the CLI sink. The default 19-stage assembly is
   unchanged.
-- Single remaining structural gap: real external network transport (dashed EXT <-> CH). The
-  local CLI round trip is proven, but network drivers (QQ/voice/vision) and making a
-  channel-bound assembly the default runtime are still future requirements.
-- The experience-writeback loop (15 -> 06) is implemented, so each tick is subjectively
-  connected to the previous one.
+- Remaining structural gaps: real external network transport (dashed EXT <-> CH; network
+  drivers QQ/voice/vision and a default channel-bound runtime are future), and the rest of P2
+  (latest-state checkpoint/restore, persisting 06/04/05/14 once de-shimmed). The P2->P3 hinge
+  is in place: real `03` novelty-from-memory can now build on the R34 embedding substrate.
+- The experience-writeback loop (15 -> 06) is implemented in-process, and with R33 the 15
+  stream is now also durably persisted and re-entrant across restarts.
 
 ## 5. Update Rule
 

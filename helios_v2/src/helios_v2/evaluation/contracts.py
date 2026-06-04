@@ -31,6 +31,22 @@ EvaluationLearnedParameterCategory = Literal[
     "long_range_diagnostic_policy",
 ]
 
+# The fixed consequence-path-outcome vocabulary an evaluation cycle may claim. This must
+# stay aligned with the labels the evaluation engine derives. A `ConsequenceClaim` may only
+# assert one of these outcomes; the corroboration step checks the claim against execution
+# truth, but the vocabulary itself is owned here so the carried claim is self-validating.
+CONSEQUENCE_PATH_OUTCOMES = frozenset(
+    {
+        "no_activation",
+        "internally_activated_only",
+        "internal_only_decision",
+        "blocked",
+        "rejected",
+        "executed",
+        "continuity_written",
+    }
+)
+
 _SCENARIO_KINDS = {"runtime_tick", "session_window"}
 _LEARNED_PARAMETER_CATEGORIES = {
     "fidelity_scoring_policy",
@@ -95,6 +111,72 @@ class EvaluationRequest:
 
 
 @dataclass(frozen=True)
+class ConsequenceClaim:
+    """Owner: evaluation fidelity and diagnostic provenance.
+
+    Purpose:
+        Capture the self-reported consequence outcome the evaluation owner derived for one
+        evaluated tick, plus the owner-published statuses that outcome depended on. The
+        composition owner carries the previous completed tick's claim forward, tick-aligned
+        with that tick's execution timeline, so the next evaluation cycle can corroborate
+        the self-report against kernel execution truth.
+
+    Failure semantics:
+        Construction raises `EvaluationError` on an empty `claim_id` or an unknown
+        `consequence_path_outcome`.
+
+    Notes:
+        This is a model of the self-report, not an authority. It carries owner statuses that
+        arrived through formal owner result contracts; it never carries a re-derived decision
+        and never travels through the log channel.
+    """
+
+    claim_id: str
+    tick_id: int | None
+    consequence_path_outcome: str
+    planner_status: str | None
+    action_status: str | None
+    continuity_written: bool
+
+    def __post_init__(self) -> None:
+        if not self.claim_id:
+            raise EvaluationError("ConsequenceClaim must declare a non-empty claim_id")
+        if self.consequence_path_outcome not in CONSEQUENCE_PATH_OUTCOMES:
+            raise EvaluationError(
+                "ConsequenceClaim consequence_path_outcome must use the fixed outcome vocabulary"
+            )
+
+    def to_evidence(self, evidence_id: str) -> dict[str, object]:
+        """Owner: evaluation fidelity and diagnostic provenance.
+
+        Purpose:
+            Return a compact, JSON-friendly projection of this claim for the owner-neutral
+            carry and the prior-claim evidence category consumed next tick.
+
+        Inputs:
+            `evidence_id` - a non-empty stable id the carrier assigns to this evidence.
+
+        Returns:
+            A plain dict carrying `evidence_id`, `tick_id`, `consequence_path_outcome`,
+            `planner_status`, `action_status`, and `continuity_written`.
+
+        Raises:
+            EvaluationError if `evidence_id` is empty.
+        """
+
+        if not evidence_id:
+            raise EvaluationError("ConsequenceClaim.to_evidence requires a non-empty evidence_id")
+        return {
+            "evidence_id": evidence_id,
+            "tick_id": self.tick_id,
+            "consequence_path_outcome": self.consequence_path_outcome,
+            "planner_status": self.planner_status,
+            "action_status": self.action_status,
+            "continuity_written": self.continuity_written,
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationEvidenceBundle:
     """Immutable read-only evidence bundle assembled from explicit runtime owner outputs."""
 
@@ -110,6 +192,7 @@ class EvaluationEvidenceBundle:
     outward_expression_evidence: tuple[Mapping[str, object], ...]
     outward_expression_externalization_evidence: tuple[Mapping[str, object], ...]
     execution_timeline_evidence: tuple[Mapping[str, object], ...] = ()
+    prior_consequence_claim_evidence: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.bundle_id:
@@ -129,6 +212,7 @@ class EvaluationEvidenceBundle:
             "outward_expression_evidence",
             "outward_expression_externalization_evidence",
             "execution_timeline_evidence",
+            "prior_consequence_claim_evidence",
         ):
             object.__setattr__(
                 self,

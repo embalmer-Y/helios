@@ -8,6 +8,8 @@ from helios_v2.composition import (
     CANONICAL_STAGE_ORDER,
     CompositionConfig,
     CompositionError,
+    EMBEDDING_PROFILE_READY,
+    EXPERIENCE_STORE_READY,
     FirstVersionDependencyProvider,
     LLM_PROFILES_READY,
     RUNTIME_COGNITION_BASELINE,
@@ -19,8 +21,23 @@ from helios_v2.composition import (
 from helios_v2.llm import LlmError, LlmGateway, LlmProfileRegistry
 from helios_v2.llm.contracts import ProviderCompletion
 from helios_v2.observability import InMemoryLogSink, RuntimeObservabilityRecorder
+from helios_v2.persistence import (
+    ExperienceStore,
+    InMemoryExperienceStoreBackend,
+    PersistenceError,
+    SqliteExperienceStoreBackend,
+)
+from helios_v2.embedding import (
+    EmbeddingError,
+    EmbeddingGateway,
+    EmbeddingProfile,
+    EmbeddingProfileRegistry,
+    ProviderEmbedding,
+)
 from helios_v2.runtime import RuntimeDependencySpec, RuntimeStartupError
 from helios_v2.runtime.contracts import RuntimeDependencyStatus
+from helios_v2.sensory import Stimulus
+from helios_v2.embedding import EmbeddingRequest as _EmbeddingRequest
 
 
 @dataclass
@@ -241,6 +258,76 @@ def test_uninstrumented_runtime_reports_absent_timeline() -> None:
         "evaluation_fidelity_and_diagnostic_provenance"
     ].artifact.long_range_diagnostics
     assert diagnostics["execution_timeline_status"] == "absent_uninstrumented"
+
+
+def test_cross_tick_consequence_corroboration_reports_corroborated() -> None:
+    # An instrumented two-tick run: tick 1 externalizes (continuity_written), and tick 2
+    # corroborates that self-report against tick 1's complete execution timeline.
+    sink = InMemoryLogSink()
+    recorder = RuntimeObservabilityRecorder(sinks=(sink,), minimum_severity="debug")
+    handle = _assemble(recorder=recorder)
+    handle.startup()
+
+    results = handle.run_ticks(2)
+
+    first_gap = results[0].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.gap_summary
+    second_gap = results[1].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.gap_summary
+
+    # Tick 1 has no prior claim yet; tick 2 corroborates tick 1's continuity_written claim.
+    assert first_gap["consequence_corroboration"] == "unverifiable_no_timeline"
+    assert first_gap["consequence_path_outcome"] == "continuity_written"
+    assert second_gap["consequence_corroboration"] == "corroborated"
+    second_warnings = results[1].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.fidelity_warnings
+    assert all(w.warning_kind != "consequence_discrepancy" for w in second_warnings)
+
+
+def test_uninstrumented_runtime_consequence_corroboration_is_unverifiable() -> None:
+    handle = _assemble()
+    handle.startup()
+
+    results = handle.run_ticks(2)
+
+    second_gap = results[1].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.gap_summary
+    # No recorder: no timeline can be carried, so corroboration stays unverifiable.
+    assert second_gap["consequence_corroboration"] == "unverifiable_no_timeline"
+    assert second_gap["consequence_corroboration_detail"] == "timeline_absent"
+
+
+def test_channel_bound_cross_tick_consequence_corroboration() -> None:
+    # The channel-bound assembly carries the consequence claim across ticks just like the
+    # default assembly. Two externalizing ticks corroborate tick 1 against its timeline.
+    provider = FakeThoughtProvider(
+        thought_text="acting now",
+        sufficiency=0.9,
+        wants_to_continue=False,
+        intends_action=True,
+    )
+    sink_lines: list[str] = []
+    recorder_sink = InMemoryLogSink()
+    recorder = RuntimeObservabilityRecorder(sinks=(recorder_sink,), minimum_severity="debug")
+    handle = _assemble_channel(
+        sink_lines.append,
+        gateway=_ready_gateway(provider=provider),
+        recorder=recorder,
+    )
+    handle.startup()
+
+    handle.channel_subsystem._drivers["cli"].submit_line("first line")
+    handle.channel_subsystem._drivers["cli"].submit_line("second line")
+    results = handle.run_ticks(2)
+
+    second_gap = results[1].stage_results[
+        "evaluation_fidelity_and_diagnostic_provenance"
+    ].artifact.gap_summary
+    assert second_gap["consequence_corroboration"] == "corroborated"
 
 
 def test_write_only_sink_runtime_cannot_carry_timeline() -> None:
@@ -641,3 +728,432 @@ def test_default_assembly_is_unchanged_by_channel_wiring() -> None:
     result = handle.tick()
     assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
     assert "channel_inbound_drain" not in result.stage_results
+
+
+# --- Requirement 33: durable experience store + restart continuity ---
+
+
+def _failing_store() -> ExperienceStore:
+    """An experience store whose backend always fails to initialize (fail-fast probe)."""
+
+    @dataclass
+    class _RaisingBackend:
+        def initialize(self) -> None:
+            raise PersistenceError("backend cannot initialize")
+
+        def append(self, records):
+            raise PersistenceError("backend cannot append")
+
+        def read_recent(self, limit):
+            raise PersistenceError("backend cannot read")
+
+        def count(self) -> int:
+            raise PersistenceError("backend cannot count")
+
+    return ExperienceStore(backend=_RaisingBackend())
+
+
+def test_persistence_enabled_tick_appends_writeback_records_with_linkage() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store)
+    handle.startup()
+
+    assert store.count() == 0
+    handle.tick()
+
+    # The tick's 15 continuity record was durably appended with preserved provenance linkage.
+    assert store.count() >= 1
+    recent = store.read_recent(10)
+    assert all(r.linkage for r in recent)
+    assert all(r.summary for r in recent)
+    assert all(r.source_outcome_id for r in recent)
+
+
+def test_persistence_cold_store_first_tick_completes_without_fabrication() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store)
+    handle.startup()
+
+    result = handle.tick()
+
+    # The tick completes through the full canonical chain.
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+    # On the first (cold) tick, directed retrieval had no persisted experience to surface, so
+    # no experience_store-sourced hit appears; the bundle still assembles.
+    bundle = result.stage_results["directed_retrieval_into_thought_window"].bundle
+    all_hits = (
+        bundle.short_term_context
+        + bundle.mid_term_hits
+        + bundle.long_term_hits
+        + bundle.autobiographical_hits
+    )
+    assert all(hit.source != "experience_store" for hit in all_hits)
+
+
+def test_restart_continuity_reenters_prior_session_experience(tmp_path) -> None:
+    # The headline restart-continuity test: a second handle on the same durable file
+    # retrieves the prior session's experience into its thought window.
+    db_path = str(tmp_path / "experience_store.sqlite3")
+
+    # Session A: run several ticks against a fresh durable store, then drop the handle.
+    store_a = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    handle_a = _assemble(experience_store=store_a)
+    handle_a.startup()
+    handle_a.run_ticks(3)
+    persisted_after_a = store_a.count()
+    assert persisted_after_a >= 3
+    del handle_a, store_a
+
+    # Session B: a brand-new store object + handle on the SAME file.
+    store_b = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    assert store_b.count() == persisted_after_a  # prior existence survived the restart
+    handle_b = _assemble(experience_store=store_b)
+    handle_b.startup()
+
+    result = handle_b.tick()
+
+    # The prior session's experience re-enters the new session's thought window.
+    bundle = result.stage_results["directed_retrieval_into_thought_window"].bundle
+    all_hits = (
+        bundle.short_term_context
+        + bundle.mid_term_hits
+        + bundle.long_term_hits
+        + bundle.autobiographical_hits
+    )
+    assert any(hit.source == "experience_store" for hit in all_hits)
+
+
+def test_persistence_enabled_registers_experience_store_ready_dependency() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store)
+    spec_names = {spec.name for spec in handle.kernel.dependency_specs}
+    assert EXPERIENCE_STORE_READY in spec_names
+    # In-memory store initializes fine, so startup passes.
+    handle.startup()
+
+
+def test_persistence_unwritable_backend_fails_fast_at_startup() -> None:
+    handle = _assemble(experience_store=_failing_store())
+
+    with pytest.raises(RuntimeStartupError) as exc_info:
+        handle.startup()
+    assert EXPERIENCE_STORE_READY in exc_info.value.missing_dependencies
+
+
+def test_default_assembly_has_no_persistence() -> None:
+    # Regression guard: with no experience_store, no persistence dependency is registered and
+    # the default assembly is unchanged.
+    handle = _assemble()
+    spec_names = {spec.name for spec in handle.kernel.dependency_specs}
+    assert EXPERIENCE_STORE_READY not in spec_names
+    assert handle.experience_store is None
+
+    handle.startup()
+    result = handle.tick()
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+    bundle = result.stage_results["directed_retrieval_into_thought_window"].bundle
+    all_hits = (
+        bundle.short_term_context
+        + bundle.mid_term_hits
+        + bundle.long_term_hits
+        + bundle.autobiographical_hits
+    )
+    # The fabricating shim provider is still in use; no experience_store source appears.
+    assert all(hit.source != "experience_store" for hit in all_hits)
+
+
+# --- Requirement 34: semantic experience retrieval ---
+
+
+@dataclass
+class FakeCompositionEmbeddingProvider:
+    """Deterministic, network-free embedding provider for composition tests.
+
+    Hashes characters into fixed-dimension buckets so similar summaries embed similarly.
+    """
+
+    dimensions: int = 16
+
+    def embed(self, profile, request, api_key):
+        buckets = [0.0] * self.dimensions
+        for index, char in enumerate(request.input_text):
+            buckets[(ord(char) + index) % self.dimensions] += 1.0
+        if not any(buckets):
+            buckets[0] = 1.0
+        return ProviderEmbedding(vector=tuple(buckets), dimensions=self.dimensions)
+
+
+@dataclass
+class RaisingCompositionEmbeddingProvider:
+    def embed(self, profile, request, api_key):
+        raise RuntimeError("embedding transport boom")
+
+
+def _embedding_gateway(provider=None) -> EmbeddingGateway:
+    profile = EmbeddingProfile(
+        profile_name="experience-embedding",
+        model="text-embedding-test",
+        api_key_env="OPENAI_API_KEY",
+        base_url="https://api.openai.com/v1",
+    )
+    return EmbeddingGateway(
+        provider=provider or FakeCompositionEmbeddingProvider(),
+        registry=EmbeddingProfileRegistry(profiles=(profile,)),
+        env={"OPENAI_API_KEY": "sk-test"},
+    )
+
+
+def test_semantic_memory_requires_durable_store() -> None:
+    with pytest.raises(CompositionError, match="requires a durable experience store"):
+        _assemble(embedding_gateway=_embedding_gateway())
+
+
+def test_semantic_assembly_embeds_at_write_and_recalls_by_similarity() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    handle.tick()
+
+    # Each persisted record carries an embedding written at append time.
+    recent = store.read_recent(10)
+    assert recent
+    assert all(r.embedding is not None for r in recent)
+
+    # The next tick's directed retrieval uses semantic candidates.
+    result = handle.tick()
+    bundle = result.stage_results["directed_retrieval_into_thought_window"].bundle
+    all_hits = (
+        bundle.short_term_context
+        + bundle.mid_term_hits
+        + bundle.long_term_hits
+        + bundle.autobiographical_hits
+    )
+    assert any(hit.source == "experience_store_semantic" for hit in all_hits)
+
+
+def test_semantic_restart_recall_by_similarity(tmp_path) -> None:
+    # Headline: a prior session's most semantically similar experience is recalled after a
+    # restart against the same durable file.
+    db_path = str(tmp_path / "experience_store.sqlite3")
+
+    store_a = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    handle_a = _assemble(experience_store=store_a, embedding_gateway=_embedding_gateway())
+    handle_a.startup()
+    handle_a.run_ticks(3)
+    assert store_a.count() >= 3
+    # Every persisted record from session A carries an embedding.
+    assert all(r.embedding is not None for r in store_a.read_recent(100))
+    del handle_a, store_a
+
+    store_b = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    handle_b = _assemble(experience_store=store_b, embedding_gateway=_embedding_gateway())
+    handle_b.startup()
+    result = handle_b.tick()
+
+    bundle = result.stage_results["directed_retrieval_into_thought_window"].bundle
+    all_hits = (
+        bundle.short_term_context
+        + bundle.mid_term_hits
+        + bundle.long_term_hits
+        + bundle.autobiographical_hits
+    )
+    # The prior session's experience re-enters by semantic similarity.
+    assert any(hit.source == "experience_store_semantic" for hit in all_hits)
+
+
+def test_semantic_assembly_registers_embedding_profile_ready() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    spec_names = {spec.name for spec in handle.kernel.dependency_specs}
+    assert EMBEDDING_PROFILE_READY in spec_names
+    assert EXPERIENCE_STORE_READY in spec_names
+    handle.startup()
+
+
+def test_semantic_unready_embedding_profile_fails_fast() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    profile = EmbeddingProfile(
+        profile_name="experience-embedding",
+        model="text-embedding-test",
+        api_key_env="OPENAI_API_KEY",
+        base_url="https://api.openai.com/v1",
+    )
+    unready = EmbeddingGateway(
+        provider=FakeCompositionEmbeddingProvider(),
+        registry=EmbeddingProfileRegistry(profiles=(profile,)),
+        env={},  # no api key -> not statically ready
+    )
+    handle = _assemble(experience_store=store, embedding_gateway=unready)
+
+    with pytest.raises(RuntimeStartupError) as exc_info:
+        handle.startup()
+    assert EMBEDDING_PROFILE_READY in exc_info.value.missing_dependencies
+
+
+def test_semantic_embedding_failure_is_hard_stop_no_recency_fallback() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(provider=RaisingCompositionEmbeddingProvider()),
+    )
+    handle.startup()
+
+    # Embedding fails at embed-at-write time; the tick must hard-stop, not fall back to recency.
+    with pytest.raises(EmbeddingError):
+        handle.tick()
+
+
+def test_recency_persistent_assembly_unchanged_without_embedding() -> None:
+    # R33 recency-only persistence still works and is not semantic when no embedding gateway.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store)
+    spec_names = {spec.name for spec in handle.kernel.dependency_specs}
+    assert EMBEDDING_PROFILE_READY not in spec_names
+    handle.startup()
+    handle.tick()
+    result = handle.tick()
+    bundle = result.stage_results["directed_retrieval_into_thought_window"].bundle
+    all_hits = (
+        bundle.short_term_context
+        + bundle.mid_term_hits
+        + bundle.long_term_hits
+        + bundle.autobiographical_hits
+    )
+    # Recency provider source, never semantic.
+    assert all(hit.source != "experience_store_semantic" for hit in all_hits)
+    # Records carry no embedding in the recency-only assembly.
+    assert all(r.embedding is None for r in store.read_recent(10))
+
+
+# --- Requirement 35: memory-grounded novelty appraisal ---
+
+
+def _appraisal_novelty(result) -> float:
+    """Read the single stimulus's novelty from the 03 appraisal stage result."""
+
+    batch = result.stage_results["rapid_salience_appraisal"].batch
+    return batch.appraisals[0].salience.novelty
+
+
+def test_default_assembly_keeps_constant_novelty() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    # No semantic memory -> the first-version constant estimator -> novelty 0.6.
+    assert _appraisal_novelty(result) == pytest.approx(0.6)
+
+
+def test_recency_persistent_assembly_keeps_constant_novelty() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store)
+    handle.startup()
+    result = handle.tick()
+    # Store but no embedding gateway -> constant novelty unchanged.
+    assert _appraisal_novelty(result) == pytest.approx(0.6)
+
+
+def test_semantic_assembly_produces_real_memory_grounded_novelty() -> None:
+    # With store + embedding, 03 novelty is memory-grounded. On the first tick the store is
+    # cold (no embedded experience yet), so novelty is the defined maximum 1.0 -- already a
+    # real, non-constant signal distinct from the 0.6 shim.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    first = handle.tick()
+    assert _appraisal_novelty(first) == pytest.approx(1.0)  # cold store -> max novelty
+
+    # After the first tick persisted an embedded record, a later tick whose stimulus embeds
+    # close to stored experience yields novelty < 1.0 (a real similarity-driven value).
+    second = handle.tick()
+    assert _appraisal_novelty(second) < 1.0
+    assert _appraisal_novelty(second) != pytest.approx(0.6)  # not the shim constant
+
+
+def test_semantic_novelty_is_lower_for_stimulus_near_stored_experience() -> None:
+    # Seed the store with experience, then drive two stimuli whose content embeds near vs far
+    # from it; the near stimulus must yield a measurably lower novelty.
+    from helios_v2.persistence import PersistedExperienceRecord
+
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    gateway = _embedding_gateway()
+    # Embed a known summary through the same gateway/profile the assembly uses.
+    seeded_vector = gateway.embed(
+        _EmbeddingRequest(
+            request_id="seed:1", target_profile="experience-embedding", input_text="the project deadline is friday"
+        )
+    ).vector
+    store.append_records(
+        (
+            PersistedExperienceRecord(
+                record_id="experience:seed:1",
+                tick_id=1,
+                continuity_kind="external_action",
+                outcome_class="world_changed",
+                source_outcome_kind="planner_bridge",
+                source_outcome_id="planner-bridge-result:1",
+                writeback_status="written",
+                summary="the project deadline is friday",
+                requested_effect_summary="reply",
+                applied_effect_summary="replied",
+                reason_trace=("seeded",),
+                linkage={"source_request_id": "planner-bridge-result:1"},
+                embedding=seeded_vector,
+            ),
+        )
+    )
+
+    from helios_v2.composition.bridges import MemoryGroundedSimilaritySource
+    from helios_v2.appraisal import MemoryGroundedDimensionEstimator
+
+    def embed_text(text: str):
+        return gateway.embed(
+            _EmbeddingRequest(
+                request_id=f"q:{abs(hash(text)) % 1000}",
+                target_profile="experience-embedding",
+                input_text=text,
+            )
+        ).vector
+
+    estimator = MemoryGroundedDimensionEstimator(
+        similarity_source=MemoryGroundedSimilaritySource(embed_text=embed_text, store=store)
+    )
+
+    near = estimator.estimate_dimensions(
+        Stimulus(
+            stimulus_id="s:near",
+            source_name="cli",
+            modality="text",
+            content="the project deadline is friday",
+            channel="cli",
+            metadata=None,
+            provenance_signal_id="n1",
+        )
+    ).novelty
+    far = estimator.estimate_dimensions(
+        Stimulus(
+            stimulus_id="s:far",
+            source_name="cli",
+            modality="text",
+            content="zzz qqq xyz",
+            channel="cli",
+            metadata=None,
+            provenance_signal_id="f1",
+        )
+    ).novelty
+
+    assert near < far
+
+
+def test_semantic_novelty_embedding_failure_is_hard_stop() -> None:
+    # An embedding failure during novelty grounding hard-stops the tick (no constant fallback).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(provider=RaisingCompositionEmbeddingProvider()),
+    )
+    handle.startup()
+
+    with pytest.raises(EmbeddingError):
+        handle.tick()

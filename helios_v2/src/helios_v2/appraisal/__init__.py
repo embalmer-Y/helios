@@ -20,10 +20,16 @@ from .contracts import (
     RapidSalienceAppraisalAPI,
     RapidSalienceVector,
 )
-from .engine import RapidSalienceAppraisalEngine
+from .engine import (
+    MemoryGroundedDimensionEstimator,
+    MemorySimilaritySource,
+    RapidSalienceAppraisalEngine,
+)
 
 __all__ = [
     "AssessStimulusBatchOp",
+    "MemoryGroundedDimensionEstimator",
+    "MemorySimilaritySource",
     "PublishRapidAppraisalBatchOp",
     "RapidAppraisal",
     "RapidAppraisalBatch",

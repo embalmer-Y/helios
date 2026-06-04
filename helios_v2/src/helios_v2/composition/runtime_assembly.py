@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Mapping
 
 from helios_v2.action_externalization import (
     ActionExternalizationConfig,
@@ -113,8 +113,14 @@ from helios_v2.runtime import (
     WorkspaceCompetitionRuntimeStage,
     WorkspaceConsciousContentMaterialBridge,
 )
-from helios_v2.appraisal import RapidSalienceAppraisalEngine
+from helios_v2.appraisal import MemoryGroundedDimensionEstimator, RapidSalienceAppraisalEngine
 from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
+from helios_v2.embedding import EmbeddingGatewayAPI, EmbeddingRequest
+from helios_v2.persistence import (
+    ExperienceStore,
+    SemanticStoreBackedDirectedMemoryCandidateProvider,
+    StoreBackedDirectedMemoryCandidateProvider,
+)
 from helios_v2.sensory import RawSignal, SensoryIngress
 from helios_v2.thought_gating import (
     FirstVersionThoughtGatePath,
@@ -126,6 +132,7 @@ from helios_v2.workspace import WorkspaceCompetitionConfig, WorkspaceCompetition
 from .bridges import (
     ChannelBackedPlannerBridgeRequestBridge,
     ChannelSubsystemStateProvider,
+    ExperienceRecordBridge,
     FirstVersionActiveChannelReporter,
     FirstVersionAggregateEstimator,
     FirstVersionAutonomyRequestBridge,
@@ -151,15 +158,20 @@ from .bridges import (
     FirstVersionThoughtGateSignalBridge,
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
+    MemoryGroundedSimilaritySource,
     SubsystemBackedSensorySource,
     TimelineViewHolder,
 )
 from .dependencies import (
     ChannelReadinessDependencyProvider,
+    EmbeddingReadinessDependencyProvider,
+    ExperienceStoreReadinessDependencyProvider,
     FirstVersionDependencyProvider,
     LlmReadinessDependencyProvider,
     channel_critical_dependency_spec,
     default_critical_dependency_specs,
+    embedding_profile_critical_dependency_spec,
+    experience_store_critical_dependency_spec,
     llm_critical_dependency_spec,
 )
 
@@ -518,6 +530,9 @@ class RuntimeHandle:
     timeline_holder: TimelineViewHolder | None = None
     timeline_sink: InMemoryLogSink | None = None
     channel_subsystem: "ChannelSubsystem | None" = None
+    experience_store: ExperienceStore | None = None
+    experience_record_bridge: ExperienceRecordBridge | None = None
+    embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     _reconstructor: ExecutionTimelineReconstructor = field(
         default_factory=ExecutionTimelineReconstructor
     )
@@ -532,6 +547,8 @@ class RuntimeHandle:
 
         result = self.kernel.tick()
         self._carry_timeline(result.tick_id)
+        self._carry_consequence_claim(result)
+        self._persist_experience(result)
         return result
 
     def _carry_timeline(self, tick_id: int) -> None:
@@ -546,6 +563,57 @@ class RuntimeHandle:
             return
         view = self._reconstructor.reconstruct(self.timeline_sink.events, tick_id)
         self.timeline_holder.view = view
+
+    def _carry_consequence_claim(self, result: RuntimeTickResult) -> None:
+        """Capture the just-completed tick's published consequence claim for the next tick.
+
+        This is owner-neutral carry: it reads the evaluation owner's own published claim
+        projection from the evaluation stage result and stores it in the holder, tick-aligned
+        with the carried timeline so the next tick can corroborate the self-report against
+        execution truth. It computes and re-derives nothing. When the runtime is
+        uninstrumented (no holder) or the evaluation stage produced no claim, it carries
+        nothing and the next tick reports `unverifiable_no_timeline`.
+        """
+
+        if self.timeline_holder is None:
+            return
+        stage_result = result.stage_results.get("evaluation_fidelity_and_diagnostic_provenance")
+        artifact = getattr(stage_result, "artifact", None)
+        if artifact is None:
+            self.timeline_holder.prior_consequence_claim = None
+            return
+        claim = artifact.long_range_diagnostics.get("consequence_claim")
+        self.timeline_holder.prior_consequence_claim = (
+            dict(claim) if isinstance(claim, Mapping) else None
+        )
+
+    def _persist_experience(self, result: RuntimeTickResult) -> None:
+        """Durably append the just-completed tick's `15` continuity records when enabled.
+
+        This is owner-neutral carry: it reads the experience-writeback stage result from the
+        completed tick, projects it into durable records through the owner-neutral record
+        bridge, and appends them to the durable store. It runs only when persistence is
+        enabled (a store and bridge are present); otherwise it is a no-op and the default
+        assembly is unchanged. A durability failure propagates as a hard stop (no silent
+        fallback to a non-persistent path).
+        """
+
+        if self.experience_store is None or self.experience_record_bridge is None:
+            return
+        writeback_result = result.stage_results.get(
+            "execution_writeback_and_autobiographical_consolidation"
+        )
+        if writeback_result is None:
+            return
+        records = self.experience_record_bridge.build_records(writeback_result, result.tick_id)
+        if self.embed_record is not None:
+            # Embed-at-write (semantic memory enabled): embed each record's summary and store
+            # the vector with the record. An embedding failure propagates as a hard stop; the
+            # store never receives a fabricated vector and never falls back to recency.
+            records = tuple(
+                record.with_embedding(self.embed_record(record.summary)) for record in records
+            )
+        self.experience_store.append_records(records)
 
     def run_ticks(self, n: int) -> tuple[RuntimeTickResult, ...]:
         """Owner: composition.
@@ -578,6 +646,9 @@ def assemble_runtime(
     deterministic_thought: bool = False,
     channel_cli: bool = False,
     cli_output_sink: "Callable[[str], None] | None" = None,
+    experience_store: ExperienceStore | None = None,
+    embedding_gateway: EmbeddingGatewayAPI | None = None,
+    embedding_profile_name: str = "experience-embedding",
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -617,6 +688,30 @@ def assemble_runtime(
 
     resolved_config = config if config is not None else default_composition_config()
     thought_profile_name = resolved_config.llm.thought_profile_name
+
+    # Semantic memory (`34`) requires durable persistence (`33`): an embedding gateway without
+    # an experience store is a composition error, not a silent no-op.
+    if embedding_gateway is not None and experience_store is None:
+        raise CompositionError(
+            "Semantic memory requires a durable experience store: "
+            "pass experience_store together with embedding_gateway"
+        )
+
+    def _embed_text(text: str) -> tuple[float, ...]:
+        """Owner-neutral embed callable bound to the injected embedding gateway.
+
+        Used both for embed-at-write (record summary) and embed-at-query (retrieval query).
+        Any embedding failure propagates as a hard stop; there is no recency fallback.
+        """
+
+        assert embedding_gateway is not None  # guarded by the semantic-assembly branch
+        request = EmbeddingRequest(
+            request_id=f"experience-embedding:{abs(hash(text)) % (10**12)}",
+            target_profile=embedding_profile_name,
+            input_text=text,
+            metadata={"consumer": "experience_store"},
+        )
+        return embedding_gateway.embed(request).vector
 
     if deterministic_thought:
         # Explicit opt-in offline assembly: deterministic thought path, no LLM dependency.
@@ -685,8 +780,46 @@ def assemble_runtime(
     else:
         ingress.register_source(FirstVersionSensorySource(signals=resolved_config.source_signals))
 
+    # Persistence-enabled assembly: register the durable experience store readiness gate so
+    # an un-initializable/unwritable store fails fast at startup rather than running
+    # non-persistently. Owner-neutral: composition holds no store policy. Default-off.
+    if experience_store is not None:
+        if dependency_specs is None:
+            resolved_specs = list(resolved_specs) + [experience_store_critical_dependency_spec()]
+        if dependency_provider is None:
+            resolved_provider = ExperienceStoreReadinessDependencyProvider(
+                store=experience_store,
+                baseline_provider=resolved_provider,
+            )
+
+    # Semantic-memory assembly: register the embedding-profile static-readiness gate so an
+    # unready embedding profile fails fast at startup. There is no recency fallback when
+    # semantic memory is enabled. Owner-neutral; default-off.
+    if embedding_gateway is not None:
+        if dependency_specs is None:
+            resolved_specs = list(resolved_specs) + [embedding_profile_critical_dependency_spec()]
+        if dependency_provider is None:
+            resolved_provider = EmbeddingReadinessDependencyProvider(
+                gateway=embedding_gateway,
+                bound_profile_names=(embedding_profile_name,),
+                baseline_provider=resolved_provider,
+            )
+
+    # `03` novelty de-shim (R35): when semantic memory is enabled (store + embedding gateway
+    # both present), novelty becomes a real memory-grounded signal. The appraisal owner keeps
+    # the novelty salience semantic; composition only injects the retrieval-fact source. When
+    # semantic memory is off, the deterministic first-version estimator is unchanged.
+    if experience_store is not None and embedding_gateway is not None:
+        dimension_estimator = MemoryGroundedDimensionEstimator(
+            similarity_source=MemoryGroundedSimilaritySource(
+                embed_text=_embed_text,
+                store=experience_store,
+            )
+        )
+    else:
+        dimension_estimator = FirstVersionDimensionEstimator()
     appraisal = RapidSalienceAppraisalEngine(
-        dimension_estimator=FirstVersionDimensionEstimator(),
+        dimension_estimator=dimension_estimator,
         aggregate_estimator=FirstVersionAggregateEstimator(),
     )
     neuromodulator = NeuromodulatorEngine(
@@ -720,7 +853,16 @@ def assemble_runtime(
     directed_retrieval = DirectedRetrievalEngine(
         config=resolved_config.directed_retrieval,
         retrieval_path=FirstVersionDirectedRetrievalPath(),
-        candidate_provider=FirstVersionDirectedMemoryCandidateProvider(),
+        candidate_provider=(
+            SemanticStoreBackedDirectedMemoryCandidateProvider(
+                store=experience_store,
+                embed_query=_embed_text,
+            )
+            if experience_store is not None and embedding_gateway is not None
+            else StoreBackedDirectedMemoryCandidateProvider(store=experience_store)
+            if experience_store is not None
+            else FirstVersionDirectedMemoryCandidateProvider()
+        ),
     )
     embodied_prompt = EmbodiedPromptEngine(
         config=resolved_config.embodied_prompt,
@@ -878,6 +1020,11 @@ def assemble_runtime(
         timeline_holder=timeline_holder,
         timeline_sink=timeline_sink,
         channel_subsystem=channel_subsystem,
+        experience_store=experience_store,
+        experience_record_bridge=(
+            ExperienceRecordBridge() if experience_store is not None else None
+        ),
+        embed_record=_embed_text if embedding_gateway is not None else None,
     )
 
 

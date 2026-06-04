@@ -7,13 +7,19 @@ degraded or fallback assembly path.
 
 from .dependencies import (
     CHANNEL_DRIVERS_READY,
+    EMBEDDING_PROFILE_READY,
+    EXPERIENCE_STORE_READY,
     FirstVersionDependencyProvider,
     LLM_PROFILES_READY,
     ChannelReadinessDependencyProvider,
+    EmbeddingReadinessDependencyProvider,
+    ExperienceStoreReadinessDependencyProvider,
     LlmReadinessDependencyProvider,
     RUNTIME_COGNITION_BASELINE,
     channel_critical_dependency_spec,
     default_critical_dependency_specs,
+    embedding_profile_critical_dependency_spec,
+    experience_store_critical_dependency_spec,
     llm_critical_dependency_spec,
 )
 from .runtime_assembly import (
@@ -33,6 +39,10 @@ __all__ = [
     "ChannelReadinessDependencyProvider",
     "CompositionConfig",
     "CompositionError",
+    "EMBEDDING_PROFILE_READY",
+    "EXPERIENCE_STORE_READY",
+    "EmbeddingReadinessDependencyProvider",
+    "ExperienceStoreReadinessDependencyProvider",
     "FirstVersionDependencyProvider",
     "LLM_PROFILES_READY",
     "LlmReadinessDependencyProvider",
@@ -42,5 +52,7 @@ __all__ = [
     "channel_critical_dependency_spec",
     "default_composition_config",
     "default_critical_dependency_specs",
+    "embedding_profile_critical_dependency_spec",
+    "experience_store_critical_dependency_spec",
     "llm_critical_dependency_spec",
 ]

@@ -29,10 +29,19 @@ See `docs/API_AND_OPS_CONTRACT_GUIDE.md` for the required interface format.
 The current implementation baseline now includes:
 
 1. owner packages `01-18` for the main runtime cognition and continuity chain,
-2. `19` boundary-truth documentation,
-3. `20` scientific-grounding and owner-wave gap-roadmap documentation,
-4. `21` unified runtime observability and logging with an optional kernel-level emission seam,
-5. a fail-fast runtime kernel and dependency gate that can run with or without injected observability.
+2. `19` boundary-truth and `20` scientific-grounding documentation owners,
+3. `21` unified runtime observability with an optional kernel-level emission seam and a read-only execution-timeline view,
+4. `22` the runtime composition root assembling a single runnable runtime handle,
+5. `23` execution-timeline-aware evaluation and `24` long-horizon continuity threads,
+6. `25` the backend-neutral LLM inference gateway and `26-29` the LLM-backed, structured, internal-only-closing, cognition-derived thought/autonomy path,
+7. `30-31` the channel driver subsystem and the first concrete (CLI) driver with an opt-in channel-bound assembly,
+8. `32` execution-truth-corroborated consequence binding (wave_A closed at baseline),
+9. `33` the durable experience store with restart continuity and `34` semantic experience retrieval (the P2 memory base),
+10. a fail-fast runtime kernel and dependency gate that runs with or without injected observability, persistence, embedding, or channel transport.
+
+See `docs/OWNER_GUIDE.md` for the by-owner responsibility/completeness/next-step reference,
+`docs/ARCHITECTURE_PHILOSOPHY.zh-CN.md` for the final goal and P0→P7 phase roadmap, and
+`docs/PROGRESS_FLOW.en.md` for the color-coded module progress map.
 
 ## Layout
 
@@ -46,16 +55,16 @@ helios_v2/
 
 ## Validation
 
-Run one focused test slice from the repository root:
+Run the full network-free suite from the repository root:
 
 ```powershell
 $env:PYTHONPATH = "d:/Software/project/helios/helios_v2/src"
-pytest helios_v2/tests/test_runtime_dependencies.py -q
+pytest helios_v2/tests -q
 ```
 
-For the current observability owner slice:
+Run one focused owner slice (for example the durable experience store and semantic retrieval):
 
 ```powershell
 $env:PYTHONPATH = "d:/Software/project/helios/helios_v2/src"
-pytest helios_v2/tests/test_observability_contracts.py helios_v2/tests/test_observability_engine.py helios_v2/tests/test_runtime_kernel_observability.py -q
+pytest helios_v2/tests/test_persistence_contracts.py helios_v2/tests/test_persistence_engine.py helios_v2/tests/test_embedding_contracts.py helios_v2/tests/test_embedding_engine.py -q
 ```

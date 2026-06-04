@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping, Protocol, runtime_checkable
 
 from .contracts import (
+    ConsequenceClaim,
     EvaluateEvidenceBundleOp,
     EvaluationAPI,
     EvaluationArtifact,
@@ -77,6 +78,138 @@ _SHIM_DERIVED_DIMENSIONS: tuple[str, ...] = (
     "outward_expression_artifact_fidelity",
     "internal_to_visible_consequence",
 )
+
+# Canonical kernel stage names the corroboration mapping checks against the execution
+# timeline. These are execution-timing facts only; the corroboration never reads an owner's
+# semantic decision payload (the timeline carries none).
+_PLANNER_BRIDGE_STAGE = "planner_executor_feedback_bridge"
+_WRITEBACK_STAGE = "execution_writeback_and_autobiographical_consolidation"
+_THOUGHT_STAGE = "internal_thought_loop_owner"
+
+# The corroboration verdict vocabulary published as a first-class artifact field.
+_CORROBORATION_CORROBORATED = "corroborated"
+_CORROBORATION_DISCREPANT = "discrepant"
+_CORROBORATION_UNVERIFIABLE = "unverifiable_no_timeline"
+
+
+def _timeline_stage_status_map(timeline_entry: Mapping[str, object]) -> dict[str, str]:
+    """Project one timeline evidence entry into a {stage_name: status} map.
+
+    Reads only the compact per-stage status list produced by
+    `ExecutionTimelineView.to_evidence`. It interprets execution-timing facts only and never
+    an owner decision. A stage absent from the timeline is simply absent from the map.
+    """
+
+    statuses: dict[str, str] = {}
+    stages = timeline_entry.get("stages")
+    if not isinstance(stages, (list, tuple)):
+        return statuses
+    for stage in stages:
+        if not isinstance(stage, Mapping):
+            continue
+        stage_name = stage.get("stage_name")
+        status = stage.get("status")
+        if isinstance(stage_name, str) and stage_name and isinstance(status, str) and status:
+            statuses[stage_name] = status
+    return statuses
+
+
+def _corroborate_consequence(
+    prior_claim_evidence: tuple[Mapping[str, object], ...],
+    timeline_evidence: tuple[Mapping[str, object], ...],
+) -> tuple[str, str]:
+    """Owner: evaluation fidelity and diagnostic provenance.
+
+    Purpose:
+        Corroborate the previous completed tick's self-reported consequence outcome against
+        that same tick's kernel execution timeline, returning an explicit verdict and a
+        bounded detail.
+
+    Inputs:
+        `prior_claim_evidence` - at most one projected `ConsequenceClaim` (the prior tick's).
+        `timeline_evidence` - at most one projected `ExecutionTimelineView` (the prior tick's).
+
+    Returns:
+        A `(verdict, detail)` pair. `verdict` is one of `corroborated`, `discrepant`, or
+        `unverifiable_no_timeline`. `detail` names the contradicted stage fact for a
+        discrepancy, or the reason a pair could not be verified.
+
+    Notes:
+        Absence is never contradiction: a missing timeline, missing claim, tick mismatch, or
+        a complete timeline that simply omits an implied stage yields `unverifiable_no_timeline`.
+        A `discrepant` verdict is only returned when the timeline is present and an implied
+        stage is recorded as failed, or the timeline is complete and an implied stage is
+        affirmatively absent while another consequential stage is present. The mapping reads
+        only kernel stage-completion facts; it re-derives no owner decision.
+    """
+
+    if not prior_claim_evidence:
+        return _CORROBORATION_UNVERIFIABLE, "no_prior_claim"
+    if not timeline_evidence:
+        return _CORROBORATION_UNVERIFIABLE, "timeline_absent"
+
+    claim = prior_claim_evidence[0]
+    timeline = timeline_evidence[0]
+
+    claim_tick = claim.get("tick_id")
+    timeline_tick = timeline.get("tick_id")
+    if timeline_tick is None:
+        return _CORROBORATION_UNVERIFIABLE, "timeline_absent"
+    if claim_tick is None or claim_tick != timeline_tick:
+        return _CORROBORATION_UNVERIFIABLE, "tick_mismatch"
+    if timeline.get("completed") is not True:
+        return _CORROBORATION_UNVERIFIABLE, "timeline_incomplete"
+
+    outcome = claim.get("consequence_path_outcome")
+    statuses = _timeline_stage_status_map(timeline)
+
+    def stage_completed(stage_name: str) -> bool:
+        return statuses.get(stage_name) == "completed"
+
+    def stage_failed(stage_name: str) -> bool:
+        return statuses.get(stage_name) == "failed"
+
+    def stage_present(stage_name: str) -> bool:
+        return stage_name in statuses
+
+    if outcome == "continuity_written":
+        if stage_failed(_PLANNER_BRIDGE_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:planner_bridge_failed"
+        if stage_failed(_WRITEBACK_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:writeback_failed"
+        if not stage_completed(_PLANNER_BRIDGE_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:planner_bridge_not_completed"
+        if not stage_completed(_WRITEBACK_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:writeback_not_completed"
+        return _CORROBORATION_CORROBORATED, "all_implied_stages_present"
+
+    if outcome in ("executed", "rejected"):
+        if stage_failed(_PLANNER_BRIDGE_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:planner_bridge_failed"
+        if not stage_completed(_PLANNER_BRIDGE_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:planner_bridge_not_completed"
+        return _CORROBORATION_CORROBORATED, "all_implied_stages_present"
+
+    if outcome == "blocked":
+        # Blocked implies the planner segment did not cleanly complete: either a stage failed
+        # somewhere, or the planner-bridge stage did not complete. A complete timeline that
+        # shows the planner-bridge completed and no failed stage contradicts a blocked claim.
+        any_failed = any(status == "failed" for status in statuses.values())
+        if any_failed or not stage_completed(_PLANNER_BRIDGE_STAGE):
+            return _CORROBORATION_CORROBORATED, "all_implied_stages_present"
+        return _CORROBORATION_DISCREPANT, f"{outcome}:no_failed_stage_but_planner_completed"
+
+    if outcome in ("internal_only_decision", "internally_activated_only"):
+        if stage_failed(_THOUGHT_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:thought_failed"
+        if not stage_completed(_THOUGHT_STAGE):
+            return _CORROBORATION_DISCREPANT, f"{outcome}:thought_not_completed"
+        return _CORROBORATION_CORROBORATED, "all_implied_stages_present"
+
+    # `no_activation` (and any outcome without implied stage facts) is vacuously corroborated
+    # once a complete prior timeline is present.
+    del stage_present
+    return _CORROBORATION_CORROBORATED, "no_implied_stage_facts"
 
 
 def _classify_consequence_outcome(
@@ -344,6 +477,43 @@ class FirstVersionEvaluationPath:
             "internal_to_visible_consequence": internal_to_visible_score,
         }
 
+        # Publish this tick's self-reported consequence claim so the next tick can corroborate
+        # it against this tick's execution timeline. The claim carries only owner-published
+        # statuses; it re-derives nothing. The current tick id arrives through the request's
+        # time-window summary as an explicit owner-neutral field.
+        current_tick_id = request.time_window_summary.get("current_tick_id")
+        current_tick_id = current_tick_id if isinstance(current_tick_id, int) else None
+        consequence_claim = ConsequenceClaim(
+            claim_id=f"consequence-claim:{bundle.bundle_id}",
+            tick_id=current_tick_id,
+            consequence_path_outcome=consequence_path_outcome,
+            planner_status=planner_status if isinstance(planner_status, str) else None,
+            action_status=action_status if isinstance(action_status, str) else None,
+            continuity_written=any_written,
+        )
+
+        # Corroborate the PRIOR completed tick's self-reported outcome against that same tick's
+        # execution timeline. Both arrive carried-forward and tick-aligned by composition.
+        corroboration_verdict, corroboration_detail = _corroborate_consequence(
+            bundle.prior_consequence_claim_evidence,
+            bundle.execution_timeline_evidence,
+        )
+        if corroboration_verdict == _CORROBORATION_DISCREPANT:
+            prior_claim_refs = _bundle_ids(bundle.prior_consequence_claim_evidence)
+            timeline_refs = _bundle_ids(bundle.execution_timeline_evidence)
+            prior_outcome = bundle.prior_consequence_claim_evidence[0].get(
+                "consequence_path_outcome"
+            )
+            warnings.append(
+                _warning(
+                    "warning:consequence-discrepancy",
+                    "consequence_discrepancy",
+                    "Prior-tick self-reported consequence outcome "
+                    f"'{prior_outcome}' is contradicted by execution truth: {corroboration_detail}.",
+                    (prior_claim_refs + timeline_refs) or (bundle.bundle_id,),
+                )
+            )
+
         gap_summary: dict[str, object] = {
             "thought_to_action_gap": thought_to_action_gap,
             "action_to_writeback_gap": action_to_writeback_gap,
@@ -353,6 +523,8 @@ class FirstVersionEvaluationPath:
             "continuity_written": any_written,
             "consequence_path_outcome": consequence_path_outcome,
             "consequence_binding": consequence_binding,
+            "consequence_corroboration": corroboration_verdict,
+            "consequence_corroboration_detail": corroboration_detail,
         }
 
         long_range_diagnostics: dict[str, object] = {
@@ -384,6 +556,7 @@ class FirstVersionEvaluationPath:
             "shim_derived_dimensions": _SHIM_DERIVED_DIMENSIONS,
             "long_horizon_continuity": long_horizon_continuity,
             "long_horizon_continuity_detail": long_horizon_continuity_detail,
+            "consequence_claim": consequence_claim.to_evidence(consequence_claim.claim_id),
         }
 
         return EvaluationArtifact(

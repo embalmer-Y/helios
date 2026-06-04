@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from helios_v2.evaluation import (
+    ConsequenceClaim,
     EvaluationArtifact,
     EvaluationConfig,
     EvaluationError,
@@ -70,4 +71,100 @@ def test_evaluation_request_requires_known_scenario_kind() -> None:
             request_id="evaluation-request:001",
             scenario_kind="unknown",
             time_window_summary={"window_label": "tick-1"},
+        )
+
+
+def test_consequence_claim_rejects_empty_id() -> None:
+    with pytest.raises(EvaluationError, match="claim_id"):
+        ConsequenceClaim(
+            claim_id="",
+            tick_id=1,
+            consequence_path_outcome="continuity_written",
+            planner_status="executed",
+            action_status="normalized",
+            continuity_written=True,
+        )
+
+
+def test_consequence_claim_rejects_unknown_outcome() -> None:
+    with pytest.raises(EvaluationError, match="outcome vocabulary"):
+        ConsequenceClaim(
+            claim_id="consequence-claim:001",
+            tick_id=1,
+            consequence_path_outcome="invented_outcome",
+            planner_status="executed",
+            action_status="normalized",
+            continuity_written=True,
+        )
+
+
+def test_consequence_claim_projects_to_evidence() -> None:
+    claim = ConsequenceClaim(
+        claim_id="consequence-claim:001",
+        tick_id=4,
+        consequence_path_outcome="executed",
+        planner_status="executed",
+        action_status="normalized",
+        continuity_written=False,
+    )
+
+    evidence = claim.to_evidence("prior-consequence-claim:tick:4")
+
+    assert evidence["evidence_id"] == "prior-consequence-claim:tick:4"
+    assert evidence["tick_id"] == 4
+    assert evidence["consequence_path_outcome"] == "executed"
+    assert evidence["planner_status"] == "executed"
+    assert evidence["continuity_written"] is False
+
+    with pytest.raises(EvaluationError, match="non-empty evidence_id"):
+        claim.to_evidence("")
+
+
+def test_evaluation_bundle_freezes_prior_consequence_claim_evidence() -> None:
+    bundle = EvaluationEvidenceBundle(
+        bundle_id="evaluation-bundle:001",
+        source_request_id="evaluation-request:001",
+        thought_evidence=(({"evidence_id": "thought:001", "status": "completed"}),),
+        action_evidence=(({"evidence_id": "action:001", "status": "normalized"}),),
+        planner_evidence=(({"evidence_id": "planner:001", "status": "executed"}),),
+        governance_evidence=(({"evidence_id": "governance:001", "status": "accepted"}),),
+        writeback_evidence=(({"evidence_id": "writeback:001", "status": "written"}),),
+        autonomy_evidence=(({"evidence_id": "autonomy:001", "deferred_active": False}),),
+        prompt_evidence=(({"evidence_id": "prompt:001", "status": "published"}),),
+        outward_expression_evidence=(({"evidence_id": "outward:001", "status": "prepared"}),),
+        outward_expression_externalization_evidence=(
+            ({"evidence_id": "outward-ext:001", "status": "prepared"}),
+        ),
+        prior_consequence_claim_evidence=(
+            (
+                {
+                    "evidence_id": "prior-consequence-claim:tick:1",
+                    "tick_id": 1,
+                    "consequence_path_outcome": "continuity_written",
+                }
+            ),
+        ),
+    )
+
+    with pytest.raises(TypeError):
+        bundle.prior_consequence_claim_evidence[0]["tick_id"] = 2
+
+
+def test_evaluation_bundle_rejects_prior_claim_evidence_without_evidence_id() -> None:
+    with pytest.raises(EvaluationError, match="prior_consequence_claim_evidence"):
+        EvaluationEvidenceBundle(
+            bundle_id="evaluation-bundle:001",
+            source_request_id="evaluation-request:001",
+            thought_evidence=(({"evidence_id": "thought:001", "status": "completed"}),),
+            action_evidence=(({"evidence_id": "action:001", "status": "normalized"}),),
+            planner_evidence=(({"evidence_id": "planner:001", "status": "executed"}),),
+            governance_evidence=(({"evidence_id": "governance:001", "status": "accepted"}),),
+            writeback_evidence=(({"evidence_id": "writeback:001", "status": "written"}),),
+            autonomy_evidence=(({"evidence_id": "autonomy:001", "deferred_active": False}),),
+            prompt_evidence=(({"evidence_id": "prompt:001", "status": "published"}),),
+            outward_expression_evidence=(({"evidence_id": "outward:001", "status": "prepared"}),),
+            outward_expression_externalization_evidence=(
+                ({"evidence_id": "outward-ext:001", "status": "prepared"}),
+            ),
+            prior_consequence_claim_evidence=(({"tick_id": 1}),),
         )

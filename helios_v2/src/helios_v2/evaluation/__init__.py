@@ -1,6 +1,7 @@
 """Evaluation fidelity and diagnostic provenance owner package."""
 
 from .contracts import (
+    ConsequenceClaim,
     EvaluateEvidenceBundleOp,
     EvaluationAPI,
     EvaluationArtifact,
@@ -14,6 +15,7 @@ from .contracts import (
 from .engine import EvaluationEngine, EvaluationPath, FirstVersionEvaluationPath
 
 __all__ = [
+    "ConsequenceClaim",
     "EvaluateEvidenceBundleOp",
     "EvaluationAPI",
     "EvaluationArtifact",

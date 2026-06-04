@@ -25,9 +25,11 @@ the final owner policy; later owner-deepening waves replace them through the own
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 from helios_v2.appraisal.engine import (
     AggregateJudgmentEstimator,
+    MemorySimilaritySource,
     RapidDimensionEstimate,
     RapidDimensionEstimator,
 )
@@ -68,6 +70,7 @@ from helios_v2.neuromodulation import (
     NeuromodulatorUpdatePath,
 )
 from helios_v2.observability import ExecutionTimelineView
+from helios_v2.persistence import ExperienceStore, PersistedExperienceRecord
 from helios_v2.outward_expression_externalization import OutwardExpressionExternalizationRequest
 from helios_v2.planner_bridge import PlannerBridgeRequest
 from helios_v2.prompt_contract import EmbodiedPromptRequest
@@ -235,6 +238,51 @@ class FirstVersionAggregateEstimator(AggregateJudgmentEstimator):
     def estimate_aggregate(self, stimulus: Stimulus, dimensions: RapidDimensionEstimate) -> float:
         del stimulus, dimensions
         return 0.4
+
+
+@dataclass
+class MemoryGroundedSimilaritySource(MemorySimilaritySource):
+    """Owner: composition (semantic-memory assembly only).
+
+    Purpose:
+        Provide the `03` appraisal owner with a memory-retrieval fact for novelty: the maximum
+        cosine similarity of a stimulus to the system's stored experience. It embeds the
+        stimulus content through the injected embedding callable (the same callable and
+        embedding profile the store was written with) and runs the store's bounded similarity
+        search.
+
+    Failure semantics:
+        An embedding failure or store read failure propagates as a hard stop; this source never
+        fabricates a similarity. Empty stimulus content and a cold/all-non-embedded store both
+        return `None` (no comparable memory), which the appraisal owner maps to maximum novelty.
+
+    Notes:
+        Owner-neutral glue. It returns a raw cosine fact (or `None`); it never applies the
+        `novelty = 1 - similarity` salience mapping — that semantic is owned by `03`. It reaches
+        the embedding owner only through the injected `embed_text` callable (no embedding-owner
+        import) and the persistence owner only through the `ExperienceStore` public API.
+    """
+
+    embed_text: Callable[[str], tuple[float, ...]]
+    store: ExperienceStore
+    max_scan: int = 256
+
+    def max_similarity_for(self, stimulus: Stimulus) -> float | None:
+        """Owner: composition. Return the stimulus's max cosine similarity to stored memory.
+
+        Empty content yields `None` without calling the embedding capability; a cold or
+        all-non-embedded store yields `None` after a search with no hits. Otherwise returns the
+        top hit's cosine similarity. Embedding/store failures propagate as a hard stop.
+        """
+
+        text = stimulus.content.strip()
+        if not text:
+            return None
+        query_vector = self.embed_text(text)
+        result = self.store.search_similar(query_vector, limit=1, max_scan=self.max_scan)
+        if not result.hits:
+            return None
+        return result.hits[0].similarity
 
 
 @dataclass
@@ -485,17 +533,105 @@ class TimelineViewHolder:
     Purpose:
         Hold the previous completed tick's execution-timeline view so it can be carried
         forward into the next tick's evaluation evidence assembly, plus whether the runtime
-        is instrumented at all.
+        is instrumented at all, plus the previous completed tick's published consequence
+        claim so the next tick's evaluation can corroborate the self-report against the
+        timeline.
 
     Notes:
         Owner-neutral carry only. It transports a formal `ExecutionTimelineView` produced
-        by the observability owner; it never interprets or mutates the view's content. The
-        `instrumented` flag lets evaluation distinguish an instrumented first tick (no prior
-        timeline yet) from a genuinely uninstrumented runtime.
+        by the observability owner and a plain projection of the evaluation owner's published
+        `ConsequenceClaim`; it never interprets or mutates either. The `instrumented` flag
+        lets evaluation distinguish an instrumented first tick (no prior timeline yet) from a
+        genuinely uninstrumented runtime. `prior_consequence_claim` is tick-aligned with
+        `view`: both describe the same previous completed tick.
     """
 
     view: ExecutionTimelineView | None = None
     instrumented: bool = False
+    prior_consequence_claim: dict | None = None
+
+
+@dataclass
+class FirstVersionPriorConsequenceClaimEvidenceBridge:
+    """Owner: composition.
+
+    Purpose:
+        Project the carried previous-tick published consequence claim into the prior-claim
+        evidence entry consumed by the evaluation bundle.
+
+    Notes:
+        Owner-neutral glue. It forwards only the evaluation owner's own published claim
+        projection (owner-published statuses plus the prior tick id). When no prior claim
+        has been captured yet (first tick or uninstrumented), it yields an empty tuple, which
+        the evaluation owner reads as an explicit `unverifiable_no_timeline` verdict rather
+        than a corroboration. It never computes or re-derives any owner status.
+    """
+
+    def build_claim_evidence(self, holder: "TimelineViewHolder | None") -> tuple[dict, ...]:
+        if holder is None or holder.prior_consequence_claim is None:
+            return ()
+        return (dict(holder.prior_consequence_claim),)
+
+
+@dataclass
+class ExperienceRecordBridge:
+    """Owner: composition.
+
+    Purpose:
+        Project the `15` experience-writeback stage result of one completed tick into durable
+        `PersistedExperienceRecord` values for the `33` experience store.
+
+    Notes:
+        Owner-neutral glue. It flattens each published `ExperienceWritebackResult` plus its
+        `ContinuityEvidencePacket` into one storage record, preserving the upstream
+        `source_provenance` linkage ids verbatim. It computes no status, ranks nothing, and
+        decides no storage policy. It is used only by the explicit opt-in persistence assembly.
+    """
+
+    def build_records(self, writeback_stage_result, tick_id) -> tuple[PersistedExperienceRecord, ...]:
+        """Owner: composition.
+
+        Purpose:
+            Build the durable records for one tick from the writeback stage result.
+
+        Inputs:
+            `writeback_stage_result` - the tick's `ExperienceWritebackStageResult`.
+            `tick_id` - the completed tick id.
+
+        Returns:
+            One `PersistedExperienceRecord` per published writeback result, preserving
+            provenance linkage. Empty when the stage published no results.
+
+        Notes:
+            Linkage is copied verbatim from each continuity packet's `source_provenance`; only
+            string-valued linkage ids are kept (the record contract requires string ids).
+        """
+
+        records: list[PersistedExperienceRecord] = []
+        for result in writeback_stage_result.results:
+            packet = result.continuity_packet
+            linkage = {
+                key: value
+                for key, value in packet.source_provenance.items()
+                if isinstance(value, str) and value
+            }
+            records.append(
+                PersistedExperienceRecord(
+                    record_id=f"experience:{result.result_id}",
+                    tick_id=tick_id,
+                    continuity_kind=packet.continuity_kind,
+                    outcome_class=packet.outcome_class,
+                    source_outcome_kind=packet.source_outcome_kind,
+                    source_outcome_id=packet.source_outcome_id,
+                    writeback_status=result.status,
+                    summary=packet.summary,
+                    requested_effect_summary=packet.requested_effect_summary,
+                    applied_effect_summary=packet.applied_effect_summary,
+                    reason_trace=packet.reason_trace,
+                    linkage=linkage,
+                )
+            )
+        return tuple(records)
 
 
 @dataclass
@@ -1177,6 +1313,9 @@ class FirstVersionEvaluationRequestBridge:
     timeline_bridge: FirstVersionExecutionTimelineEvidenceBridge = field(
         default_factory=FirstVersionExecutionTimelineEvidenceBridge
     )
+    prior_claim_bridge: FirstVersionPriorConsequenceClaimEvidenceBridge = field(
+        default_factory=FirstVersionPriorConsequenceClaimEvidenceBridge
+    )
 
     def build_request(
         self,
@@ -1197,6 +1336,7 @@ class FirstVersionEvaluationRequestBridge:
             scenario_kind="runtime_tick",
             time_window_summary={
                 "window_label": f"runtime-tick:{tick_id}",
+                "current_tick_id": tick_id,
                 "late_session_degradation_status": "not_evaluated",
                 "specific_recall_persistence_status": "not_evaluated",
                 "user_visible_anchoring_drift_status": "not_evaluated",
@@ -1294,6 +1434,9 @@ class FirstVersionEvaluationRequestBridge:
                 },
             ),
             execution_timeline_evidence=self.timeline_bridge.build_timeline_evidence(
+                self.timeline_holder
+            ),
+            prior_consequence_claim_evidence=self.prior_claim_bridge.build_claim_evidence(
                 self.timeline_holder
             ),
         )

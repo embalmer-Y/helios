@@ -104,6 +104,106 @@ class AggregateJudgmentEstimator(Protocol):
         """
 
 
+@runtime_checkable
+class MemorySimilaritySource(Protocol):
+    """Owner: rapid salience appraisal.
+
+    Purpose:
+        Provide a memory-retrieval fact for novelty appraisal: the maximum cosine similarity
+        of one stimulus to the system's stored experience. This is a retrieval fact, not a
+        salience judgment; the novelty salience mapping stays owned by this owner.
+
+    Notes:
+        Injected into the owner. The concrete source (composition glue) reaches the embedding
+        and persistence owners; this owner never imports them. Returning `None` means there is
+        no comparable memory (empty stimulus content or a cold/all-non-embedded store).
+    """
+
+    def max_similarity_for(self, stimulus: Stimulus) -> float | None:
+        """Owner: rapid salience appraisal (injected source).
+
+        Purpose:
+            Return the maximum cosine similarity of the stimulus to stored experience.
+
+        Inputs:
+            One normalized `Stimulus`.
+
+        Returns:
+            A cosine similarity in `[-1.0, 1.0]`, or `None` when there is no comparable memory.
+
+        Raises:
+            May propagate an embedding or store failure as a hard stop. It must not fabricate a
+            similarity to mask a failure.
+
+        Notes:
+            This returns a raw retrieval fact only. The `novelty = 1 - similarity` mapping is
+            owned by the appraisal owner, not by this source.
+        """
+
+
+@dataclass
+class MemoryGroundedDimensionEstimator(RapidDimensionEstimator):
+    """Owner: rapid salience appraisal.
+
+    Purpose:
+        Compute the novelty dimension from memory similarity while keeping the other four
+        coarse dimensions at their first-version constant values. This is the P3 de-shim of the
+        novelty dimension only.
+
+    Failure semantics:
+        Propagates any failure raised by the injected `MemorySimilaritySource` as a hard stop.
+        It never falls back to a constant novelty when grounding is active.
+
+    Notes:
+        The novelty salience semantic lives here: `novelty = 1 - max_similarity`, clamped into
+        the `RapidSalienceVector` range, and `None` (no comparable memory: empty content or a
+        cold store) maps to maximum novelty `1.0` ("unlike anything remembered"). The four
+        non-novelty dimensions remain constant first-version values and are the next de-shim
+        slices. The aggregate judgment stays owned by the separate aggregate estimator.
+    """
+
+    similarity_source: MemorySimilaritySource
+    threat: float = 0.2
+    reward: float = 0.1
+    social: float = 0.0
+    uncertainty: float = 0.3
+
+    def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
+        """Owner: rapid salience appraisal.
+
+        Purpose:
+            Estimate the coarse dimensions for one stimulus, with novelty derived from the
+            injected memory-similarity fact and the other four dimensions held constant.
+
+        Inputs:
+            One normalized `Stimulus`.
+
+        Returns:
+            A `RapidDimensionEstimate` whose `novelty` reflects memory similarity.
+
+        Raises:
+            RapidAppraisalError is not raised here directly; an injected-source failure
+            propagates as the source's own hard-stop error.
+
+        Notes:
+            `novelty = clamp(1 - max_similarity, 0, 1)`; a `None` similarity (no comparable
+            memory) yields `1.0`. Deterministic given the same stimulus and stored vectors.
+        """
+
+        similarity = self.similarity_source.max_similarity_for(stimulus)
+        if similarity is None:
+            novelty = 1.0
+        else:
+            novelty = round(min(1.0, max(0.0, 1.0 - similarity)), 4)
+        return RapidDimensionEstimate(
+            threat=self.threat,
+            reward=self.reward,
+            novelty=novelty,
+            social=self.social,
+            uncertainty=self.uncertainty,
+        )
+
+
 def _validate_stimulus_batch(batch: StimulusBatch) -> None:
     if not batch.batch_id:
         raise RapidAppraisalError("StimulusBatch must declare a non-empty batch_id")
