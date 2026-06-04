@@ -1194,3 +1194,50 @@ def test_semantic_assembly_derives_neuromodulator_levels_from_appraisal() -> Non
     second = handle.tick()
     second_ne = _neuromodulator_levels(second).norepinephrine
     assert second_ne < first_ne
+
+
+# --- Requirement 37: neuromodulatory gating coupling ---
+
+
+def _gate_result(result):
+    return result.stage_results["thought_gating_and_continuation_pressure"].result
+
+
+def test_default_assembly_gate_signal_has_no_neuromodulatory_arousal() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    gate = result.stage_results["thought_gating_and_continuation_pressure"]
+    # Default (uncoupled) assembly: the gate snapshot carries no arousal fact, and the gate
+    # result does not record an arousal contribution.
+    assert gate.signal_snapshot.neuromodulatory_arousal is None
+    assert "neuromodulatory_arousal" not in gate.result.contributing_signals
+
+
+def test_semantic_assembly_couples_neuromodulatory_arousal_into_gate() -> None:
+    # In the semantic-memory assembly, the real 04 norepinephrine level is forwarded into the
+    # 09 gate signal and shapes the gate score through the owner-owned arousal-aware path.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    first = handle.tick()
+    first_gate = first.stage_results["thought_gating_and_continuation_pressure"]
+    first_arousal = first_gate.signal_snapshot.neuromodulatory_arousal
+    # The forwarded arousal equals the real 04 norepinephrine level this tick.
+    assert first_arousal == pytest.approx(_neuromodulator_levels(first).norepinephrine)
+    assert first_gate.result.contributing_signals["neuromodulatory_arousal"] == pytest.approx(
+        first_arousal
+    )
+
+    # A later tick whose stimulus embeds close to stored experience has lower novelty -> lower
+    # norepinephrine -> a measurably lower forwarded arousal and arousal contribution.
+    second = handle.tick()
+    second_gate = second.stage_results["thought_gating_and_continuation_pressure"]
+    second_arousal = second_gate.signal_snapshot.neuromodulatory_arousal
+    assert second_arousal < first_arousal
+    assert second_gate.result.contributing_signals["neuromodulatory_arousal"] == pytest.approx(
+        second_arousal
+    )
+    # The arousal-driven difference is real (not a constant) and moves the gate score with it.
+    assert first_gate.result.gate_score >= second_gate.result.gate_score

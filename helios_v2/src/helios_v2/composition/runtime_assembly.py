@@ -123,6 +123,7 @@ from helios_v2.persistence import (
 )
 from helios_v2.sensory import RawSignal, SensoryIngress
 from helios_v2.thought_gating import (
+    ArousalAwareThoughtGatePath,
     FirstVersionThoughtGatePath,
     ThoughtGatingConfig,
     ThoughtGatingEngine,
@@ -160,6 +161,7 @@ from .bridges import (
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
     MemoryGroundedSimilaritySource,
+    NeuromodulatorAwareThoughtGateSignalBridge,
     SubsystemBackedSensorySource,
     TimelineViewHolder,
 )
@@ -861,7 +863,11 @@ def assemble_runtime(
     )
     thought_gating = ThoughtGatingEngine(
         config=resolved_config.thought_gating,
-        gate_path=FirstVersionThoughtGatePath(),
+        gate_path=(
+            ArousalAwareThoughtGatePath()
+            if semantic_memory_enabled
+            else FirstVersionThoughtGatePath()
+        ),
     )
     directed_retrieval = DirectedRetrievalEngine(
         config=resolved_config.directed_retrieval,
@@ -943,7 +949,11 @@ def assemble_runtime(
         ReportableConsciousContentRuntimeStage(consciousness_layer=consciousness),
         ThoughtGatingRuntimeStage(
             thought_gating_layer=thought_gating,
-            signal_provider=FirstVersionThoughtGateSignalBridge(),
+            signal_provider=(
+                NeuromodulatorAwareThoughtGateSignalBridge()
+                if semantic_memory_enabled
+                else FirstVersionThoughtGateSignalBridge()
+            ),
         ),
         DirectedRetrievalRuntimeStage(
             directed_retrieval_layer=directed_retrieval,

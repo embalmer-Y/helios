@@ -862,6 +862,73 @@ class FirstVersionThoughtGateSignalBridge:
 
 
 @dataclass
+class NeuromodulatorAwareThoughtGateSignalBridge:
+    """Owner: composition (semantic-memory assembly only).
+
+    Purpose:
+        Build the normalized thought-gate signal snapshot exactly like the first-version
+        bridge, but additionally forward the real `04` norepinephrine level (already computed
+        this tick and present in the frame's stage results) as the raw `neuromodulatory_arousal`
+        fact.
+
+    Failure semantics:
+        The `04` neuromodulator stage runs before `09` in the canonical order, so its result must
+        be present. A missing or wrong-typed neuromodulator result is a hard fail (the existing
+        runtime stage error), never a silent uncoupled snapshot.
+
+    Notes:
+        Owner-neutral glue. It forwards the raw norepinephrine level verbatim; it computes no
+        gate score and no activation mapping. The arousal-to-gate semantic is owned by the `09`
+        `ArousalAwareThoughtGatePath`, exactly as R35 keeps the novelty salience semantic in `03`
+        while composition only forwards the raw retrieval fact.
+    """
+
+    neuromodulator_stage_name: str = "neuromodulator_system"
+
+    def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
+        from helios_v2.runtime.stages import (
+            NeuromodulatorStageResult,
+            RuntimeStageExecutionError,
+        )
+
+        tick_id = frame.tick_id
+        stage_results = frame.stage_results or {}
+        neuromodulator_result = stage_results.get(self.neuromodulator_stage_name)
+        if neuromodulator_result is None:
+            raise RuntimeStageExecutionError(
+                "Neuromodulator-aware gate signal requires the upstream "
+                f"'{self.neuromodulator_stage_name}' result before thought gating"
+            )
+        if not isinstance(neuromodulator_result, NeuromodulatorStageResult):
+            raise RuntimeStageExecutionError(
+                "Neuromodulator-aware gate signal expected the upstream "
+                f"'{self.neuromodulator_stage_name}' result to be NeuromodulatorStageResult"
+            )
+        norepinephrine = neuromodulator_result.state.levels.norepinephrine
+        return ThoughtGateSignalSnapshot(
+            snapshot_id=f"gate-snapshot:runtime:{tick_id}",
+            source_conscious_state_id=conscious_result.state.state_id,
+            workload_pressure=0.1,
+            global_activation_level=0.9,
+            temporal_signal=0.4,
+            drive_urgency_signal=0.7,
+            dmn_available=True,
+            selected_stimuli=(
+                SelectedStimulusSummary(
+                    stimulus_id=f"stimulus:runtime:{tick_id}",
+                    source_kind="external_text",
+                    source_channel_id="cli",
+                    stimulus_intensity=0.9,
+                    novelty_signal=0.6,
+                    sensitization_signal=0.2,
+                ),
+            ),
+            tick_id=tick_id,
+            neuromodulatory_arousal=norepinephrine,
+        )
+
+
+@dataclass
 class FirstVersionDirectedRetrievalRequestBridge:
     """Owner: composition.
 

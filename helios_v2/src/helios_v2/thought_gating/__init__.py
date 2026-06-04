@@ -15,9 +15,10 @@ from .contracts import (
     ThoughtGatingError,
     ThoughtGatingLearnedParameterCategory,
 )
-from .engine import FirstVersionThoughtGatePath, ThoughtGatingEngine
+from .engine import ArousalAwareThoughtGatePath, FirstVersionThoughtGatePath, ThoughtGatingEngine
 
 __all__ = [
+    "ArousalAwareThoughtGatePath",
     "ContinuationPressureState",
     "EvaluateThoughtGateOp",
     "FirstVersionThoughtGatePath",

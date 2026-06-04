@@ -8,6 +8,7 @@ from helios_v2.thought_gating import (
     ContinuationPressureState,
     SelectedStimulusSummary,
     ThoughtGateResult,
+    ThoughtGateSignalSnapshot,
     ThoughtGatingConfig,
     ThoughtGatingError,
 )
@@ -120,3 +121,37 @@ def test_active_continuation_pressure_requires_origin_reason_and_expiry() -> Non
             expires_at_tick=12,
             carry_count=1,
         )
+
+
+# --- R37: optional neuromodulatory_arousal raw fact on the gate-signal snapshot ---
+
+
+def _build_signal_snapshot(neuromodulatory_arousal: float | None = None) -> ThoughtGateSignalSnapshot:
+    return ThoughtGateSignalSnapshot(
+        snapshot_id="gate-snapshot:001",
+        source_conscious_state_id="conscious-state:001",
+        workload_pressure=0.2,
+        global_activation_level=0.8,
+        temporal_signal=0.5,
+        drive_urgency_signal=0.6,
+        dmn_available=True,
+        neuromodulatory_arousal=neuromodulatory_arousal,
+    )
+
+
+def test_gate_signal_snapshot_neuromodulatory_arousal_defaults_to_none() -> None:
+    snapshot = _build_signal_snapshot()
+
+    assert snapshot.neuromodulatory_arousal is None
+
+
+def test_gate_signal_snapshot_accepts_in_range_neuromodulatory_arousal() -> None:
+    snapshot = _build_signal_snapshot(neuromodulatory_arousal=0.42)
+
+    assert snapshot.neuromodulatory_arousal == 0.42
+
+
+@pytest.mark.parametrize("bad_value", [-0.01, 1.01])
+def test_gate_signal_snapshot_rejects_out_of_range_neuromodulatory_arousal(bad_value: float) -> None:
+    with pytest.raises(ThoughtGatingError):
+        _build_signal_snapshot(neuromodulatory_arousal=bad_value)

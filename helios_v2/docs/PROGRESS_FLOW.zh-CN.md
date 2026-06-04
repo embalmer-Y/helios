@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R36（appraisal 推导的神经调质；P3 第二个认知 owner 去 shim）。测试基线：486 passed。版本：R36。
+> 最近同步：R37（神经调质门控耦合；P3 第三个认知 owner 去 shim）。测试基线：498 passed。版本：R37。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -43,7 +43,7 @@ flowchart TD
     S06[06 记忆情感与重放 - 基线/输入仍shim]:::base
     S07[07 工作空间竞争 - 基线/输入仍shim]:::base
     S08[08 可报告意识内容 - 相对完整]:::deep
-    S09[09 思考门控与延续压力 - 基线/输入仍shim]:::base
+    S09[09 思考门控与延续压力 - NE arousal已耦合(语义)/其余输入仍shim]:::base
     S10[10 定向检索 - 基线/输入仍shim]:::base
     S16P[16 具身prompt契约 - 基线]:::base
     S16O[16 外化表达草稿 - 基线/仅草稿]:::base
@@ -90,7 +90,7 @@ flowchart TD
 
 ## 4. 状态小结
 
-- 认知主链（02 到 17）端到端贯通；486 测试全绿、离线，外加真实 LLM 冒烟。
+- 认知主链（02 到 17）端到端贯通；498 测试全绿、离线，外加真实 LLM 冒烟。
 - 深度真实 owner：02 感觉接入、08 可报告意识、11 内部思考（真实 LLM 驱动的认知核心）、
   18 主动性（已接真实认知），加基础设施（01、21、22、23、24、25、33、34）。
 - P3 已开始（R35）：`03` 评估 owner 的 novelty 维在语义记忆装配下已是真实信号（novelty =
@@ -105,6 +105,14 @@ flowchart TD
   uncertainty、皮质醇来自 threat，其余通道回归 tonic 基线。推导确定性、有界（无 NN、不发散）、无状态
   （不携带上一 tick）。默认/recency-only/离线装配保持常量路径。延后：双时间尺度衰减（上一 tick 携带）、
   P5 系数学习、跨通道耦合、以及耦合进去 shim 的 05/09。
+- P3 第三刀去 shim（R37）：`09` 思考门控决策现在是 `04` 神经调质水平的首个真实消费者。语义记忆装配下
+  composition 把真实 `04` 去甲肾上腺素水平作为原始 `neuromodulatory_arousal` 事实转发进门控信号快照,
+  `09` owner 新增的 arousal-aware 门控 path 加一个有界非负项（`arousal_gain = 0.15`）,使升高的 arousal
+  可度量地提升 fire 倾向。映射归 `09`（composition 只转发原始事实）、单调、确定性、无状态,且结构上绝非
+  硬门控（0.15 < fire 阈值 0.55；加项非负故无法压制其他信号已支撑的 fire）。其余门控信号输入仍是首版常量；
+  当 `neuromodulatory_arousal=None` 时该 path 字节级等同首版,故默认/recency/离线装配不变。延后:
+  cortisol/inhibition 硬门控、`04`→`05` 体感耦合、以及其余门控输入去 shim（例如 `global_activation_level`
+  来自 `07`）。
 - 基线 owner（占大头）：03-07、09-10、12-17（13 的 planner 判断本身是真实的）——owner 真实、
   含契约与测试，但**输入仍是 composition 注入的确定性 shim**；默认装配里 13 的 channel 描述符/状态
   快照仍是 shim 注入,opt-in channel-bound 装配里则来自 `30` 的真实 channel-state 快照。

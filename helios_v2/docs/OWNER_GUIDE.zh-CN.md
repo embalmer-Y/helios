@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R36。测试基线：486 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R37。测试基线：498 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -74,7 +74,7 @@
 - 职责：独立建模的神经调质水平状态（DA/NE/5-HT/ACh/皮质醇/催产素/阿片 + 兴奋/抑制），含显式可学习参数类别。不拥有体感主观化或行动。
 - 在循环中的作用：应当偏置门控阈值、检索、外化强度的调制层。
 - 完成度细节：`36`（P3 第二刀去 shim）在语义记忆装配下把常量更新路径替换为 composition 提供的 `AppraisalDerivedNeuromodulatorUpdatePath`（遵循 owner 既有的 `NeuromodulatorUpdatePath` 协议；引擎与契约不变）。它先对 rapid-appraisal 批次按维度取最大聚合，再按 `clamp(tonic_baseline + sum(sensitivity_k * salience_k), legal_min, legal_max)` 推导每个通道：多巴胺由 reward（外加弱 novelty）驱动、去甲肾上腺素由 novelty 与 uncertainty 驱动、皮质醇由 threat 驱动，其余通道回归各自 tonic 基线。推导是确定性、有界（无 NN、不发散）且**无状态**（不携带上一 tick 水平）。默认、纯时近、离线装配保留常量路径。Caveat：当前只有 novelty 是真实 `03` 驱动（R35），喂给 `04` 的其余四维显著性仍是首版常量，且 `04` 的水平尚未耦合进去 shim 的 `05`/`09`。
-- 下一步：（1）双时间尺度 tonic/phasic 衰减，携带上一 tick 水平（依赖神经调质状态携带/检查点，属 `18`/`09`/`14` 状态检查点族）；（2）`P5` 用奖励预测误差（DA）与结果反馈学习有界 sensitivity 系数，保持方程形状；（3）跨通道耦合（已声明的 `cross_channel_coupling_strength` 类别），超越首版独立映射；（4）下游耦合，使真实 `04` 状态可度量地塑造去 shim 的 `05` 体感与 `09` 门控（FG-1/FG-2）；（5）给 `03` 其余四维去 shim，使所有神经调质驱动皆为真实。
+- 下一步：（1）双时间尺度 tonic/phasic 衰减，携带上一 tick 水平（依赖神经调质状态携带/检查点，属 `18`/`09`/`14` 状态检查点族）；（2）`P5` 用奖励预测误差（DA）与结果反馈学习有界 sensitivity 系数，保持方程形状；（3）跨通道耦合（已声明的 `cross_channel_coupling_strength` 类别），超越首版独立映射；（4）下游耦合——`37` 已部分落地（去甲肾上腺素现以有界 arousal 项耦合进 `09` 门控）；仍待：cortisol/inhibition 硬门控进 `09`、把真实 `04` 状态耦合进去 shim 的 `05` 体感、以及其余通道（多巴胺→检索/探索）进各自消费者（FG-1/FG-2）；（5）给 `03` 其余四维去 shim，使所有神经调质驱动皆为真实。
 
 ### 2.5 `05` 内感受体感层 — `helios_v2.feeling`
 - 完成度：`baseline_real`（输入仍 shim）。
@@ -101,10 +101,11 @@
 - 下一步：把承诺内容更强地绑到下游行为/诊断后果；深化而非去 shim。
 
 ### 2.9 `09` 思考门控与延续压力 — `helios_v2.thought_gating`
-- 完成度：`baseline_real`（输入仍 shim）。
+- 完成度：`baseline_real`（多数输入仍 shim；语义记忆装配下 arousal 输入已真实）。
 - 职责：思考窗口触发决策与多 tick 延续压力 carry 的唯一 owner；紧凑门控可观测。不坍缩进检索或思考生成。
 - 在循环中的作用：决定一个 tick 是否触发思考路径，并把延续压力向前 carry。
-- 下一步（P3 + wave_B）：用真实显著性/情感/延续信号驱动门控；深化多 tick carry。之后：跨重启持久化/恢复延续压力（P2 检查点切片）。
+- 完成度细节：`37`（P3 第三刀去 shim）使 `09` 门控决策成为 `04` 神经调质水平的首个真实消费者。owner 新增 `ArousalAwareThoughtGatePath` 与 `ThoughtGateSignalSnapshot` 上一个附加可选原始事实字段 `neuromodulatory_arousal`；语义记忆装配下 composition 把真实 `04` 去甲肾上腺素水平转发进来（仅原始事实——arousal→门控的映射归属本 owner,不在 composition）。该 path 向门控分数加一个非负有界项 `arousal_gain * arousal`（首版 `0.15`,属 `gate_policy` 类别）；单调、确定性、无状态,且结构上绝非硬门控（权重 `0.15 < fire 阈值 0.55`,且加项非负）。其余门控信号输入（`global_activation_level`、`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）仍为首版常量；当 `neuromodulatory_arousal` 为 `None` 时该 path 字节级复刻首版行为（默认/recency/离线不变）。
+- 下一步：（1）把其余门控信号输入从各自真实 owner 去 shim（例如 `global_activation_level` 来自去 shim 的 `07` workspace），各自一刀；（2）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道（它可以合法地压制 fire,有自己的安全语义）；（3）`P5` 在 `gate_policy` 类别下学习 `arousal_gain` 与门控阈值；（4）深化多 tick carry；（5）跨重启持久化/恢复延续压力（P2 检查点切片）。
 
 ### 2.10 `10` 定向检索进思考窗口 — `helios_v2.directed_retrieval`
 - 完成度：`baseline_real`（规划仍 shim；启用持久化/语义记忆时候选来源已真实）。

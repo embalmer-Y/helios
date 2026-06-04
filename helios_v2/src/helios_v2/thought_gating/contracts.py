@@ -91,6 +91,7 @@ class ThoughtGateSignalSnapshot:
     dmn_available: bool
     selected_stimuli: tuple[SelectedStimulusSummary, ...] = ()
     tick_id: int | None = None
+    neuromodulatory_arousal: float | None = None
 
     def __post_init__(self) -> None:
         if not self.snapshot_id:
@@ -109,6 +110,11 @@ class ThoughtGateSignalSnapshot:
             "ThoughtGateSignalSnapshot.drive_urgency_signal",
             self.drive_urgency_signal,
         )
+        if self.neuromodulatory_arousal is not None:
+            _validate_unit_interval(
+                "ThoughtGateSignalSnapshot.neuromodulatory_arousal",
+                self.neuromodulatory_arousal,
+            )
 
 
 @dataclass(frozen=True)

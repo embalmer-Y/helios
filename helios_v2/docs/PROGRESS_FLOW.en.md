@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R36 (appraisal-derived neuromodulation; P3 second cognitive-owner de-shim). Test baseline: 486 passed. HEAD-era: R36.
+> Last synced: R37 (neuromodulatory gating coupling; P3 third cognitive-owner de-shim). Test baseline: 498 passed. HEAD-era: R37.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -49,7 +49,7 @@ flowchart TD
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
     S07[07 Workspace Competition - baseline/shim in]:::base
     S08[08 Reportable Conscious Content - rel. complete]:::deep
-    S09[09 Thought Gating - baseline/shim in]:::base
+    S09[09 Thought Gating - NE arousal coupled (semantic)/other inputs shim]:::base
     S10[10 Directed Retrieval - baseline/shim in]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O[16 Outward Expression Draft - baseline/draft-only]:::base
@@ -96,7 +96,7 @@ flowchart TD
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 486 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 498 tests pass, network-free, plus real
   LLM smoke.
 - Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
@@ -120,6 +120,18 @@ flowchart TD
   carry). Default, recency-only, and offline assemblies keep the constant path. Deferred:
   dual-timescale decay (prior-tick carry), P5 coefficient learning, cross-channel coupling, and
   downstream coupling into a de-shimmed 05/09.
+- P3 third de-shim (R37): the `09` thought-gating decision is now the first real consumer of an
+  `04` neuromodulator level. Under the semantic-memory assembly composition forwards the real
+  `04` norepinephrine level into the gate-signal snapshot as a raw `neuromodulatory_arousal`
+  fact, and the `09` owner's new arousal-aware gate path adds a bounded non-negative term
+  (`arousal_gain = 0.15`) so elevated arousal measurably raises fire propensity. The mapping is
+  owned by `09` (composition forwards the raw fact only), monotonic, deterministic, stateless,
+  and structurally never a hard gate (0.15 < the 0.55 fire threshold; additive non-negative so
+  it cannot suppress an otherwise-justified fire). The other gate-signal inputs stay
+  first-version constants; with `neuromodulatory_arousal=None` the path is byte-for-byte the
+  first-version path, so default/recency/offline assemblies are unchanged. Deferred:
+  cortisol/inhibition hard gate, 04->05 feeling coupling, and de-shimming the other gate inputs
+  (e.g. global_activation_level from 07).
 - Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
   is real) - owners are real with contracts and tests, but their inputs are still
   composition-injected deterministic shim. In the default assembly 13's channel

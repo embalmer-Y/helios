@@ -225,3 +225,157 @@ def test_engine_rejects_mismatched_signal_snapshot_provenance() -> None:
             ContinuationPressureState.inactive(),
             tick_id=9,
         )
+
+
+# --- R37: neuromodulatory gating coupling (ArousalAwareThoughtGatePath) ---
+
+
+def _signal_with_arousal(arousal: float | None) -> ThoughtGateSignalSnapshot:
+    return ThoughtGateSignalSnapshot(
+        snapshot_id="gate-snapshot:001",
+        source_conscious_state_id="conscious-state:001",
+        workload_pressure=0.2,
+        global_activation_level=0.8,
+        temporal_signal=0.5,
+        drive_urgency_signal=0.6,
+        dmn_available=True,
+        selected_stimuli=(
+            SelectedStimulusSummary(
+                stimulus_id="stimulus:001",
+                source_kind="external_text",
+                source_channel_id="cli",
+                stimulus_intensity=0.8,
+                novelty_signal=0.6,
+                sensitization_signal=0.1,
+            ),
+        ),
+        tick_id=9,
+        neuromodulatory_arousal=arousal,
+    )
+
+
+def _gate(path, signal_snapshot, *, conscious_state=None, prior=None):
+    engine = ThoughtGatingEngine(config=_build_config(), gate_path=path)
+    return engine.evaluate_gate(
+        conscious_state or _build_conscious_state(),
+        signal_snapshot,
+        prior or ContinuationPressureState.inactive(),
+        tick_id=9,
+    )
+
+
+def test_arousal_aware_path_with_none_matches_first_version() -> None:
+    from helios_v2.thought_gating import ArousalAwareThoughtGatePath
+
+    signal_snapshot = _signal_with_arousal(None)
+    first_result, first_continuation = _gate(FirstVersionThoughtGatePath(), signal_snapshot)
+    arousal_result, arousal_continuation = _gate(ArousalAwareThoughtGatePath(), signal_snapshot)
+
+    assert arousal_result.gate_score == first_result.gate_score
+    assert arousal_result.decision == first_result.decision
+    assert arousal_result.contributing_signals == first_result.contributing_signals
+    assert "neuromodulatory_arousal" not in arousal_result.contributing_signals
+    assert arousal_continuation == first_continuation
+
+
+def test_arousal_raises_gate_score_monotonically() -> None:
+    from helios_v2.thought_gating import ArousalAwareThoughtGatePath
+
+    path = ArousalAwareThoughtGatePath()
+    low, _ = _gate(path, _signal_with_arousal(0.1))
+    high, _ = _gate(path, _signal_with_arousal(0.9))
+
+    assert high.gate_score >= low.gate_score
+    assert high.gate_score > low.gate_score  # headroom exists for this fixture
+    assert high.contributing_signals["neuromodulatory_arousal"] == 0.9
+    assert low.contributing_signals["neuromodulatory_arousal"] == 0.1
+
+
+def test_arousal_contribution_is_deterministic() -> None:
+    from helios_v2.thought_gating import ArousalAwareThoughtGatePath
+
+    path = ArousalAwareThoughtGatePath()
+    first, _ = _gate(path, _signal_with_arousal(0.7))
+    second, _ = _gate(path, _signal_with_arousal(0.7))
+
+    assert first.gate_score == second.gate_score
+    assert first.contributing_signals == second.contributing_signals
+
+
+def test_arousal_alone_cannot_force_a_fire() -> None:
+    from helios_v2.thought_gating import ArousalAwareThoughtGatePath
+
+    # All non-arousal gate signals are at/below their no-fire floors, but a stimulus is present
+    # so the gate is not short-circuited by the "no stimulus and no continuation" rule. The
+    # arousal term (weight 0.15) is below the 0.55 fire threshold, so maximal arousal alone
+    # cannot reach a fire.
+    bare_signal = ThoughtGateSignalSnapshot(
+        snapshot_id="gate-snapshot:bare",
+        source_conscious_state_id="conscious-state:001",
+        workload_pressure=0.0,
+        global_activation_level=0.0,
+        temporal_signal=0.0,
+        drive_urgency_signal=0.0,
+        dmn_available=False,
+        selected_stimuli=(
+            SelectedStimulusSummary(
+                stimulus_id="stimulus:bare",
+                source_kind="external_text",
+                source_channel_id="cli",
+                stimulus_intensity=0.0,
+            ),
+        ),
+        tick_id=9,
+        neuromodulatory_arousal=1.0,
+    )
+    result, _ = _gate(ArousalAwareThoughtGatePath(), bare_signal)
+
+    assert result.gate_score < 0.55
+    assert result.decision == "no_fire"
+    assert result.no_fire_reason == "gate_score_too_low"
+
+
+def test_arousal_cannot_suppress_a_fire_other_signals_justify() -> None:
+    from helios_v2.thought_gating import ArousalAwareThoughtGatePath
+
+    # Other signals already justify a fire; the lowest arousal must not flip it to no_fire,
+    # because the arousal term is additive and non-negative (it can only raise the score).
+    strong_signal = ThoughtGateSignalSnapshot(
+        snapshot_id="gate-snapshot:strong",
+        source_conscious_state_id="conscious-state:001",
+        workload_pressure=0.1,
+        global_activation_level=1.0,
+        temporal_signal=0.5,
+        drive_urgency_signal=0.6,
+        dmn_available=True,
+        selected_stimuli=(
+            SelectedStimulusSummary(
+                stimulus_id="stimulus:strong",
+                source_kind="external_text",
+                source_channel_id="cli",
+                stimulus_intensity=1.0,
+            ),
+        ),
+        tick_id=9,
+        neuromodulatory_arousal=0.0,
+    )
+    # Sanity: the same signal fires even on the first-version path (no arousal term at all).
+    first_version_result, _ = _gate(FirstVersionThoughtGatePath(), strong_signal)
+    assert first_version_result.decision == "fire"
+
+    result, _ = _gate(ArousalAwareThoughtGatePath(), strong_signal)
+
+    assert result.decision == "fire"
+
+
+def test_arousal_aware_path_is_stateless_across_calls() -> None:
+    from helios_v2.thought_gating import ArousalAwareThoughtGatePath
+
+    path = ArousalAwareThoughtGatePath()
+    first, _ = _gate(path, _signal_with_arousal(0.3))
+    # A higher-arousal call in between must not perturb a later identical low-arousal call.
+    _gate(path, _signal_with_arousal(0.95))
+    third, _ = _gate(path, _signal_with_arousal(0.3))
+
+    assert first.gate_score == third.gate_score
+    assert first.contributing_signals == third.contributing_signals
