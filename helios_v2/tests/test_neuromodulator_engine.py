@@ -205,3 +205,123 @@ def test_engine_fails_explicitly_when_required_update_capability_is_unavailable(
 
     with pytest.raises(NeuromodulatorError, match="update capability is unavailable"):
         engine.update_state(_build_batch(), tick_id=5)
+
+
+# --- Requirement 36: appraisal-derived neuromodulation ---
+
+
+from helios_v2.composition.bridges import AppraisalDerivedNeuromodulatorUpdatePath
+
+
+def _batch_with(*, threat=0.0, reward=0.0, novelty=0.0, social=0.0, uncertainty=0.0) -> RapidAppraisalBatch:
+    return RapidAppraisalBatch(
+        batch_id="rapid-appraisal-batch:derived",
+        appraisals=(
+            RapidAppraisal(
+                appraisal_id="rapid-appraisal:stimulus:cli:001",
+                stimulus_id="stimulus:cli:001",
+                source_name="cli",
+                salience=RapidSalienceVector(
+                    threat=threat,
+                    reward=reward,
+                    novelty=novelty,
+                    social=social,
+                    uncertainty=uncertainty,
+                    aggregate=max(threat, reward, novelty, social, uncertainty),
+                ),
+                provenance_signal_id="001",
+            ),
+        ),
+    )
+
+
+def _derived_levels(batch: RapidAppraisalBatch) -> NeuromodulatorLevels:
+    path = AppraisalDerivedNeuromodulatorUpdatePath()
+    return path.update_levels(batch, _build_config(), tick_id=None)
+
+
+def test_derived_high_novelty_raises_norepinephrine_above_low_novelty() -> None:
+    high = _derived_levels(_batch_with(novelty=0.9))
+    low = _derived_levels(_batch_with(novelty=0.1))
+    assert high.norepinephrine > low.norepinephrine
+
+
+def test_derived_high_reward_raises_dopamine_above_low_reward() -> None:
+    high = _derived_levels(_batch_with(reward=0.9))
+    low = _derived_levels(_batch_with(reward=0.1))
+    assert high.dopamine > low.dopamine
+
+
+def test_derived_high_threat_raises_cortisol_above_low_threat() -> None:
+    high = _derived_levels(_batch_with(threat=0.9))
+    low = _derived_levels(_batch_with(threat=0.1))
+    assert high.cortisol > low.cortisol
+
+
+def test_derived_empty_batch_yields_tonic_baseline() -> None:
+    empty = RapidAppraisalBatch(batch_id="rapid-appraisal-batch:empty", appraisals=())
+    levels = _derived_levels(empty)
+    baseline = _build_config().tonic_baseline
+    # All channels equal the clamped tonic baseline (0.3) when there is no salience.
+    assert levels.dopamine == pytest.approx(baseline.dopamine)
+    assert levels.norepinephrine == pytest.approx(baseline.norepinephrine)
+    assert levels.cortisol == pytest.approx(baseline.cortisol)
+
+
+def test_derived_levels_stay_within_legal_range() -> None:
+    # Maximal salience on every dimension must not push any channel outside [0, 1].
+    levels = _derived_levels(_batch_with(threat=1.0, reward=1.0, novelty=1.0, social=1.0, uncertainty=1.0))
+    for name in (
+        "dopamine",
+        "norepinephrine",
+        "serotonin",
+        "acetylcholine",
+        "cortisol",
+        "oxytocin",
+        "opioid_tone",
+        "excitation",
+        "inhibition",
+    ):
+        value = getattr(levels, name)
+        assert 0.0 <= value <= 1.0
+
+
+def test_derived_is_deterministic_for_identical_batch() -> None:
+    batch = _batch_with(novelty=0.7, reward=0.4)
+    assert _derived_levels(batch) == _derived_levels(batch)
+
+
+def test_derived_non_driven_channels_equal_clamped_tonic_baseline() -> None:
+    levels = _derived_levels(_batch_with(threat=1.0, reward=1.0, novelty=1.0, uncertainty=1.0))
+    baseline = _build_config().tonic_baseline
+    # Channels with no first-version driver regress to the tonic baseline regardless of salience.
+    assert levels.serotonin == pytest.approx(baseline.serotonin)
+    assert levels.acetylcholine == pytest.approx(baseline.acetylcholine)
+    assert levels.oxytocin == pytest.approx(baseline.oxytocin)
+    assert levels.opioid_tone == pytest.approx(baseline.opioid_tone)
+
+
+def test_derived_path_aggregates_batch_by_per_dimension_max() -> None:
+    # Two appraisals; novelty max is 0.8. NE must reflect the max, not the min or mean.
+    batch = RapidAppraisalBatch(
+        batch_id="rapid-appraisal-batch:multi",
+        appraisals=(
+            RapidAppraisal(
+                appraisal_id="a1",
+                stimulus_id="s1",
+                source_name="cli",
+                salience=RapidSalienceVector(threat=0.0, reward=0.0, novelty=0.2, social=0.0, uncertainty=0.0, aggregate=0.2),
+                provenance_signal_id="001",
+            ),
+            RapidAppraisal(
+                appraisal_id="a2",
+                stimulus_id="s2",
+                source_name="cli",
+                salience=RapidSalienceVector(threat=0.0, reward=0.0, novelty=0.8, social=0.0, uncertainty=0.0, aggregate=0.8),
+                provenance_signal_id="002",
+            ),
+        ),
+    )
+    multi = _derived_levels(batch)
+    single_max = _derived_levels(_batch_with(novelty=0.8))
+    assert multi.norepinephrine == pytest.approx(single_max.norepinephrine)

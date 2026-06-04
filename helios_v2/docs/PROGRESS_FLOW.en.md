@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R35 (memory-grounded novelty appraisal; P3 first cognitive-owner de-shim). Test baseline: 476 passed. HEAD-era: R35.
+> Last synced: R36 (appraisal-derived neuromodulation; P3 second cognitive-owner de-shim). Test baseline: 486 passed. HEAD-era: R36.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -44,7 +44,7 @@ flowchart TD
     BODY([Internal body signal - interoceptive source]):::infra
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03[03 Rapid Salience Appraisal - novelty real (semantic)/4 dims shim]:::base
-    S04[04 Neuromodulator System - baseline/shim in]:::base
+    S04[04 Neuromodulator System - appraisal-derived (semantic)/stateless]:::base
     S05[05 Interoceptive Feeling - baseline/shim in]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
     S07[07 Workspace Competition - baseline/shim in]:::base
@@ -96,7 +96,7 @@ flowchart TD
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 476 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 486 tests pass, network-free, plus real
   LLM smoke.
 - Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
@@ -109,6 +109,17 @@ flowchart TD
   other four `03` dimensions stay shim (later P3 slices); default and recency-only assemblies
   keep constant novelty 0.6. First-version comparison is cross-register (stimulus vs 15 result
   summaries), noted and not over-claimed.
+- P3 second de-shim (R36): the `04` neuromodulator owner is now the first real downstream
+  consumer of `03` salience. Under the semantic-memory assembly the constant update path is
+  replaced by an appraisal-derived one (composition-provided, conforming to the owner's
+  `NeuromodulatorUpdatePath` protocol; the engine and contracts are unchanged): the batch is
+  aggregated by per-dimension max, then each channel is `clamp(tonic_baseline + sum(sensitivity
+  * salience), legal_min, legal_max)` - dopamine from reward (and weak novelty), norepinephrine
+  from novelty and uncertainty, cortisol from threat, others regressing to tonic baseline. The
+  derivation is deterministic, bounded (no NN, no divergence), and stateless (no prior-tick
+  carry). Default, recency-only, and offline assemblies keep the constant path. Deferred:
+  dual-timescale decay (prior-tick carry), P5 coefficient learning, cross-channel coupling, and
+  downstream coupling into a de-shimmed 05/09.
 - Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
   is real) - owners are real with contracts and tests, but their inputs are still
   composition-injected deterministic shim. In the default assembly 13's channel

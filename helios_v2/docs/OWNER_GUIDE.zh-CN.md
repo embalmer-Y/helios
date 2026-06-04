@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R34。测试基线：465 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R36。测试基线：486 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -70,10 +70,11 @@
   5. **下游耦合。** novelty（及后续其余维）变真后，喂给去 shim 的 `04` 神经调质动力学模型与 `09` 门控，使真实显著性可度量地塑造门控阈值（FG-1/FG-2）；之后在 `04`/`05` 产出真实信号后做情感加权或时近加权的 novelty。
 
 ### 2.4 `04` 神经调质系统 — `helios_v2.neuromodulation`
-- 完成度：`baseline_real`（输入仍 shim）。
+- 完成度：`baseline_real`（语义记忆装配下水平已由 appraisal 推导；无状态）。
 - 职责：独立建模的神经调质水平状态（DA/NE/5-HT/ACh/皮质醇/催产素/阿片 + 兴奋/抑制），含显式可学习参数类别。不拥有体感主观化或行动。
 - 在循环中的作用：应当偏置门控阈值、检索、外化强度的调制层。
-- 下一步（P3）：把常量更新路径换成真实确定性动力学模型（衰减/allostasis 方程），其有界参数在 `P5` 变可学习（DA = 奖励预测误差锚点）。强化真实下游杠杆，而非充当有界装饰。
+- 完成度细节：`36`（P3 第二刀去 shim）在语义记忆装配下把常量更新路径替换为 composition 提供的 `AppraisalDerivedNeuromodulatorUpdatePath`（遵循 owner 既有的 `NeuromodulatorUpdatePath` 协议；引擎与契约不变）。它先对 rapid-appraisal 批次按维度取最大聚合，再按 `clamp(tonic_baseline + sum(sensitivity_k * salience_k), legal_min, legal_max)` 推导每个通道：多巴胺由 reward（外加弱 novelty）驱动、去甲肾上腺素由 novelty 与 uncertainty 驱动、皮质醇由 threat 驱动，其余通道回归各自 tonic 基线。推导是确定性、有界（无 NN、不发散）且**无状态**（不携带上一 tick 水平）。默认、纯时近、离线装配保留常量路径。Caveat：当前只有 novelty 是真实 `03` 驱动（R35），喂给 `04` 的其余四维显著性仍是首版常量，且 `04` 的水平尚未耦合进去 shim 的 `05`/`09`。
+- 下一步：（1）双时间尺度 tonic/phasic 衰减，携带上一 tick 水平（依赖神经调质状态携带/检查点，属 `18`/`09`/`14` 状态检查点族）；（2）`P5` 用奖励预测误差（DA）与结果反馈学习有界 sensitivity 系数，保持方程形状；（3）跨通道耦合（已声明的 `cross_channel_coupling_strength` 类别），超越首版独立映射；（4）下游耦合，使真实 `04` 状态可度量地塑造去 shim 的 `05` 体感与 `09` 门控（FG-1/FG-2）；（5）给 `03` 其余四维去 shim，使所有神经调质驱动皆为真实。
 
 ### 2.5 `05` 内感受体感层 — `helios_v2.feeling`
 - 完成度：`baseline_real`（输入仍 shim）。

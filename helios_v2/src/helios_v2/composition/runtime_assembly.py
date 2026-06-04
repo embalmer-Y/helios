@@ -130,6 +130,7 @@ from helios_v2.thought_gating import (
 from helios_v2.workspace import WorkspaceCompetitionConfig, WorkspaceCompetitionEngine
 
 from .bridges import (
+    AppraisalDerivedNeuromodulatorUpdatePath,
     ChannelBackedPlannerBridgeRequestBridge,
     ChannelSubsystemStateProvider,
     ExperienceRecordBridge,
@@ -805,11 +806,16 @@ def assemble_runtime(
                 baseline_provider=resolved_provider,
             )
 
-    # `03` novelty de-shim (R35): when semantic memory is enabled (store + embedding gateway
-    # both present), novelty becomes a real memory-grounded signal. The appraisal owner keeps
-    # the novelty salience semantic; composition only injects the retrieval-fact source. When
-    # semantic memory is off, the deterministic first-version estimator is unchanged.
-    if experience_store is not None and embedding_gateway is not None:
+    # `03` novelty de-shim (R35) and `04` neuromodulation de-shim (R36) share one trigger:
+    # the semantic-memory assembly (store + embedding gateway both present), where `03`
+    # appraisal produces real signals. Deriving neuromodulation from appraisal only matters
+    # once appraisal itself is real, so both de-shims activate together.
+    semantic_memory_enabled = experience_store is not None and embedding_gateway is not None
+
+    # `03` novelty de-shim (R35): when enabled, novelty becomes a real memory-grounded signal.
+    # The appraisal owner keeps the novelty salience semantic; composition only injects the
+    # retrieval-fact source. When off, the deterministic first-version estimator is unchanged.
+    if semantic_memory_enabled:
         dimension_estimator = MemoryGroundedDimensionEstimator(
             similarity_source=MemoryGroundedSimilaritySource(
                 embed_text=_embed_text,
@@ -822,9 +828,16 @@ def assemble_runtime(
         dimension_estimator=dimension_estimator,
         aggregate_estimator=FirstVersionAggregateEstimator(),
     )
+    # `04` neuromodulation de-shim (R36): when enabled, levels are derived deterministically
+    # from the real appraisal batch around the tonic baseline (stateless; no prior-tick carry).
+    # When off, the constant first-version update path is unchanged.
     neuromodulator = NeuromodulatorEngine(
         config=resolved_config.neuromodulator,
-        update_path=FirstVersionNeuromodulatorUpdatePath(),
+        update_path=(
+            AppraisalDerivedNeuromodulatorUpdatePath()
+            if semantic_memory_enabled
+            else FirstVersionNeuromodulatorUpdatePath()
+        ),
         active_channel_reporter=FirstVersionActiveChannelReporter(),
     )
     feeling = InteroceptiveFeelingEngine(

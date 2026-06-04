@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R34. Test baseline: 465 passed (network-free).
+> Status: living owner reference. Last synced: R36. Test baseline: 486 passed (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -75,10 +75,11 @@ two transport stages for 21).
   5. **Downstream coupling.** Feed novelty (and later the other real dimensions) into a de-shimmed `04` neuromodulator dynamics model and `09` gating so real salience measurably shapes gating thresholds (FG-1/FG-2), and later affect-weight or recency-weight novelty once `04`/`05` produce real signals.
 
 ### 2.4 `04` Neuromodulator System — `helios_v2.neuromodulation`
-- Completeness: `baseline_real` (inputs shim).
+- Completeness: `baseline_real` (levels now appraisal-derived under the semantic-memory assembly; stateless).
 - Responsibility: independently modeled neuromodulator level state (DA/NE/5-HT/ACh/cortisol/oxytocin/opioid + excitation/inhibition) with explicit learned-parameter categories. Does not own feeling subjectivation or action.
 - Role in the loop: the modulation layer that should bias gating thresholds, retrieval, and externalization intensity.
-- Next step (P3): replace the constant update path with a real deterministic dynamics model (decay/allostasis equations) whose bounded parameters become learnable in `P5` (DA = reward-prediction-error anchor). Strengthen real downstream leverage rather than acting as bounded decoration.
+- Completeness detail: with `36` (P3 second de-shim) the constant update path is replaced under the semantic-memory assembly by the composition-provided `AppraisalDerivedNeuromodulatorUpdatePath` (conforms to the owner's `NeuromodulatorUpdatePath` protocol; the engine and contracts are unchanged). It aggregates the rapid-appraisal batch by per-dimension max, then derives each channel as `clamp(tonic_baseline + sum(sensitivity_k * salience_k), legal_min, legal_max)`: dopamine driven by reward (and weakly by novelty), norepinephrine by novelty and uncertainty, cortisol by threat, other channels regressing to their tonic baseline. The derivation is deterministic, bounded (no NN, no divergence), and **stateless** (no prior-tick levels carried). The default, recency-only, and offline assemblies keep the constant path. Caveat: only novelty is a real `03` driver today (R35); the other four salience dimensions feeding `04` are still first-version constants, and `04`'s levels are not yet coupled into a de-shimmed `05`/`09`.
+- Next step: (1) dual-timescale tonic/phasic decay carrying prior-tick levels (depends on a neuromodulator-state carry/checkpoint, the `18`/`09`/`14` state-checkpoint family); (2) `P5` learning of the bounded sensitivity coefficients via reward-prediction-error (DA) and outcome feedback, keeping the equation shape; (3) cross-channel coupling (the declared `cross_channel_coupling_strength` category) beyond the first-version independent mapping; (4) downstream coupling so the real `04` state measurably shapes a de-shimmed `05` feeling and `09` gating (FG-1/FG-2); (5) de-shim the remaining four `03` dimensions so all neuromodulator drivers are real.
 
 ### 2.5 `05` Interoceptive Feeling Layer — `helios_v2.feeling`
 - Completeness: `baseline_real` (inputs shim).

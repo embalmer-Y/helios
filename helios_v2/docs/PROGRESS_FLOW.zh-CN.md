@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R35（基于记忆的 novelty 评估；P3 首个认知 owner 去 shim）。测试基线：476 passed。版本：R35。
+> 最近同步：R36（appraisal 推导的神经调质；P3 第二个认知 owner 去 shim）。测试基线：486 passed。版本：R36。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -38,7 +38,7 @@ flowchart TD
     BODY([内部身体信号 - 内感受来源]):::infra
     S02[02 感觉接入 - 相对完整]:::deep
     S03[03 快速显著性评估 - novelty已真实(语义)/其余4维仍shim]:::base
-    S04[04 神经调质系统 - 基线/输入仍shim]:::base
+    S04[04 神经调质系统 - 已由appraisal推导(语义)/无状态]:::base
     S05[05 内感受体感层 - 基线/输入仍shim]:::base
     S06[06 记忆情感与重放 - 基线/输入仍shim]:::base
     S07[07 工作空间竞争 - 基线/输入仍shim]:::base
@@ -90,7 +90,7 @@ flowchart TD
 
 ## 4. 状态小结
 
-- 认知主链（02 到 17）端到端贯通；476 测试全绿、离线，外加真实 LLM 冒烟。
+- 认知主链（02 到 17）端到端贯通；486 测试全绿、离线，外加真实 LLM 冒烟。
 - 深度真实 owner：02 感觉接入、08 可报告意识、11 内部思考（真实 LLM 驱动的认知核心）、
   18 主动性（已接真实认知），加基础设施（01、21、22、23、24、25、33、34）。
 - P3 已开始（R35）：`03` 评估 owner 的 novelty 维在语义记忆装配下已是真实信号（novelty =
@@ -98,6 +98,13 @@ flowchart TD
   首个认知消费者。`03` 拥有 novelty 显著性映射；composition 注入 owner-neutral 的相似度事实源，
   故 `03` 既不 import embedding 也不 import persistence owner。其余四维仍 shim（后续 P3 切片）；
   默认/recency-only 装配保持常量 novelty 0.6。首版为跨语域比较（刺激 vs 15 结果摘要），已标注、不过度宣称。
+- P3 第二刀去 shim（R36）：`04` 神经调质 owner 现在是 `03` 显著性的首个真实下游消费者。语义记忆装配下
+  常量更新路径被换成 appraisal 推导的路径（composition 提供，遵循 owner 的 `NeuromodulatorUpdatePath`
+  协议；引擎与契约不变）：批次按维度取最大聚合，再对每通道 `clamp(tonic_baseline + sum(sensitivity *
+  salience), legal_min, legal_max)`——多巴胺来自 reward（及弱 novelty）、去甲肾上腺素来自 novelty 与
+  uncertainty、皮质醇来自 threat，其余通道回归 tonic 基线。推导确定性、有界（无 NN、不发散）、无状态
+  （不携带上一 tick）。默认/recency-only/离线装配保持常量路径。延后：双时间尺度衰减（上一 tick 携带）、
+  P5 系数学习、跨通道耦合、以及耦合进去 shim 的 05/09。
 - 基线 owner（占大头）：03-07、09-10、12-17（13 的 planner 判断本身是真实的）——owner 真实、
   含契约与测试，但**输入仍是 composition 注入的确定性 shim**；默认装配里 13 的 channel 描述符/状态
   快照仍是 shim 注入,opt-in channel-bound 装配里则来自 `30` 的真实 channel-state 快照。

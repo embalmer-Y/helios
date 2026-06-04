@@ -1157,3 +1157,40 @@ def test_semantic_novelty_embedding_failure_is_hard_stop() -> None:
 
     with pytest.raises(EmbeddingError):
         handle.tick()
+
+
+# --- Requirement 36: appraisal-derived neuromodulation ---
+
+
+def _neuromodulator_levels(result):
+    return result.stage_results["neuromodulator_system"].state.levels
+
+
+def test_default_assembly_keeps_constant_neuromodulator_levels() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    levels = _neuromodulator_levels(result)
+    # The first-version constant update path (norepinephrine=0.4) is unchanged.
+    assert levels.norepinephrine == pytest.approx(0.4)
+    assert levels.dopamine == pytest.approx(0.6)
+
+
+def test_semantic_assembly_derives_neuromodulator_levels_from_appraisal() -> None:
+    # In the semantic-memory assembly, 04 levels are derived from the real appraisal batch.
+    # Tick 1 is a cold store -> novelty 1.0 -> elevated norepinephrine, which differs from the
+    # constant-path 0.4 and is driven by the real novelty signal.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    first = handle.tick()
+    first_ne = _neuromodulator_levels(first).norepinephrine
+    # Cold-store max novelty drives NE above the tonic baseline (0.3) and above the constant 0.4.
+    assert first_ne > 0.4
+
+    # A later tick whose stimulus embeds close to the now-stored experience yields lower
+    # novelty, hence lower norepinephrine -- a real salience-driven difference.
+    second = handle.tick()
+    second_ne = _neuromodulator_levels(second).norepinephrine
+    assert second_ne < first_ne
