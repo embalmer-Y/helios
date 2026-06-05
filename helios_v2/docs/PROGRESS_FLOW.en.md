@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R38 (neuromodulator-derived feeling; P3 fourth cognitive-owner de-shim). Test baseline: 509 passed. HEAD-era: R38.
+> Last synced: R39 (memory-grounded uncertainty + transport-grounded social appraisal; P3 fifth cognitive-owner de-shim). Test baseline: 523 passed. HEAD-era: R39.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -43,7 +43,7 @@ flowchart TD
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
     BODY([Internal body signal - interoceptive source]):::infra
     S02[02 Sensory Ingress - relatively complete]:::deep
-    S03[03 Rapid Salience Appraisal - novelty real (semantic)/4 dims shim]:::base
+    S03[03 Rapid Salience Appraisal - novelty/uncertainty/social real (semantic)/threat+reward shim]:::base
     S04[04 Neuromodulator System - appraisal-derived (semantic)/stateless]:::base
     S05[05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
@@ -96,7 +96,7 @@ flowchart TD
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 509 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 523 tests pass, network-free, plus real
   LLM smoke.
 - Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
@@ -145,6 +145,18 @@ flowchart TD
   (weak). Deterministic, bounded (clamped to legal range), stateless (no prior-tick feeling).
   Default/recency/offline keep the constant feeling. Deferred: dual-timescale feeling persistence,
   real interoceptive-signal integration, and feeding the real feeling into 06/behavior (FG-2).
+- P3 fifth de-shim (R39): two more `03` dimensions are real, so three of five (novelty, uncertainty,
+  social) now ground in real facts. `uncertainty` reads retrieval ambiguity over the 34/33 substrate
+  (top-two cosine margin: one dominant match -> low; several near-equal matches -> high; a distinct
+  read from novelty, so familiar-but-ambiguous gives low novelty + high uncertainty). `social` reads
+  transport provenance (external interactive-agent channel like the CLI operator -> high; internal
+  body/background -> 0). Both mappings live in the owner-owned `GroundedDimensionEstimator`;
+  composition supplies only raw facts (03 imports neither embedding, persistence, nor channel).
+  Honest grounding: uncertainty is B_functional_inspiration (a proxy, not calibrated confidence);
+  social is a pure transport fact bundled under the semantic opt-in only for one switch. The fast
+  path stays deterministic, network-free, LLM-free. threat/reward stay constant pending R40
+  (network-free prototype-embedding, weaker C_engineering_hypothesis grounding). Default/recency/
+  offline keep constant uncertainty 0.3 / social 0.0; novelty unchanged.
 - Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
   is real) - owners are real with contracts and tests, but their inputs are still
   composition-injected deterministic shim. In the default assembly 13's channel

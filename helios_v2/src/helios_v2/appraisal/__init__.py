@@ -21,13 +21,17 @@ from .contracts import (
     RapidSalienceVector,
 )
 from .engine import (
+    GroundedDimensionEstimator,
     MemoryGroundedDimensionEstimator,
     MemorySimilaritySource,
     RapidSalienceAppraisalEngine,
+    RetrievalAmbiguitySource,
+    SocialContextSource,
 )
 
 __all__ = [
     "AssessStimulusBatchOp",
+    "GroundedDimensionEstimator",
     "MemoryGroundedDimensionEstimator",
     "MemorySimilaritySource",
     "PublishRapidAppraisalBatchOp",
@@ -37,4 +41,6 @@ __all__ = [
     "RapidAppraisalError",
     "RapidSalienceAppraisalAPI",
     "RapidSalienceVector",
+    "RetrievalAmbiguitySource",
+    "SocialContextSource",
 ]

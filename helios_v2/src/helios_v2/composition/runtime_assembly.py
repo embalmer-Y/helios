@@ -117,7 +117,7 @@ from helios_v2.runtime import (
     WorkspaceCompetitionRuntimeStage,
     WorkspaceConsciousContentMaterialBridge,
 )
-from helios_v2.appraisal import MemoryGroundedDimensionEstimator, RapidSalienceAppraisalEngine
+from helios_v2.appraisal import GroundedDimensionEstimator, RapidSalienceAppraisalEngine
 from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
 from helios_v2.embedding import EmbeddingGatewayAPI, EmbeddingRequest
 from helios_v2.persistence import (
@@ -165,9 +165,11 @@ from .bridges import (
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
     MemoryGroundedSimilaritySource,
+    MemoryGroundedRetrievalAmbiguitySource,
     NeuromodulatorAwareThoughtGateSignalBridge,
     SubsystemBackedSensorySource,
     TimelineViewHolder,
+    TransportGroundedSocialContextSource,
 )
 from .dependencies import (
     ChannelReadinessDependencyProvider,
@@ -812,21 +814,28 @@ def assemble_runtime(
                 baseline_provider=resolved_provider,
             )
 
-    # `03` novelty de-shim (R35) and `04` neuromodulation de-shim (R36) share one trigger:
+    # `03` dimension de-shims share one trigger with the `04` neuromodulation de-shim (R36):
     # the semantic-memory assembly (store + embedding gateway both present), where `03`
     # appraisal produces real signals. Deriving neuromodulation from appraisal only matters
-    # once appraisal itself is real, so both de-shims activate together.
+    # once appraisal itself is real, so the de-shims activate together.
     semantic_memory_enabled = experience_store is not None and embedding_gateway is not None
 
-    # `03` novelty de-shim (R35): when enabled, novelty becomes a real memory-grounded signal.
-    # The appraisal owner keeps the novelty salience semantic; composition only injects the
-    # retrieval-fact source. When off, the deterministic first-version estimator is unchanged.
+    # `03` dimension de-shims (R35 novelty, R39 uncertainty + social): when enabled, novelty,
+    # uncertainty, and social become real signals. The appraisal owner keeps every salience
+    # mapping; composition only injects the raw retrieval/transport fact sources. `threat`/`reward`
+    # remain first-version constants until their own slice (R40, prototype-embedding). When off,
+    # the deterministic first-version estimator is unchanged.
     if semantic_memory_enabled:
-        dimension_estimator = MemoryGroundedDimensionEstimator(
+        dimension_estimator = GroundedDimensionEstimator(
             similarity_source=MemoryGroundedSimilaritySource(
                 embed_text=_embed_text,
                 store=experience_store,
-            )
+            ),
+            ambiguity_source=MemoryGroundedRetrievalAmbiguitySource(
+                embed_text=_embed_text,
+                store=experience_store,
+            ),
+            social_source=TransportGroundedSocialContextSource(),
         )
     else:
         dimension_estimator = FirstVersionDimensionEstimator()

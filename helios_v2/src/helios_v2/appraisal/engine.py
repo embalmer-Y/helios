@@ -204,6 +204,180 @@ class MemoryGroundedDimensionEstimator(RapidDimensionEstimator):
         )
 
 
+@runtime_checkable
+class RetrievalAmbiguitySource(Protocol):
+    """Owner: rapid salience appraisal.
+
+    Purpose:
+        Provide a memory-retrieval fact for uncertainty appraisal: the top-N cosine
+        similarities (descending) of one stimulus to stored experience. This is a raw retrieval
+        fact, not a salience judgment; the uncertainty salience mapping stays owned by this owner.
+
+    Notes:
+        Injected into the owner. The concrete source (composition glue) reaches the embedding and
+        persistence owners; this owner never imports them. Returning an empty tuple means there is
+        no comparable memory (empty stimulus content or a cold/all-non-embedded store).
+    """
+
+    def top_similarities_for(self, stimulus: Stimulus) -> tuple[float, ...]:
+        """Owner: rapid salience appraisal (injected source).
+
+        Purpose:
+            Return the top-N cosine similarities of the stimulus to stored experience, descending.
+
+        Inputs:
+            One normalized `Stimulus`.
+
+        Returns:
+            A tuple of cosine similarities in `[-1.0, 1.0]` ordered descending (length 0..N), or an
+            empty tuple when there is no comparable memory.
+
+        Raises:
+            May propagate an embedding or store failure as a hard stop. It must not fabricate a
+            similarity to mask a failure.
+
+        Notes:
+            This returns a raw retrieval fact only. The ambiguity-to-uncertainty mapping is owned
+            by the appraisal owner, not by this source.
+        """
+
+
+@runtime_checkable
+class SocialContextSource(Protocol):
+    """Owner: rapid salience appraisal.
+
+    Purpose:
+        Provide a raw transport fact for social appraisal: a bounded social-presence value in
+        `[0,1]` indicating whether one stimulus originates from an external interactive-agent
+        channel (another subject). This is a transport fact, not a salience judgment; the social
+        salience mapping stays owned by this owner.
+
+    Notes:
+        Injected into the owner. The concrete source (composition glue) owns the channel-to-presence
+        classification because it wired the channels; this owner never hardcodes channel names and
+        never imports the channel owner.
+    """
+
+    def social_presence_for(self, stimulus: Stimulus) -> float:
+        """Owner: rapid salience appraisal (injected source).
+
+        Purpose:
+            Return the social-presence transport fact for one stimulus.
+
+        Inputs:
+            One normalized `Stimulus`.
+
+        Returns:
+            A bounded presence value in `[0.0, 1.0]` (external interactive-agent channel -> high;
+            internal body/background -> low/zero).
+
+        Raises:
+            RapidAppraisalError-compatible failures may propagate; it must not fabricate presence.
+
+        Notes:
+            This returns a raw transport fact only. The presence-to-social mapping is owned by the
+            appraisal owner, not by this source.
+        """
+
+
+def _normalize_cosine(value: float) -> float:
+    """Map a cosine similarity in [-1, 1] to [0, 1]."""
+
+    return min(1.0, max(0.0, (value + 1.0) / 2.0))
+
+
+@dataclass
+class GroundedDimensionEstimator(RapidDimensionEstimator):
+    """Owner: rapid salience appraisal.
+
+    Purpose:
+        Compute the `novelty`, `uncertainty`, and `social` dimensions from injected raw facts
+        while keeping `threat` and `reward` at their first-version constant values. This is the
+        P3 de-shim of the uncertainty and social dimensions (novelty was de-shimmed in R35); the
+        threat/reward de-shim is a separate later slice (prototype-embedding method).
+
+    Failure semantics:
+        Propagates any failure raised by an injected source as a hard stop. It never falls back to
+        a constant dimension when grounding is active.
+
+    Notes:
+        All three salience mappings live here, in the owner, not in composition glue:
+        - novelty = clamp(1 - max_similarity, 0, 1); `None` (no comparable memory) -> 1.0 (R35
+          semantics, unchanged).
+        - uncertainty = retrieval ambiguity: with no comparable memory (empty top similarities)
+          -> 1.0; otherwise, with `n1`/`n2` the top two cosines normalized to [0,1]
+          (`n2 = 0.0` if only one hit), uncertainty = clamp(1 - (n1 - n2), 0, 1). A single
+          dominant match -> low uncertainty; several near-equal matches -> high uncertainty. This
+          is a distinct read of the retrieval result from novelty (which reads only the top match).
+          Grounding is `B_functional_inspiration`: retrieval ambiguity is a functional proxy for
+          categorization uncertainty, not a calibrated confidence.
+        - social = clamp(social_floor + social_gain * social_presence, 0, 1) from the raw transport
+          presence fact. Social is a transport fact and does not require the embedding/store
+          substrate; it is bundled under the same opt-in here only to keep one rollout switch.
+        `threat` and `reward` stay first-version constants until their own slice. The aggregate
+        judgment stays owned by the separate aggregate estimator. Stateless: no prior-tick read.
+    """
+
+    similarity_source: MemorySimilaritySource
+    ambiguity_source: RetrievalAmbiguitySource
+    social_source: SocialContextSource
+    threat: float = 0.2
+    reward: float = 0.1
+    social_floor: float = 0.0
+    social_gain: float = 1.0
+
+    def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
+        """Owner: rapid salience appraisal.
+
+        Purpose:
+            Estimate the coarse dimensions for one stimulus, with novelty/uncertainty derived from
+            injected memory-retrieval facts, social derived from the injected transport fact, and
+            threat/reward held at their first-version constants.
+
+        Inputs:
+            One normalized `Stimulus`.
+
+        Returns:
+            A `RapidDimensionEstimate` whose `novelty`, `uncertainty`, and `social` reflect real
+            facts.
+
+        Raises:
+            Propagates an injected-source failure as a hard stop.
+
+        Notes:
+            Deterministic given the same stimulus, stored vectors, and transport provenance. Reads
+            no prior-tick state.
+        """
+
+        similarity = self.similarity_source.max_similarity_for(stimulus)
+        if similarity is None:
+            novelty = 1.0
+        else:
+            novelty = round(min(1.0, max(0.0, 1.0 - similarity)), 4)
+
+        top_similarities = self.ambiguity_source.top_similarities_for(stimulus)
+        if not top_similarities:
+            uncertainty = 1.0
+        else:
+            n1 = _normalize_cosine(top_similarities[0])
+            n2 = _normalize_cosine(top_similarities[1]) if len(top_similarities) > 1 else 0.0
+            uncertainty = round(min(1.0, max(0.0, 1.0 - (n1 - n2))), 4)
+
+        social_presence = self.social_source.social_presence_for(stimulus)
+        social = round(
+            min(1.0, max(0.0, self.social_floor + self.social_gain * social_presence)),
+            4,
+        )
+
+        return RapidDimensionEstimate(
+            threat=self.threat,
+            reward=self.reward,
+            novelty=novelty,
+            social=social,
+            uncertainty=uncertainty,
+        )
+
+
 def _validate_stimulus_batch(batch: StimulusBatch) -> None:
     if not batch.batch_id:
         raise RapidAppraisalError("StimulusBatch must declare a non-empty batch_id")

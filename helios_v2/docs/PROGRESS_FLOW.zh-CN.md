@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R38（神经调质推导的体感；P3 第四个认知 owner 去 shim）。测试基线：509 passed。版本：R38。
+> 最近同步：R39（基于记忆的 uncertainty + 传输 grounded 的 social 评估；P3 第五个认知 owner 去 shim）。测试基线：523 passed。版本：R39。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -37,7 +37,7 @@ flowchart TD
     EXT([外界刺激: CLI已绑定 / QQ / 语音 后续]):::base
     BODY([内部身体信号 - 内感受来源]):::infra
     S02[02 感觉接入 - 相对完整]:::deep
-    S03[03 快速显著性评估 - novelty已真实(语义)/其余4维仍shim]:::base
+    S03[03 快速显著性评估 - novelty/uncertainty/social已真实(语义)/threat+reward仍shim]:::base
     S04[04 神经调质系统 - 已由appraisal推导(语义)/无状态]:::base
     S05[05 内感受体感层 - 神经调质推导(语义)/无状态]:::base
     S06[06 记忆情感与重放 - 基线/输入仍shim]:::base
@@ -90,7 +90,7 @@ flowchart TD
 
 ## 4. 状态小结
 
-- 认知主链（02 到 17）端到端贯通；509 测试全绿、离线，外加真实 LLM 冒烟。
+- 认知主链（02 到 17）端到端贯通；523 测试全绿、离线，外加真实 LLM 冒烟。
 - 深度真实 owner：02 感觉接入、08 可报告意识、11 内部思考（真实 LLM 驱动的认知核心）、
   18 主动性（已接真实认知），加基础设施（01、21、22、23、24、25、33、34）。
 - P3 已开始（R35）：`03` 评估 owner 的 novelty 维在语义记忆装配下已是真实信号（novelty =
@@ -113,6 +113,22 @@ flowchart TD
   当 `neuromodulatory_arousal=None` 时该 path 字节级等同首版,故默认/recency/离线装配不变。延后:
   cortisol/inhibition 硬门控、`04`→`05` 体感耦合、以及其余门控输入去 shim（例如 `global_activation_level`
   来自 `07`）。
+- P3 第四刀去 shim（R38）：`05` 内感受体感向量现在是 `04` 神经调质状态的真实有界函数,使 `04` 的第二个
+  下游消费者也接真（连同 R37,`09` 门控与 `05` 体感都消费真实 `04` 状态）。语义记忆装配下常量构造 shim 被
+  换成 owner 私有的 `NeuromodulatorDerivedFeelingConstructionPath`（channel→维度映射归 `05` 自己——把神经调质
+  状态主观化成体感正是该 owner 的天职；引擎/契约不变,无新 bridge,无需重排阶段）。每维 `clamp(baseline +
+  sum(coupling * level))`:valence +DA/opioid/5-HT −cortisol、arousal +NE/excitation、tension +cortisol/NE、
+  comfort +opioid/oxytocin/5-HT −cortisol、pain_like +cortisol −opioid、social_safety +oxytocin/5-HT −cortisol、
+  fatigue +inhibition −excitation（弱）。确定性、有界（clamp 守 legal range）、无状态（不读上一 tick 体感）。
+  默认/recency/离线保持常量体感。延后:双时间尺度体感持久化、真实内感受信号整合、把真实体感喂给 06/行为（FG-2）。
+- P3 第五刀去 shim（R39）：`03` 又有两维变真,五维中三维（novelty、uncertainty、social）已 grounded 于真实事实。
+  `uncertainty` 读检索歧义度（top-2 余弦差距:单一强匹配→低;多个近似匹配→高;与 novelty 不同读法,故熟悉但
+  歧义→低 novelty + 高 uncertainty）。`social` 读传输出处（外部交互主体 channel 如 CLI operator→高;内部
+  body/background→0）。两个映射都在 owner 持有的 `GroundedDimensionEstimator` 里;composition 只供原始事实
+  （`03` 既不 import embedding/persistence 也不 import channel）。诚实标注:uncertainty 是 B_functional_inspiration
+  （代理,非校准置信度）;social 是纯传输事实,挂语义 opt-in 仅为单一开关。快路保持确定性、网络无关、无 LLM。
+  threat/reward 仍常量,待 R40（网络无关原型 embedding,较弱 C_engineering_hypothesis grounding）。默认/recency/
+  离线保持常量 uncertainty 0.3 / social 0.0;novelty 不变。
 - 基线 owner（占大头）：03-07、09-10、12-17（13 的 planner 判断本身是真实的）——owner 真实、
   含契约与测试，但**输入仍是 composition 注入的确定性 shim**；默认装配里 13 的 channel 描述符/状态
   快照仍是 shim 注入,opt-in channel-bound 装配里则来自 `30` 的真实 channel-state 快照。

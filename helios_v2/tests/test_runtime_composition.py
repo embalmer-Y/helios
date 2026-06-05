@@ -1286,3 +1286,138 @@ def test_semantic_assembly_derives_feeling_from_neuromodulator_state() -> None:
     second_levels = _neuromodulator_levels(second)
     assert second_levels.norepinephrine < first_levels.norepinephrine
     assert second_feeling.arousal < first_feeling.arousal
+
+
+# --- Requirement 39: memory-grounded uncertainty + transport-grounded social ---
+
+
+def _appraisal_uncertainty(result) -> float:
+    return result.stage_results["rapid_salience_appraisal"].batch.appraisals[0].salience.uncertainty
+
+
+def _appraisal_social(result) -> float:
+    return result.stage_results["rapid_salience_appraisal"].batch.appraisals[0].salience.social
+
+
+def test_default_assembly_keeps_constant_uncertainty_and_social() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    # No semantic memory -> the first-version constant estimator.
+    assert _appraisal_uncertainty(result) == pytest.approx(0.3)
+    assert _appraisal_social(result) == pytest.approx(0.0)
+
+
+def test_semantic_assembly_produces_real_uncertainty_and_social() -> None:
+    # With store + embedding, 03 uncertainty and social are de-shimmed.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    first = handle.tick()
+    # Cold store -> no comparable memory -> max uncertainty 1.0 (not the 0.3 shim).
+    assert _appraisal_uncertainty(first) == pytest.approx(1.0)
+    # The default tick stimulus arrives on the external interactive-agent CLI channel ->
+    # social presence 1.0 -> social 1.0 (not the 0.0 shim).
+    assert _appraisal_social(first) == pytest.approx(1.0)
+
+
+def test_semantic_uncertainty_is_higher_for_ambiguous_than_unique_match() -> None:
+    # Seed the store with two near-duplicate experiences and one unrelated one. A query close to
+    # the duplicated cluster matches several stored vectors about equally (ambiguous -> high
+    # uncertainty); a query close to the unique unrelated experience matches one dominantly
+    # (unique -> lower uncertainty).
+    from helios_v2.persistence import PersistedExperienceRecord
+
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    gateway = _embedding_gateway()
+
+    def embed(text: str):
+        return gateway.embed(
+            _EmbeddingRequest(
+                request_id=f"seed:{abs(hash(text)) % 10000}",
+                target_profile="experience-embedding",
+                input_text=text,
+            )
+        ).vector
+
+    def _record(record_id: str, summary: str) -> "PersistedExperienceRecord":
+        return PersistedExperienceRecord(
+            record_id=record_id,
+            tick_id=1,
+            continuity_kind="external_action",
+            outcome_class="world_changed",
+            source_outcome_kind="planner_bridge",
+            source_outcome_id=f"planner-bridge-result:{record_id}",
+            writeback_status="written",
+            summary=summary,
+            requested_effect_summary="reply",
+            applied_effect_summary="replied",
+            reason_trace=("seeded",),
+            linkage={"source_request_id": f"planner-bridge-result:{record_id}"},
+            embedding=embed(summary),
+        )
+
+    store.append_records(
+        (
+            _record("dup-a", "the project deadline is friday afternoon"),
+            _record("dup-b", "the project deadline is friday afternoon"),
+            _record("unique", "the cat slept on the warm windowsill"),
+        )
+    )
+
+    from helios_v2.composition.bridges import MemoryGroundedRetrievalAmbiguitySource
+    from helios_v2.appraisal import GroundedDimensionEstimator
+    from helios_v2.composition.bridges import (
+        MemoryGroundedSimilaritySource,
+        TransportGroundedSocialContextSource,
+    )
+
+    estimator = GroundedDimensionEstimator(
+        similarity_source=MemoryGroundedSimilaritySource(embed_text=embed, store=store),
+        ambiguity_source=MemoryGroundedRetrievalAmbiguitySource(embed_text=embed, store=store),
+        social_source=TransportGroundedSocialContextSource(),
+    )
+
+    def _stim(content: str) -> Stimulus:
+        return Stimulus(
+            stimulus_id=f"s:{abs(hash(content)) % 10000}",
+            source_name="cli",
+            modality="text",
+            content=content,
+            channel="cli",
+            metadata=None,
+            provenance_signal_id="p1",
+        )
+
+    ambiguous = estimator.estimate_dimensions(_stim("the project deadline is friday afternoon")).uncertainty
+    unique = estimator.estimate_dimensions(_stim("the cat slept on the warm windowsill")).uncertainty
+
+    assert ambiguous > unique
+
+
+def test_semantic_social_is_zero_for_internal_body_stimulus() -> None:
+    # A body/interoceptive stimulus is not from an external agent -> social presence 0.
+    from helios_v2.composition.bridges import TransportGroundedSocialContextSource
+
+    source = TransportGroundedSocialContextSource()
+    body = Stimulus(
+        stimulus_id="s:body",
+        source_name="body",
+        modality="interoceptive",
+        content="breathing_shallow",
+        channel="body",
+        metadata=None,
+        provenance_signal_id="b1",
+    )
+    cli = Stimulus(
+        stimulus_id="s:cli",
+        source_name="cli",
+        modality="text",
+        content="hello",
+        channel="cli",
+        metadata=None,
+        provenance_signal_id="c1",
+    )
+    assert source.social_presence_for(body) == pytest.approx(0.0)
+    assert source.social_presence_for(cli) == pytest.approx(1.0)

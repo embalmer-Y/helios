@@ -32,6 +32,8 @@ from helios_v2.appraisal.engine import (
     MemorySimilaritySource,
     RapidDimensionEstimate,
     RapidDimensionEstimator,
+    RetrievalAmbiguitySource,
+    SocialContextSource,
 )
 from helios_v2.action_externalization import ThoughtExternalizationRequest
 from helios_v2.autonomy import ProactiveDriveRequest
@@ -283,6 +285,84 @@ class MemoryGroundedSimilaritySource(MemorySimilaritySource):
         if not result.hits:
             return None
         return result.hits[0].similarity
+
+
+@dataclass
+class MemoryGroundedRetrievalAmbiguitySource(RetrievalAmbiguitySource):
+    """Owner: composition (semantic-memory assembly only).
+
+    Purpose:
+        Provide the `03` appraisal owner with a memory-retrieval fact for uncertainty: the top-N
+        cosine similarities of a stimulus to stored experience, descending. It embeds the stimulus
+        content through the injected embedding callable (the same callable and embedding profile
+        the store was written with) and runs the store's bounded similarity search.
+
+    Failure semantics:
+        An embedding failure or store read failure propagates as a hard stop; this source never
+        fabricates similarities. Empty stimulus content and a cold/all-non-embedded store both
+        return an empty tuple (no comparable memory), which the appraisal owner maps to maximum
+        uncertainty.
+
+    Notes:
+        Owner-neutral glue. It returns raw cosine facts only; it never applies the ambiguity ->
+        uncertainty mapping — that semantic is owned by `03`. It reaches the embedding owner only
+        through the injected `embed_text` callable and the persistence owner only through the
+        `ExperienceStore` public API. `top_n` defaults to 2 (the margin between the top two hits
+        is what the uncertainty mapping reads).
+    """
+
+    embed_text: Callable[[str], tuple[float, ...]]
+    store: ExperienceStore
+    top_n: int = 2
+    max_scan: int = 256
+
+    def top_similarities_for(self, stimulus: Stimulus) -> tuple[float, ...]:
+        """Owner: composition. Return the stimulus's top-N cosine similarities to stored memory.
+
+        Empty content yields an empty tuple without calling the embedding capability; a cold or
+        all-non-embedded store yields an empty tuple after a search with no hits. Otherwise returns
+        the top-N hit cosines descending. Embedding/store failures propagate as a hard stop.
+        """
+
+        text = stimulus.content.strip()
+        if not text:
+            return ()
+        query_vector = self.embed_text(text)
+        result = self.store.search_similar(query_vector, limit=self.top_n, max_scan=self.max_scan)
+        return tuple(hit.similarity for hit in result.hits)
+
+
+@dataclass
+class TransportGroundedSocialContextSource(SocialContextSource):
+    """Owner: composition.
+
+    Purpose:
+        Provide the `03` appraisal owner with a raw transport fact for social appraisal: whether a
+        stimulus originates from an external interactive-agent channel (another subject). The
+        composition root owns this classification because it wired the channels.
+
+    Notes:
+        Owner-neutral glue. It returns a bounded presence value in `[0,1]`; it never applies the
+        presence -> social salience mapping — that semantic is owned by `03`. Classification is a
+        transport fact: a stimulus whose modality is internal (body/interoceptive/background) has
+        presence 0.0; otherwise a stimulus whose channel or source_name is a configured external
+        interactive-agent channel has presence `external_presence` (default 1.0), else 0.0. `03`
+        never hardcodes channel names; this source owns the channel knowledge.
+    """
+
+    external_agent_channels: frozenset[str] = frozenset({"cli"})
+    internal_modalities: frozenset[str] = frozenset({"body", "interoceptive", "background"})
+    external_presence: float = 1.0
+
+    def social_presence_for(self, stimulus: Stimulus) -> float:
+        """Owner: composition. Return the social-presence transport fact for one stimulus."""
+
+        if stimulus.modality in self.internal_modalities:
+            return 0.0
+        channel = stimulus.channel or ""
+        if channel in self.external_agent_channels or stimulus.source_name in self.external_agent_channels:
+            return self.external_presence
+        return 0.0
 
 
 @dataclass
