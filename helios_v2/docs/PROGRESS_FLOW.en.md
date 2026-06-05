@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R39 (memory-grounded uncertainty + transport-grounded social appraisal; P3 fifth cognitive-owner de-shim). Test baseline: 523 passed. HEAD-era: R39.
+> Last synced: R40 (prototype-grounded threat + reward appraisal; P3 sixth de-shim, all five 03 dimensions real). Test baseline: 527 passed. HEAD-era: R40.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -43,7 +43,7 @@ flowchart TD
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
     BODY([Internal body signal - interoceptive source]):::infra
     S02[02 Sensory Ingress - relatively complete]:::deep
-    S03["03 Rapid Salience Appraisal - novelty/uncertainty/social real (semantic)/threat+reward shim"]:::base
+    S03["03 Rapid Salience Appraisal - all 5 dims real (semantic): novelty/uncertainty/social/threat/reward"]:::base
     S04["04 Neuromodulator System - appraisal-derived (semantic)/stateless"]:::base
     S05["05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless"]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
@@ -96,7 +96,7 @@ flowchart TD
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 523 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 527 tests pass, network-free, plus real
   LLM smoke.
 - Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
@@ -157,6 +157,20 @@ flowchart TD
   path stays deterministic, network-free, LLM-free. threat/reward stay constant pending R40
   (network-free prototype-embedding, weaker C_engineering_hypothesis grounding). Default/recency/
   offline keep constant uncertainty 0.3 / social 0.0; novelty unchanged.
+- P3 sixth de-shim (R40): the last two `03` dimensions are real, so all five (novelty, uncertainty,
+  social, threat, reward) now ground in real facts and the `04` reward->dopamine and
+  threat->cortisol channels are driven by real signals on every channel (03 -> 04 -> 05/09 is now
+  real end to end). threat/reward are scored by the stimulus's max cosine to owner-owned prototype
+  phrase sets (THREAT_PROTOTYPES/REWARD_PROTOTYPES), embedded through the 34 substrate; 03 maps
+  dimension = clamp(gain * max(0, max_cosine)) (positive correlation, proximity to a semantic
+  anchor; None/empty -> 0). The prototype sets + mapping live in 03; composition's
+  EmbeddingPrototypeSimilaritySource embeds the owner-provided phrases once and returns raw cosine
+  (03 imports neither embedding nor persistence). No cold-start (prototypes embedded at assembly).
+  HONEST GROUNDING C_engineering_hypothesis: the prototype set is a hand-authored, English-centric
+  PLACEHOLDER anchor, not a calibrated affective model; it must not be over-claimed and is the
+  surface a later P5 / 06 memory-affect / slow-LLM-re-appraisal slice replaces. Default/recency/
+  offline keep constant threat 0.2 / reward 0.1; novelty/uncertainty/social unchanged. With all five
+  dimensions real, the constant aggregate-salience estimator is the next sensible de-shim.
 - Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
   is real) - owners are real with contracts and tests, but their inputs are still
   composition-injected deterministic shim. In the default assembly 13's channel

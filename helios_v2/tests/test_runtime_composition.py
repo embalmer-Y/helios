@@ -1369,6 +1369,7 @@ def test_semantic_uncertainty_is_higher_for_ambiguous_than_unique_match() -> Non
     from helios_v2.composition.bridges import MemoryGroundedRetrievalAmbiguitySource
     from helios_v2.appraisal import GroundedDimensionEstimator
     from helios_v2.composition.bridges import (
+        EmbeddingPrototypeSimilaritySource,
         MemoryGroundedSimilaritySource,
         TransportGroundedSocialContextSource,
     )
@@ -1377,6 +1378,7 @@ def test_semantic_uncertainty_is_higher_for_ambiguous_than_unique_match() -> Non
         similarity_source=MemoryGroundedSimilaritySource(embed_text=embed, store=store),
         ambiguity_source=MemoryGroundedRetrievalAmbiguitySource(embed_text=embed, store=store),
         social_source=TransportGroundedSocialContextSource(),
+        prototype_source=EmbeddingPrototypeSimilaritySource(embed_text=embed),
     )
 
     def _stim(content: str) -> Stimulus:
@@ -1421,3 +1423,48 @@ def test_semantic_social_is_zero_for_internal_body_stimulus() -> None:
     )
     assert source.social_presence_for(body) == pytest.approx(0.0)
     assert source.social_presence_for(cli) == pytest.approx(1.0)
+
+
+# --- Requirement 40: prototype-grounded threat + reward ---
+
+
+def _appraisal_threat(result) -> float:
+    return result.stage_results["rapid_salience_appraisal"].batch.appraisals[0].salience.threat
+
+
+def _appraisal_reward(result) -> float:
+    return result.stage_results["rapid_salience_appraisal"].batch.appraisals[0].salience.reward
+
+
+def test_default_assembly_keeps_constant_threat_and_reward() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    # No semantic memory -> the first-version constant estimator.
+    assert _appraisal_threat(result) == pytest.approx(0.2)
+    assert _appraisal_reward(result) == pytest.approx(0.1)
+
+
+def test_semantic_assembly_derives_threat_and_reward_from_prototypes() -> None:
+    # With store + embedding, 03 threat/reward are prototype-derived (not the 0.2/0.1 constants),
+    # within range, and flow through 04 unchanged. The deterministic fake embedding has no
+    # semantics, so we assert wiring truth + range + downstream flow, not "scary text scores high".
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    result = handle.tick()
+    threat = _appraisal_threat(result)
+    reward = _appraisal_reward(result)
+
+    # Prototype-derived values are real numbers in range, computed from the fake-embedding cosine
+    # of the stimulus to the owner's prototype sets; they are not the constant shim values.
+    assert 0.0 <= threat <= 1.0
+    assert 0.0 <= reward <= 1.0
+    assert not (threat == pytest.approx(0.2) and reward == pytest.approx(0.1))
+
+    # They flow through the unchanged 04 derivation: the same appraisal batch the 03 stage
+    # produced is the one 04 consumed (cortisol from threat, dopamine from reward).
+    appraisal_batch_id = result.stage_results["rapid_salience_appraisal"].batch.batch_id
+    neuromod_source = result.stage_results["neuromodulator_system"].state.source_appraisal_batch_id
+    assert neuromod_source == appraisal_batch_id

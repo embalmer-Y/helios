@@ -286,15 +286,65 @@ def _normalize_cosine(value: float) -> float:
     return min(1.0, max(0.0, (value + 1.0) / 2.0))
 
 
+# First-version threat/reward prototype phrase sets owned by the `03` appraisal owner (R40).
+# They encode the owner's first-version definition of "what counts as threat / reward" for the
+# prototype-embedding scorer. They are an explicit, hand-authored, English-centric PLACEHOLDER
+# anchor with `C_engineering_hypothesis` grounding -- NOT a calibrated affective model. They are
+# the surface a later slice replaces (P5 learning of the prototypes/gains, a `06` memory-affect
+# grounding scoring threat/reward from the outcomes of similar past experience, or a slow
+# `11`-LLM second-stage re-appraisal). They must not be over-claimed as real threat/reward
+# understanding.
+THREAT_PROTOTYPES: tuple[str, ...] = (
+    "a dangerous threat",
+    "I am under attack",
+    "this will cause harm",
+    "an urgent emergency",
+    "something is broken or failing",
+)
+REWARD_PROTOTYPES: tuple[str, ...] = (
+    "a valuable reward",
+    "this is helpful and good",
+    "a successful achievement",
+    "a positive useful outcome",
+    "something beneficial and worthwhile",
+)
+
+
+@runtime_checkable
+class PrototypeSimilaritySource(Protocol):
+    """Owner: rapid salience appraisal.
+
+    Purpose:
+        Provide a mechanical similarity fact for threat/reward appraisal: the maximum cosine
+        similarity of one stimulus to any phrase in an owner-provided prototype set. This is a
+        mechanical fact, not a salience judgment; the prototype set and the cosine-to-salience
+        mapping stay owned by this owner.
+
+    Notes:
+        Injected into the owner. The concrete source (composition glue) embeds the owner-provided
+        phrases and the stimulus through the embedding callable and computes cosine; this owner
+        never imports the embedding owner. The source does not know that one set means "threat"
+        and another "reward" -- the owner passes the sets and owns their meaning. Returning `None`
+        means there is no comparable input (empty stimulus content).
+    """
+
+    def max_similarity_to(self, stimulus: Stimulus, prototypes: tuple[str, ...]) -> float | None:
+        """Return the max cosine similarity of the stimulus to any prototype phrase, or `None`.
+
+        `None` indicates no comparable input (empty stimulus content). The raw cosine fact carries
+        no salience semantic; the prototype-to-salience mapping is owned by the appraisal owner.
+        """
+
+
 @dataclass
 class GroundedDimensionEstimator(RapidDimensionEstimator):
     """Owner: rapid salience appraisal.
 
     Purpose:
-        Compute the `novelty`, `uncertainty`, and `social` dimensions from injected raw facts
-        while keeping `threat` and `reward` at their first-version constant values. This is the
-        P3 de-shim of the uncertainty and social dimensions (novelty was de-shimmed in R35); the
-        threat/reward de-shim is a separate later slice (prototype-embedding method).
+        Compute all five `03` dimensions from injected raw facts. This is the P3 cognitive-owner
+        de-shim of the appraisal dimensions: novelty (R35), uncertainty + social (R39), and
+        threat + reward (R40). With R40 all five dimensions are real under the semantic-memory
+        assembly; none remain first-version constants here.
 
     Failure semantics:
         Propagates any failure raised by an injected source as a hard stop. It never falls back to
@@ -314,15 +364,27 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         - social = clamp(social_floor + social_gain * social_presence, 0, 1) from the raw transport
           presence fact. Social is a transport fact and does not require the embedding/store
           substrate; it is bundled under the same opt-in here only to keep one rollout switch.
-        `threat` and `reward` stay first-version constants until their own slice. The aggregate
-        judgment stays owned by the separate aggregate estimator. Stateless: no prior-tick read.
+        - threat / reward = clamp(gain * max(0.0, max_cosine_to_prototypes), 0, 1) from the
+          prototype-similarity fact (R40). Positive correlation: a stimulus more similar to the
+          owner's threat/reward prototype phrases scores higher; only positive similarity
+          contributes; `None` (empty content) -> 0.0. The prototype phrase sets
+          (`THREAT_PROTOTYPES`/`REWARD_PROTOTYPES`) and this mapping are owned here. Grounding is
+          `C_engineering_hypothesis`: the prototype set is a hand-authored, English-centric
+          PLACEHOLDER anchor, not a calibrated affective model; it is the surface a later P5 /
+          `06` memory-affect / `11`-LLM-re-appraisal slice replaces. It must not be over-claimed.
+        The aggregate judgment stays owned by the separate aggregate estimator. Stateless: no
+        prior-tick read. No cold-start for threat/reward (prototypes are fixed, embedded once by
+        the source).
     """
 
     similarity_source: MemorySimilaritySource
     ambiguity_source: RetrievalAmbiguitySource
     social_source: SocialContextSource
-    threat: float = 0.2
-    reward: float = 0.1
+    prototype_source: PrototypeSimilaritySource
+    threat_prototypes: tuple[str, ...] = THREAT_PROTOTYPES
+    reward_prototypes: tuple[str, ...] = REWARD_PROTOTYPES
+    threat_gain: float = 1.0
+    reward_gain: float = 1.0
     social_floor: float = 0.0
     social_gain: float = 1.0
 
@@ -331,8 +393,8 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
 
         Purpose:
             Estimate the coarse dimensions for one stimulus, with novelty/uncertainty derived from
-            injected memory-retrieval facts, social derived from the injected transport fact, and
-            threat/reward held at their first-version constants.
+            injected memory-retrieval facts, social from the injected transport fact, and
+            threat/reward from the injected prototype-similarity fact.
 
         Inputs:
             One normalized `Stimulus`.
@@ -369,9 +431,22 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
             4,
         )
 
+        threat_fact = self.prototype_source.max_similarity_to(stimulus, self.threat_prototypes)
+        threat = (
+            0.0
+            if threat_fact is None
+            else round(min(1.0, max(0.0, self.threat_gain * max(0.0, threat_fact))), 4)
+        )
+        reward_fact = self.prototype_source.max_similarity_to(stimulus, self.reward_prototypes)
+        reward = (
+            0.0
+            if reward_fact is None
+            else round(min(1.0, max(0.0, self.reward_gain * max(0.0, reward_fact))), 4)
+        )
+
         return RapidDimensionEstimate(
-            threat=self.threat,
-            reward=self.reward,
+            threat=threat,
+            reward=reward,
             novelty=novelty,
             social=social,
             uncertainty=uncertainty,

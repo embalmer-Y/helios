@@ -30,6 +30,7 @@ from typing import Callable
 from helios_v2.appraisal.engine import (
     AggregateJudgmentEstimator,
     MemorySimilaritySource,
+    PrototypeSimilaritySource,
     RapidDimensionEstimate,
     RapidDimensionEstimator,
     RetrievalAmbiguitySource,
@@ -72,7 +73,7 @@ from helios_v2.neuromodulation import (
     NeuromodulatorUpdatePath,
 )
 from helios_v2.observability import ExecutionTimelineView
-from helios_v2.persistence import ExperienceStore, PersistedExperienceRecord
+from helios_v2.persistence import ExperienceStore, PersistedExperienceRecord, cosine_similarity
 from helios_v2.outward_expression_externalization import OutwardExpressionExternalizationRequest
 from helios_v2.planner_bridge import PlannerBridgeRequest
 from helios_v2.prompt_contract import EmbodiedPromptRequest
@@ -363,6 +364,58 @@ class TransportGroundedSocialContextSource(SocialContextSource):
         if channel in self.external_agent_channels or stimulus.source_name in self.external_agent_channels:
             return self.external_presence
         return 0.0
+
+
+@dataclass
+class EmbeddingPrototypeSimilaritySource(PrototypeSimilaritySource):
+    """Owner: composition (semantic-memory assembly only).
+
+    Purpose:
+        Provide the `03` appraisal owner with a mechanical similarity fact for threat/reward: the
+        maximum cosine similarity of a stimulus to any phrase in an owner-provided prototype set.
+        It embeds the stimulus content and each prototype phrase through the injected embedding
+        callable (the same callable/profile the store uses) and computes cosine.
+
+    Failure semantics:
+        An embedding failure propagates as a hard stop; this source never fabricates a similarity.
+        Empty stimulus content returns `None` (no comparable input), which the appraisal owner
+        maps to threat/reward `0.0`.
+
+    Notes:
+        Owner-neutral glue. It returns a raw cosine fact only; it never applies the
+        prototype -> salience mapping and does not know which set means threat vs reward -- the
+        `03` owner passes the sets and owns their meaning (the `C_engineering_hypothesis`
+        prototype anchor). It reaches the embedding owner only through the injected `embed_text`
+        callable (no embedding-owner import). Prototype phrase embeddings are cached per phrase
+        tuple so they are embedded once across ticks, not per tick.
+    """
+
+    embed_text: Callable[[str], tuple[float, ...]]
+    _prototype_cache: dict[tuple[str, ...], tuple[tuple[float, ...], ...]] = field(
+        default_factory=dict, repr=False
+    )
+
+    def _prototype_vectors(self, prototypes: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+        cached = self._prototype_cache.get(prototypes)
+        if cached is None:
+            cached = tuple(self.embed_text(phrase) for phrase in prototypes)
+            self._prototype_cache[prototypes] = cached
+        return cached
+
+    def max_similarity_to(self, stimulus: Stimulus, prototypes: tuple[str, ...]) -> float | None:
+        """Owner: composition. Return the stimulus's max cosine similarity to a prototype set.
+
+        Empty content yields `None` without embedding the stimulus; otherwise embeds the stimulus
+        once and returns the maximum cosine to any prototype vector. Embedding failures propagate
+        as a hard stop.
+        """
+
+        text = stimulus.content.strip()
+        if not text or not prototypes:
+            return None
+        query_vector = self.embed_text(text)
+        prototype_vectors = self._prototype_vectors(prototypes)
+        return max(cosine_similarity(query_vector, vector) for vector in prototype_vectors)
 
 
 @dataclass

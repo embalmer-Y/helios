@@ -164,6 +164,7 @@ from .bridges import (
     FirstVersionThoughtGateSignalBridge,
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
+    EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
     MemoryGroundedRetrievalAmbiguitySource,
     NeuromodulatorAwareThoughtGateSignalBridge,
@@ -820,11 +821,11 @@ def assemble_runtime(
     # once appraisal itself is real, so the de-shims activate together.
     semantic_memory_enabled = experience_store is not None and embedding_gateway is not None
 
-    # `03` dimension de-shims (R35 novelty, R39 uncertainty + social): when enabled, novelty,
-    # uncertainty, and social become real signals. The appraisal owner keeps every salience
-    # mapping; composition only injects the raw retrieval/transport fact sources. `threat`/`reward`
-    # remain first-version constants until their own slice (R40, prototype-embedding). When off,
-    # the deterministic first-version estimator is unchanged.
+    # `03` dimension de-shims (R35 novelty, R39 uncertainty + social, R40 threat + reward): when
+    # enabled, all five `03` dimensions become real signals. The appraisal owner keeps every
+    # salience mapping and the threat/reward prototype sets; composition only injects the raw
+    # retrieval/transport/prototype fact sources. When off, the deterministic first-version
+    # estimator is unchanged.
     if semantic_memory_enabled:
         dimension_estimator = GroundedDimensionEstimator(
             similarity_source=MemoryGroundedSimilaritySource(
@@ -836,6 +837,7 @@ def assemble_runtime(
                 store=experience_store,
             ),
             social_source=TransportGroundedSocialContextSource(),
+            prototype_source=EmbeddingPrototypeSimilaritySource(embed_text=_embed_text),
         )
     else:
         dimension_estimator = FirstVersionDimensionEstimator()

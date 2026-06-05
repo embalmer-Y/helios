@@ -238,16 +238,28 @@ class FixedSocialSource(SocialContextSource):
         return self.presence
 
 
+@dataclass
+class FixedPrototypeSource:
+    """Test double returning a fixed max-cosine (or None) for any prototype set."""
+
+    similarity: float | None = 0.0
+
+    def max_similarity_to(self, stimulus: Stimulus, prototypes: tuple[str, ...]) -> float | None:
+        return self.similarity
+
+
 def _grounded(
     *,
     similarity: float | None = 0.5,
     similarities: tuple[float, ...] = (),
     presence: float = 0.0,
+    prototype_similarity: float | None = 0.0,
 ) -> GroundedDimensionEstimator:
     return GroundedDimensionEstimator(
         similarity_source=FixedSimilaritySource(similarity=similarity),
         ambiguity_source=FixedAmbiguitySource(similarities=similarities),
         social_source=FixedSocialSource(presence=presence),
+        prototype_source=FixedPrototypeSource(similarity=prototype_similarity),
     )
 
 
@@ -296,10 +308,29 @@ def test_grounded_estimator_high_social_presence_raises_social() -> None:
     assert low == pytest.approx(0.0)
 
 
-def test_grounded_estimator_keeps_threat_and_reward_constant() -> None:
-    estimate = _grounded(similarities=(0.5, 0.4), presence=1.0).estimate_dimensions(_stimulus())
-    assert estimate.threat == 0.2
-    assert estimate.reward == 0.1
+def test_grounded_estimator_threat_and_reward_from_prototype_similarity() -> None:
+    # R40: threat/reward are prototype-derived, positive-correlation, not constants.
+    high = _grounded(prototype_similarity=0.9).estimate_dimensions(_stimulus())
+    low = _grounded(prototype_similarity=0.1).estimate_dimensions(_stimulus())
+
+    assert high.threat == pytest.approx(0.9)  # gain 1.0 * max(0, 0.9)
+    assert high.reward == pytest.approx(0.9)
+    assert high.threat > low.threat
+    assert high.reward > low.reward
+
+
+def test_grounded_estimator_threat_reward_negative_similarity_is_zero() -> None:
+    # Only positive similarity contributes; an anti-similar stimulus scores 0 (not negative).
+    estimate = _grounded(prototype_similarity=-0.7).estimate_dimensions(_stimulus())
+    assert estimate.threat == 0.0
+    assert estimate.reward == 0.0
+
+
+def test_grounded_estimator_threat_reward_none_fact_is_zero() -> None:
+    # No comparable input (empty content) -> threat/reward 0.0.
+    estimate = _grounded(prototype_similarity=None).estimate_dimensions(_stimulus())
+    assert estimate.threat == 0.0
+    assert estimate.reward == 0.0
 
 
 def test_grounded_estimator_dimensions_within_range_and_deterministic() -> None:

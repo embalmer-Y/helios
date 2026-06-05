@@ -24,9 +24,12 @@ from .engine import (
     GroundedDimensionEstimator,
     MemoryGroundedDimensionEstimator,
     MemorySimilaritySource,
+    PrototypeSimilaritySource,
     RapidSalienceAppraisalEngine,
     RetrievalAmbiguitySource,
+    REWARD_PROTOTYPES,
     SocialContextSource,
+    THREAT_PROTOTYPES,
 )
 
 __all__ = [
@@ -34,6 +37,7 @@ __all__ = [
     "GroundedDimensionEstimator",
     "MemoryGroundedDimensionEstimator",
     "MemorySimilaritySource",
+    "PrototypeSimilaritySource",
     "PublishRapidAppraisalBatchOp",
     "RapidAppraisal",
     "RapidAppraisalBatch",
@@ -42,5 +46,7 @@ __all__ = [
     "RapidSalienceAppraisalAPI",
     "RapidSalienceVector",
     "RetrievalAmbiguitySource",
+    "REWARD_PROTOTYPES",
     "SocialContextSource",
+    "THREAT_PROTOTYPES",
 ]
