@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R41（维度 grounded 的聚合显著性；P3 03-owner 收口,03 全部输出真实）。测试基线：536 passed。版本：R41。
+> 最近同步：R41（维度 grounded 的聚合显著性；P3 03-owner 收口,03 全部输出真实）。测试基线：536 passed。版本：R41。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -35,7 +35,7 @@ flowchart TD
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
     EXT([外界刺激: CLI已绑定 / QQ / 语音 后续]):::base
-    BODY([内部身体信号 - 内感受来源]):::infra
+    BODY["内部身体信号 - 内感受来源: 留白,目前无生产者(见 gap_interoceptive_signal_source)"]:::gap
     S02[02 感觉接入 - 相对完整]:::deep
     S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
     S04["04 神经调质系统 - 已由appraisal推导(语义)/无状态"]:::base
@@ -46,8 +46,8 @@ flowchart TD
     S09["09 思考门控与延续压力 - NE arousal已耦合(语义)/其余输入仍shim"]:::base
     S10[10 定向检索 - 基线/输入仍shim]:::base
     S16P[16 具身prompt契约 - 基线]:::base
-    S16O[16 外化表达草稿 - 基线/仅草稿]:::base
-    S16E[16 外化执行草稿 - 基线/仅草稿]:::base
+    S16O["16 外化表达草稿 - 仅草稿(非授权)"]:::base
+    S16E["16 外化执行草稿 - 非授权的前运动预备草案(执行权在 planner 13 + channel 30)"]:::base
     S11[11 内部思考循环 - 真实LLM驱动]:::deep
     S12[12 行动外化契约 - 基线]:::base
     S13[13 planner桥 - 基线/channel状态仍shim]:::base
@@ -167,6 +167,14 @@ flowchart TD
   运行时仍是后续），以及 P2 的其余部分（最新态检查点/恢复、de-shim 后持久化 06/04/05/14）。P2→P3
   铰链已就位：真实 `03` novelty-from-memory 现在可基于 R34 的 embedding 底座构建。
 - 经验回写闭环（15 → 06）进程内已实现；R33 起 15 流还被持久化并可跨重启再入,R34 起为语义召回。
+- 内感受来源留白（BODY 节点,红）：`05` 已建成可消费真实身体/内感受信号（feeling 阶段从 `02` 批次按 body/interoceptive
+  modality 筛选）,但当前没有任何东西生产它们——sensory 源只产生 text,故 `internal_signals` 恒为空,体感仅由 `04`
+  神经调质状态推导。BODY 节点是只有接口、无 owner 生产者的占位。真实生产者属后续 owner：模拟身体状态模型,或把
+  计算/运行时压力（CPU/内存/延迟）映射成有界内感受信号的首版代理（见 `gap_interoceptive_signal_source`）。
+- 前运动预备 vs 执行（16 标签）：`16` 外化表达/外化执行节点产出的是**非授权草案**,功能上对标前运动区/SMA 的运动
+  预备与内部预演,**不是执行**。真正的 go/no-go 在 `13` planner,真正的传输在 `30`/`31` channel。草案带显式的
+  `forbidden_capabilities` / `final_authorities` / `execution_boundary_summary`；"草稿"绝不可读作"执行"
+  （见 `gap_premotor_preparation_vs_execution`）。
 
 ## 5. 更新约束
 

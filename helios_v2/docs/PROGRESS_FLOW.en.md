@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R41 (dimension-grounded aggregate salience; P3 03-owner closeout, all 03 outputs real). Test baseline: 536 passed. HEAD-era: R41.
+> Last synced: R41 (dimension-grounded aggregate salience; P3 03-owner closeout, all 03 outputs real). Test baseline: 536 passed. HEAD-era: R41. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -41,7 +41,7 @@ flowchart TD
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
-    BODY([Internal body signal - interoceptive source]):::infra
+    BODY["Internal body signal - interoceptive source: GAP, no producer yet (see gap_interoceptive_signal_source)"]:::gap
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived (semantic)/stateless"]:::base
@@ -52,8 +52,8 @@ flowchart TD
     S09["09 Thought Gating - NE arousal coupled (semantic)/other inputs shim"]:::base
     S10[10 Directed Retrieval - baseline/shim in]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
-    S16O[16 Outward Expression Draft - baseline/draft-only]:::base
-    S16E[16 Outward Externalization Draft - baseline/draft-only]:::base
+    S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
+    S16E["16 Outward Externalization Draft - non-authoritative premotor-prep draft (planner 13 + channel 30 hold execution)"]:::base
     S11[11 Internal Thought Loop - REAL LLM-driven]:::deep
     S12[12 Action Externalization - baseline]:::base
     S13[13 Planner Bridge - baseline/shim channel state]:::base
@@ -216,6 +216,19 @@ flowchart TD
   is in place: real `03` novelty-from-memory can now build on the R34 embedding substrate.
 - The experience-writeback loop (15 -> 06) is implemented in-process, and with R33 the 15
   stream is now also durably persisted and re-entrant across restarts.
+- Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
+  signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
+  produces them today — the sensory sources emit only text, so `internal_signals` is always empty
+  and feeling is derived from the `04` neuromodulator state alone. The BODY node is an
+  interface-only placeholder with no owner. A real producer is a future owner: a simulated
+  body-state model, or a first-version proxy mapping compute/runtime pressure (CPU/memory/latency)
+  into bounded interoceptive signals (see `gap_interoceptive_signal_source`).
+- Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
+  nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
+  and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real
+  transport is `30`/`31` channel. The draft carries explicit `forbidden_capabilities` /
+  `final_authorities` / `execution_boundary_summary`; "draft" must never be read as "execution"
+  (see `gap_premotor_preparation_vs_execution`).
 
 ## 5. Update Rule
 
