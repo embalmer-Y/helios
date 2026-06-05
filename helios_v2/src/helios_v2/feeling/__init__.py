@@ -22,11 +22,17 @@ from .contracts import (
     UpdateInteroceptiveFeelingOp,
     validate_internal_body_signal,
 )
-from .engine import DominantDimensionReporter, FeelingConstructionPath, InteroceptiveFeelingEngine
+from .engine import (
+    DominantDimensionReporter,
+    FeelingConstructionPath,
+    InteroceptiveFeelingEngine,
+    NeuromodulatorDerivedFeelingConstructionPath,
+)
 
 __all__ = [
     "DominantDimensionReporter",
     "FeelingConstructionPath",
+    "NeuromodulatorDerivedFeelingConstructionPath",
     "FeelingLearnedParameterCategory",
     "InteroceptiveFeelingAPI",
     "InteroceptiveFeelingConfig",

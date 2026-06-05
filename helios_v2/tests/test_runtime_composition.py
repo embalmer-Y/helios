@@ -37,6 +37,7 @@ from helios_v2.embedding import (
 from helios_v2.runtime import RuntimeDependencySpec, RuntimeStartupError
 from helios_v2.runtime.contracts import RuntimeDependencyStatus
 from helios_v2.sensory import Stimulus
+from helios_v2.feeling import InteroceptiveFeelingVector
 from helios_v2.embedding import EmbeddingRequest as _EmbeddingRequest
 
 
@@ -1241,3 +1242,47 @@ def test_semantic_assembly_couples_neuromodulatory_arousal_into_gate() -> None:
     )
     # The arousal-driven difference is real (not a constant) and moves the gate score with it.
     assert first_gate.result.gate_score >= second_gate.result.gate_score
+
+
+# --- Requirement 38: neuromodulator-derived feeling ---
+
+
+def _feeling(result):
+    return result.stage_results["interoceptive_feeling_layer"].state.feeling
+
+
+def test_default_assembly_keeps_constant_feeling() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    feeling = _feeling(result)
+    # The first-version constant construction path is unchanged.
+    assert feeling.valence == pytest.approx(0.4)
+    assert feeling.arousal == pytest.approx(0.7)
+    assert feeling.tension == pytest.approx(0.5)
+    assert feeling.pain_like == pytest.approx(0.1)
+
+
+def test_semantic_assembly_derives_feeling_from_neuromodulator_state() -> None:
+    # In the semantic-memory assembly, 05 feeling is derived from the real 04 state. Tick 1 is a
+    # cold store -> max novelty -> elevated norepinephrine/cortisol via 04, which differs from the
+    # constant shim and is driven by the real upstream chain.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    first = handle.tick()
+    first_feeling = _feeling(first)
+    first_levels = _neuromodulator_levels(first)
+    # Feeling is no longer the constant shim; tension tracks the real cortisol/NE state.
+    assert first_feeling != InteroceptiveFeelingVector(
+        valence=0.4, arousal=0.7, tension=0.5, comfort=0.2, fatigue=0.3, pain_like=0.1, social_safety=0.4
+    )
+
+    # A later tick whose stimulus embeds close to stored experience yields lower novelty -> lower
+    # 04 norepinephrine -> measurably lower arousal in the derived feeling.
+    second = handle.tick()
+    second_feeling = _feeling(second)
+    second_levels = _neuromodulator_levels(second)
+    assert second_levels.norepinephrine < first_levels.norepinephrine
+    assert second_feeling.arousal < first_feeling.arousal

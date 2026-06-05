@@ -38,7 +38,11 @@ from helios_v2.experience_writeback import (
     ExperienceWritebackEngine,
     FirstVersionExperienceWritebackPath,
 )
-from helios_v2.feeling import InteroceptiveFeelingConfig, InteroceptiveFeelingEngine
+from helios_v2.feeling import (
+    InteroceptiveFeelingConfig,
+    InteroceptiveFeelingEngine,
+    NeuromodulatorDerivedFeelingConstructionPath,
+)
 from helios_v2.identity_governance import (
     FirstVersionIdentityGovernancePath,
     IdentityGovernanceConfig,
@@ -842,9 +846,17 @@ def assemble_runtime(
         ),
         active_channel_reporter=FirstVersionActiveChannelReporter(),
     )
+    # `05` feeling de-shim (R38): when enabled, the feeling vector is derived deterministically
+    # from the real `04` neuromodulator state around the configured baseline (stateless; no
+    # prior-tick feeling carry). When off, the constant first-version construction path is
+    # unchanged. The channel->dimension mapping is owned by the `05` owner, not composition.
     feeling = InteroceptiveFeelingEngine(
         config=resolved_config.feeling,
-        construction_path=FirstVersionFeelingConstructionPath(),
+        construction_path=(
+            NeuromodulatorDerivedFeelingConstructionPath()
+            if semantic_memory_enabled
+            else FirstVersionFeelingConstructionPath()
+        ),
         dominant_dimension_reporter=FirstVersionDominantDimensionReporter(),
     )
     memory = MemoryAffectReplayEngine(

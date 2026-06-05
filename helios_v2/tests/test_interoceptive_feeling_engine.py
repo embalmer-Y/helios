@@ -223,3 +223,140 @@ def test_engine_rejects_non_body_internal_signal() -> None:
 
     with pytest.raises(InteroceptiveFeelingError, match="only accepts body/interoceptive signals"):
         engine.build_update_op(_build_neuromodulator_state(), (invalid_signal,))
+
+
+# --- R38: neuromodulator-derived feeling (NeuromodulatorDerivedFeelingConstructionPath) ---
+
+
+def _levels(
+    *,
+    dopamine: float = 0.0,
+    norepinephrine: float = 0.0,
+    serotonin: float = 0.0,
+    acetylcholine: float = 0.0,
+    cortisol: float = 0.0,
+    oxytocin: float = 0.0,
+    opioid_tone: float = 0.0,
+    excitation: float = 0.0,
+    inhibition: float = 0.0,
+) -> NeuromodulatorLevels:
+    return NeuromodulatorLevels(
+        dopamine=dopamine,
+        norepinephrine=norepinephrine,
+        serotonin=serotonin,
+        acetylcholine=acetylcholine,
+        cortisol=cortisol,
+        oxytocin=oxytocin,
+        opioid_tone=opioid_tone,
+        excitation=excitation,
+        inhibition=inhibition,
+    )
+
+
+def _state_with(levels: NeuromodulatorLevels) -> NeuromodulatorState:
+    return NeuromodulatorState(
+        state_id="neuromodulator-state:rapid-appraisal-batch:r38:1",
+        source_appraisal_batch_id="rapid-appraisal-batch:r38",
+        levels=levels,
+        tick_id=1,
+    )
+
+
+def _derived_feeling(levels: NeuromodulatorLevels) -> InteroceptiveFeelingVector:
+    from helios_v2.feeling import NeuromodulatorDerivedFeelingConstructionPath
+
+    path = NeuromodulatorDerivedFeelingConstructionPath()
+    return path.construct_feeling(_state_with(levels), (), _build_config(), tick_id=1)
+
+
+def test_derived_high_cortisol_raises_tension_and_pain_lowers_valence_and_comfort() -> None:
+    high = _derived_feeling(_levels(cortisol=0.9))
+    low = _derived_feeling(_levels(cortisol=0.1))
+
+    assert high.tension > low.tension
+    assert high.pain_like > low.pain_like
+    assert high.valence < low.valence
+    assert high.comfort < low.comfort
+
+
+def test_derived_high_dopamine_raises_valence() -> None:
+    high = _derived_feeling(_levels(dopamine=0.9))
+    low = _derived_feeling(_levels(dopamine=0.1))
+
+    assert high.valence > low.valence
+
+
+def test_derived_high_norepinephrine_raises_arousal() -> None:
+    high = _derived_feeling(_levels(norepinephrine=0.9))
+    low = _derived_feeling(_levels(norepinephrine=0.1))
+
+    assert high.arousal > low.arousal
+
+
+def test_derived_high_oxytocin_raises_social_safety() -> None:
+    high = _derived_feeling(_levels(oxytocin=0.9))
+    low = _derived_feeling(_levels(oxytocin=0.1))
+
+    assert high.social_safety > low.social_safety
+
+
+def test_derived_opioid_tone_lowers_pain_like() -> None:
+    high_opioid = _derived_feeling(_levels(cortisol=0.5, opioid_tone=0.9))
+    low_opioid = _derived_feeling(_levels(cortisol=0.5, opioid_tone=0.0))
+
+    assert high_opioid.pain_like < low_opioid.pain_like
+
+
+def test_derived_feeling_is_within_legal_range_for_extreme_state() -> None:
+    # Every channel maxed out: clamping must keep every dimension within [0, 1].
+    extreme = _levels(
+        dopamine=1.0,
+        norepinephrine=1.0,
+        serotonin=1.0,
+        acetylcholine=1.0,
+        cortisol=1.0,
+        oxytocin=1.0,
+        opioid_tone=1.0,
+        excitation=1.0,
+        inhibition=1.0,
+    )
+    feeling = _derived_feeling(extreme)
+    for dimension in feeling.__dataclass_fields__:
+        value = getattr(feeling, dimension)
+        assert 0.0 <= value <= 1.0
+
+
+def test_derived_feeling_is_deterministic() -> None:
+    levels = _levels(dopamine=0.6, cortisol=0.3, norepinephrine=0.5)
+    first = _derived_feeling(levels)
+    second = _derived_feeling(levels)
+
+    assert first == second
+
+
+def test_derived_feeling_differs_from_constant_shim_for_nonbaseline_state() -> None:
+    # The de-shim is real: a non-baseline neuromodulator state yields a feeling vector that is
+    # not the fixed first-version constant (valence=0.4, arousal=0.7, ...).
+    constant = InteroceptiveFeelingVector(
+        valence=0.4, arousal=0.7, tension=0.5, comfort=0.2, fatigue=0.3, pain_like=0.1, social_safety=0.4
+    )
+    derived = _derived_feeling(_levels(dopamine=0.9, cortisol=0.8, norepinephrine=0.6))
+
+    assert derived != constant
+
+
+def test_derived_feeling_engine_integration_uses_real_state() -> None:
+    # Through the real 05 engine: the derived feeling differs across two states differing in
+    # cortisol, and flows through the unchanged InteroceptiveFeelingState contract.
+    from helios_v2.feeling import NeuromodulatorDerivedFeelingConstructionPath
+
+    engine = InteroceptiveFeelingEngine(
+        config=_build_config(),
+        construction_path=NeuromodulatorDerivedFeelingConstructionPath(),
+        dominant_dimension_reporter=CountingReporter(),
+    )
+    high = engine.update_state(_state_with(_levels(cortisol=0.9)), (), tick_id=1)
+    low = engine.update_state(_state_with(_levels(cortisol=0.1)), (), tick_id=1)
+
+    assert high.feeling.tension > low.feeling.tension
+    assert high.source_neuromodulator_state_id == "neuromodulator-state:rapid-appraisal-batch:r38:1"

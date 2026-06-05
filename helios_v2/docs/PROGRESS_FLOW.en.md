@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R37 (neuromodulatory gating coupling; P3 third cognitive-owner de-shim). Test baseline: 498 passed. HEAD-era: R37.
+> Last synced: R38 (neuromodulator-derived feeling; P3 fourth cognitive-owner de-shim). Test baseline: 509 passed. HEAD-era: R38.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -45,7 +45,7 @@ flowchart TD
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03[03 Rapid Salience Appraisal - novelty real (semantic)/4 dims shim]:::base
     S04[04 Neuromodulator System - appraisal-derived (semantic)/stateless]:::base
-    S05[05 Interoceptive Feeling - baseline/shim in]:::base
+    S05[05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
     S07[07 Workspace Competition - baseline/shim in]:::base
     S08[08 Reportable Conscious Content - rel. complete]:::deep
@@ -96,7 +96,7 @@ flowchart TD
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 498 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 509 tests pass, network-free, plus real
   LLM smoke.
 - Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
@@ -132,6 +132,19 @@ flowchart TD
   first-version path, so default/recency/offline assemblies are unchanged. Deferred:
   cortisol/inhibition hard gate, 04->05 feeling coupling, and de-shimming the other gate inputs
   (e.g. global_activation_level from 07).
+- P3 fourth de-shim (R38): the `05` interoceptive feeling vector is now a real bounded function
+  of the `04` neuromodulator state, bringing `04`'s second downstream consumer to real (with R37,
+  both `09` gating and `05` feeling now consume the real `04` state). The constant feeling shim is
+  replaced under the semantic-memory assembly by an owner-private
+  `NeuromodulatorDerivedFeelingConstructionPath` in `helios_v2.feeling` (the channel->dimension
+  mapping lives in `05` itself, since subjectivizing neuromodulator state into feeling is this
+  owner's whole reason to exist; engine/contracts unchanged, no new bridge, no stage reorder). Each
+  dimension = clamp(baseline + sum(coupling * level)): valence +DA/opioid/5-HT -cortisol, arousal
+  +NE/excitation, tension +cortisol/NE, comfort +opioid/oxytocin/5-HT -cortisol, pain_like
+  +cortisol -opioid, social_safety +oxytocin/5-HT -cortisol, fatigue +inhibition -excitation
+  (weak). Deterministic, bounded (clamped to legal range), stateless (no prior-tick feeling).
+  Default/recency/offline keep the constant feeling. Deferred: dual-timescale feeling persistence,
+  real interoceptive-signal integration, and feeding the real feeling into 06/behavior (FG-2).
 - Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
   is real) - owners are real with contracts and tests, but their inputs are still
   composition-injected deterministic shim. In the default assembly 13's channel
