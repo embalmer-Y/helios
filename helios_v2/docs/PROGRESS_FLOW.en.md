@@ -43,13 +43,13 @@ flowchart TD
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
     BODY([Internal body signal - interoceptive source]):::infra
     S02[02 Sensory Ingress - relatively complete]:::deep
-    S03[03 Rapid Salience Appraisal - novelty/uncertainty/social real (semantic)/threat+reward shim]:::base
-    S04[04 Neuromodulator System - appraisal-derived (semantic)/stateless]:::base
-    S05[05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless]:::base
+    S03["03 Rapid Salience Appraisal - novelty/uncertainty/social real (semantic)/threat+reward shim"]:::base
+    S04["04 Neuromodulator System - appraisal-derived (semantic)/stateless"]:::base
+    S05["05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless"]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
     S07[07 Workspace Competition - baseline/shim in]:::base
     S08[08 Reportable Conscious Content - rel. complete]:::deep
-    S09[09 Thought Gating - NE arousal coupled (semantic)/other inputs shim]:::base
+    S09["09 Thought Gating - NE arousal coupled (semantic)/other inputs shim"]:::base
     S10[10 Directed Retrieval - baseline/shim in]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O[16 Outward Expression Draft - baseline/draft-only]:::base
@@ -61,7 +61,7 @@ flowchart TD
     S15[15 Experience Writeback - baseline]:::base
     S18[18 Subjective Autonomy - rel. complete/cognition-derived]:::deep
     S17[17 Evaluation - baseline/corroborates execution truth]:::base
-    CH[30 Channel Driver Subsystem + 31 CLI driver - real local round trip, opt-in]:::infra
+    CH["30 Channel Driver Subsystem + 31 CLI driver - real local round trip, opt-in"]:::infra
 
     S02 --> S03 --> S04 --> S05 --> S06 --> S07 --> S08 --> S09 --> S10
     S10 --> S16P --> S16O --> S16E --> S11

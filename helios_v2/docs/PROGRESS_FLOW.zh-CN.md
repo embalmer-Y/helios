@@ -37,13 +37,13 @@ flowchart TD
     EXT([外界刺激: CLI已绑定 / QQ / 语音 后续]):::base
     BODY([内部身体信号 - 内感受来源]):::infra
     S02[02 感觉接入 - 相对完整]:::deep
-    S03[03 快速显著性评估 - novelty/uncertainty/social已真实(语义)/threat+reward仍shim]:::base
-    S04[04 神经调质系统 - 已由appraisal推导(语义)/无状态]:::base
-    S05[05 内感受体感层 - 神经调质推导(语义)/无状态]:::base
+    S03["03 快速显著性评估 - novelty/uncertainty/social已真实(语义)/threat+reward仍shim"]:::base
+    S04["04 神经调质系统 - 已由appraisal推导(语义)/无状态"]:::base
+    S05["05 内感受体感层 - 神经调质推导(语义)/无状态"]:::base
     S06[06 记忆情感与重放 - 基线/输入仍shim]:::base
     S07[07 工作空间竞争 - 基线/输入仍shim]:::base
     S08[08 可报告意识内容 - 相对完整]:::deep
-    S09[09 思考门控与延续压力 - NE arousal已耦合(语义)/其余输入仍shim]:::base
+    S09["09 思考门控与延续压力 - NE arousal已耦合(语义)/其余输入仍shim"]:::base
     S10[10 定向检索 - 基线/输入仍shim]:::base
     S16P[16 具身prompt契约 - 基线]:::base
     S16O[16 外化表达草稿 - 基线/仅草稿]:::base
@@ -55,7 +55,7 @@ flowchart TD
     S15[15 经验回写 - 基线]:::base
     S18[18 主动性自治 - 相对完整/已接真实认知]:::deep
     S17[17 评估 - 基线/对账执行真相]:::base
-    CH[30 Channel driver 子系统 + 31 CLI driver - 真实本地往返,opt-in]:::infra
+    CH["30 Channel driver 子系统 + 31 CLI driver - 真实本地往返,opt-in"]:::infra
 
     S02 --> S03 --> S04 --> S05 --> S06 --> S07 --> S08 --> S09 --> S10
     S10 --> S16P --> S16O --> S16E --> S11
