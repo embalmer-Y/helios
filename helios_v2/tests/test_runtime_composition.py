@@ -1468,3 +1468,51 @@ def test_semantic_assembly_derives_threat_and_reward_from_prototypes() -> None:
     appraisal_batch_id = result.stage_results["rapid_salience_appraisal"].batch.batch_id
     neuromod_source = result.stage_results["neuromodulator_system"].state.source_appraisal_batch_id
     assert neuromod_source == appraisal_batch_id
+
+
+# --- Requirement 41: dimension-grounded aggregate salience judgment ---
+
+
+def _appraisal_aggregate(result) -> float:
+    return result.stage_results["rapid_salience_appraisal"].batch.appraisals[0].salience.aggregate
+
+
+def test_default_assembly_keeps_constant_aggregate() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    # No semantic memory -> the first-version constant aggregate estimator.
+    assert _appraisal_aggregate(result) == pytest.approx(0.4)
+
+
+def test_semantic_assembly_derives_aggregate_from_dimensions() -> None:
+    # With store + embedding, the aggregate is a convex combination of the five real dimensions,
+    # not the constant 0.4 shim, and matches the documented first-version weights.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    result = handle.tick()
+    salience = result.stage_results["rapid_salience_appraisal"].batch.appraisals[0].salience
+    expected = round(
+        0.25 * salience.threat
+        + 0.25 * salience.reward
+        + 0.20 * salience.novelty
+        + 0.15 * salience.uncertainty
+        + 0.15 * salience.social,
+        4,
+    )
+    assert salience.aggregate == pytest.approx(expected)
+
+
+def test_semantic_assembly_aggregate_differs_with_dimensions() -> None:
+    # Two ticks whose dimensions differ produce different aggregates (dimension-driven, not
+    # constant). Tick 1 is a cold store (max novelty); tick 2 recalls stored experience -> lower
+    # novelty -> a measurably different aggregate.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    first = handle.tick()
+    second = handle.tick()
+    assert _appraisal_aggregate(first) != pytest.approx(_appraisal_aggregate(second))

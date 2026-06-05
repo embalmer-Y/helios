@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R40 (prototype-grounded threat + reward appraisal; P3 sixth de-shim, all five 03 dimensions real). Test baseline: 527 passed. HEAD-era: R40.
+> Last synced: R41 (dimension-grounded aggregate salience; P3 03-owner closeout, all 03 outputs real). Test baseline: 536 passed. HEAD-era: R41.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -43,7 +43,7 @@ flowchart TD
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
     BODY([Internal body signal - interoceptive source]):::infra
     S02[02 Sensory Ingress - relatively complete]:::deep
-    S03["03 Rapid Salience Appraisal - all 5 dims real (semantic): novelty/uncertainty/social/threat/reward"]:::base
+    S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived (semantic)/stateless"]:::base
     S05["05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless"]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
@@ -96,7 +96,7 @@ flowchart TD
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 527 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 536 tests pass, network-free, plus real
   LLM smoke.
 - Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
@@ -171,6 +171,16 @@ flowchart TD
   surface a later P5 / 06 memory-affect / slow-LLM-re-appraisal slice replaces. Default/recency/
   offline keep constant threat 0.2 / reward 0.1; novelty/uncertainty/social unchanged. With all five
   dimensions real, the constant aggregate-salience estimator is the next sensible de-shim.
+- P3 03-owner closeout (R41): the `03` aggregate judgment (RapidSalienceVector.aggregate) is now a
+  real dimension-grounded convex combination of the five real dimensions (owner-owned
+  WeightedAggregateEstimator: aggregate = clamp(sum(weight_k * dim_k)), first-version weights
+  threat 0.25 / reward 0.25 / novelty 0.20 / uncertainty 0.15 / social 0.15, summing to 1.0), so
+  EVERY 03 output (five dimensions + aggregate) is real under the semantic assembly, none constant.
+  Monotonic, deterministic, bounded, stateless; needs no injected fact source (pure function of the
+  dimensions). Honest caveats: the weights are a first-version PLACEHOLDER allocation (P5-learnable),
+  and the aggregate inherits its inputs' grounding (threat/reward still the R40 C_engineering_hypothesis
+  anchor). Default/recency/offline keep constant aggregate 0.4; the five dimensions unchanged. Next
+  for 03: P5 weight/coefficient learning and model-assisted overall appraisal.
 - Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
   is real) - owners are real with contracts and tests, but their inputs are still
   composition-injected deterministic shim. In the default assembly 13's channel

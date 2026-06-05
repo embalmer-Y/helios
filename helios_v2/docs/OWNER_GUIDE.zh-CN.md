@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R40。测试基线：527 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R41。测试基线：536 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -58,7 +58,7 @@
 - 下一步：保护边界真相；无需去 shim。真实外部（网络）信号源随未来 channel driver 到来，不在此处。
 
 ### 2.3 `03` 快速显著性评估 — `helios_v2.appraisal`
-- 完成度：`baseline_real`（语义记忆装配下五维全部真实：novelty 自 R35、uncertainty + social 自 R39、threat + reward 自 R40）。
+- 完成度：`baseline_real`（语义记忆装配下已完全去 shim：五维全部真实——novelty 自 R35、uncertainty + social 自 R39、threat + reward 自 R40——外加聚合判断自 R41；`03` 的每个输出都真实,无常量）。
 - 职责：每刺激的快速粗显著性（威胁/奖励/新颖/社会/不确定 + 聚合），经注入式 estimator。不拥有精细语义解释、记忆或路由。
 - 在循环中的作用：紧接 sensory 塑造下游显著性；评估批次喂给调质与门控信号。
 - 下一步（本 owner 的分阶段 P3 去 shim）：
@@ -67,8 +67,8 @@
   2. **方案 B — 同类可比的 novelty（后续切片）。** 持久化原始刺激文本流（`15`/`33` 扩展或专用刺激日志），使 novelty 在同一语域里"刺激 vs 历史刺激"比较，退休上面的跨语域 caveat。因为它触及回写/持久化 owner 而非 `03`，所以是独立需求。
   3. **R39 — uncertainty + social（已交付）。** `uncertainty` 由检索歧义度 grounded：`03` 读 top-2 余弦相似度（经 owner 定义的 `RetrievalAmbiguitySource`,由 composition 在同一 `34`/`33` 底座上注入），映射 `uncertainty = clamp(1 - (n1 - n2), 0, 1)`（归一化 top-2；无可比记忆 → `1.0`；单一强匹配 → 低；多个近似匹配 → 高）。这与 novelty 是不同的读法（熟悉但歧义 → 低 novelty、高 uncertainty）。`social` 由传输出处 grounded：`03` 读有界 `social_presence` 事实（经 owner 定义的 `SocialContextSource`；composition 拥有 channel→presence 分类,外部交互主体 channel → 高,内部 body/background → 0），映射 `social = clamp(social_floor + social_gain * presence, 0, 1)`。两个映射都在 owner 持有的 `GroundedDimensionEstimator` 里。**诚实标注：** uncertainty 是 `B_functional_inspiration`（检索歧义代理,非校准置信度）；social 是纯传输事实,不需 embedding 底座,本刀挂在语义 opt-in 下仅为单一开关（后续可让它在 channel-bound 装配独立生效）。快路保持确定性、网络无关、无 LLM。
   4. **R40 — threat/reward 原型 embedding（已交付）。** `threat`/`reward` 由刺激对 owner 持有的原型短语集（`THREAT_PROTOTYPES`/`REWARD_PROTOTYPES`）的最大余弦相似度打分，经 `34` 底座 embed：`03` 定义 `PrototypeSimilaritySource` 协议,映射 `dimension = clamp(gain * max(0, max_cosine), 0, 1)`（正相关——靠近语义锚点,与 novelty 的距离读法相反;`None`/空内容 → `0.0`）；composition 的 `EmbeddingPrototypeSimilaritySource` 把 owner 给的短语 embed 一次（缓存）并回原始余弦,故 `03` 既不 import embedding 也不 import persistence。原型集与映射归 `03`。无冷启动（原型装配期 embed 一次）。**诚实标注 `C_engineering_hypothesis`：** 原型短语集是人工、英语中心的占位锚点,**非**校准情感模型,不得过度宣称为真实威胁/奖励理解。它是后续替换的接口——P5 学习原型/系数、`06` 记忆-情感 grounding（按相似过往经验的好/坏结局打分）、或慢速 `11`-LLM 二级再评估（独立于快 `03` 路）。五维全部真实后,常量 aggregate estimator（第 5 项）是下一刀。
-  5. **聚合显著性。** 五维全部真实后,把常量 aggregate estimator 换成可学习或模型辅助的整体判断。
-  6. **下游耦合（novelty→`04`→`05`/`09` 已交付）。** 真实 `03` 显著性已塑造 `04` 神经调质状态（R36），并经其塑造 `05` 体感（R38）与 `09` 门控（R37）；R40 起 reward→多巴胺、threat→皮质醇 两条通道也由真实信号驱动。仍待：真实 threat/reward 喂给 cortisol/inhibition 硬门控,以及它们落地后更丰富的 `05`/`06` 耦合；之后做情感加权或时近加权。
+  5. **R41 — 聚合显著性（已交付）。** 聚合判断（`RapidSalienceVector.aggregate`）现在是五维真实维度的真实凸组合,经 owner 持有的 `WeightedAggregateEstimator`：`aggregate = clamp(sum(weight_k * dimension_k), 0, 1)`,首版权重和为 1.0（`threat 0.25, reward 0.25, novelty 0.20, uncertainty 0.15, social 0.15`）。单调、确定性、有界、无状态;无需注入事实源（纯维度函数）。这收口了 `03` owner 的 P3 去 shim——`03` 每个输出都真实。**诚实标注：** 权重是首版占位分配（工程选择,非校准重要性先验;P5 可学）;且聚合继承输入的 grounding 强度——threat/reward 还是 R40 的 `C_engineering_hypothesis` 锚点时,聚合的 threat/reward 贡献只有那么强（输入升级后自动变强）。默认/recency/离线保持常量聚合 `0.4`。后续：P5 学习权重、模型辅助/非线性或慢速 `11`-LLM 二级整体评估、情感/时近加权。
+  6. **下游耦合（novelty→`04`→`05`/`09` 已交付）。** 真实 `03` 显著性已塑造 `04` 神经调质状态（R36），并经其塑造 `05` 体感（R38）与 `09` 门控（R37）；R40 起 reward→多巴胺、threat→皮质醇 两条通道也由真实信号驱动。仍待：真实 threat/reward 喂给 cortisol/inhibition 硬门控,以及它们落地后更丰富的 `05`/`06` 耦合；之后做情感加权或时近加权。**grounding-权力排序约束：** 当 threat/reward 还是 R40 的 `C_engineering_hypothesis` 占位锚点时,在它们被升级到更强 grounding（P5 / `06` 记忆-情感）之前,避免给它们高权力下游耦合（例如能否决 fire 的 cortisol/inhibition 硬门控）；弱锚点不应获得否决认知的权力。
 
 ### 2.4 `04` 神经调质系统 — `helios_v2.neuromodulation`
 - 完成度：`baseline_real`（语义记忆装配下水平已由 appraisal 推导；无状态）。

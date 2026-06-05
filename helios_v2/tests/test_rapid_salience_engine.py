@@ -361,3 +361,96 @@ def test_grounded_estimator_produces_valid_salience_vector_through_engine() -> N
     assert salience.novelty == pytest.approx(0.2)
     assert 0.0 <= salience.uncertainty <= 1.0
     assert salience.social == pytest.approx(1.0)
+
+
+# --- Requirement 41: dimension-grounded aggregate salience judgment ---
+
+
+from helios_v2.appraisal import WeightedAggregateEstimator
+
+
+def _dims(
+    *,
+    threat: float = 0.0,
+    reward: float = 0.0,
+    novelty: float = 0.0,
+    social: float = 0.0,
+    uncertainty: float = 0.0,
+) -> RapidDimensionEstimate:
+    return RapidDimensionEstimate(
+        threat=threat,
+        reward=reward,
+        novelty=novelty,
+        social=social,
+        uncertainty=uncertainty,
+    )
+
+
+def test_weighted_aggregate_equals_convex_combination() -> None:
+    estimator = WeightedAggregateEstimator()
+    dims = _dims(threat=1.0, reward=0.0, novelty=0.0, social=0.0, uncertainty=0.0)
+    # Only the threat weight contributes -> 0.25.
+    assert estimator.estimate_aggregate(_stimulus(), dims) == pytest.approx(0.25)
+
+    full = _dims(threat=1.0, reward=1.0, novelty=1.0, social=1.0, uncertainty=1.0)
+    # Weights sum to 1.0 -> all dimensions at 1.0 -> aggregate 1.0.
+    assert estimator.estimate_aggregate(_stimulus(), full) == pytest.approx(1.0)
+
+
+def test_weighted_aggregate_weights_sum_to_one() -> None:
+    e = WeightedAggregateEstimator()
+    total = e.weight_threat + e.weight_reward + e.weight_novelty + e.weight_uncertainty + e.weight_social
+    assert total == pytest.approx(1.0)
+
+
+def test_weighted_aggregate_is_monotonic_in_each_dimension() -> None:
+    estimator = WeightedAggregateEstimator()
+    base = _dims(threat=0.3, reward=0.3, novelty=0.3, social=0.3, uncertainty=0.3)
+    base_value = estimator.estimate_aggregate(_stimulus(), base)
+    for dimension in ("threat", "reward", "novelty", "social", "uncertainty"):
+        raised = estimator.estimate_aggregate(_stimulus(), _dims(**{**{
+            "threat": 0.3, "reward": 0.3, "novelty": 0.3, "social": 0.3, "uncertainty": 0.3
+        }, dimension: 0.9}))
+        assert raised >= base_value
+
+
+def test_weighted_aggregate_high_salience_exceeds_low_salience() -> None:
+    estimator = WeightedAggregateEstimator()
+    high = estimator.estimate_aggregate(
+        _stimulus(), _dims(threat=0.9, reward=0.8, novelty=0.9, social=0.7, uncertainty=0.8)
+    )
+    low = estimator.estimate_aggregate(
+        _stimulus(), _dims(threat=0.1, reward=0.1, novelty=0.1, social=0.1, uncertainty=0.1)
+    )
+    assert high > low
+
+
+def test_weighted_aggregate_within_range_and_deterministic() -> None:
+    estimator = WeightedAggregateEstimator()
+    dims = _dims(threat=1.0, reward=1.0, novelty=1.0, social=1.0, uncertainty=1.0)
+    first = estimator.estimate_aggregate(_stimulus(), dims)
+    second = estimator.estimate_aggregate(_stimulus(), dims)
+    assert first == second
+    assert 0.0 <= first <= 1.0
+
+
+def test_weighted_aggregate_flows_through_engine_not_constant() -> None:
+    # Through the engine with real grounded dimensions, the salience vector's aggregate reflects
+    # the convex combination of the dimensions, not the constant 0.4 shim.
+    engine = RapidSalienceAppraisalEngine(
+        dimension_estimator=_grounded(
+            similarity=0.5, similarities=(0.5, 0.2), presence=1.0, prototype_similarity=0.4
+        ),
+        aggregate_estimator=WeightedAggregateEstimator(),
+    )
+    salience = engine.assess_batch(_build_valid_batch()).appraisals[0].salience
+    expected = round(
+        0.25 * salience.threat
+        + 0.25 * salience.reward
+        + 0.20 * salience.novelty
+        + 0.15 * salience.uncertainty
+        + 0.15 * salience.social,
+        4,
+    )
+    assert salience.aggregate == pytest.approx(expected)
+    assert salience.aggregate != pytest.approx(0.4)

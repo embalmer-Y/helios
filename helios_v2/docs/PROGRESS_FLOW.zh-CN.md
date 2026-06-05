@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R40（原型 grounded 的 threat + reward 评估；P3 第六刀去 shim,03 五维全部真实）。测试基线：527 passed。版本：R40。
+> 最近同步：R41（维度 grounded 的聚合显著性；P3 03-owner 收口,03 全部输出真实）。测试基线：536 passed。版本：R41。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -37,7 +37,7 @@ flowchart TD
     EXT([外界刺激: CLI已绑定 / QQ / 语音 后续]):::base
     BODY([内部身体信号 - 内感受来源]):::infra
     S02[02 感觉接入 - 相对完整]:::deep
-    S03["03 快速显著性评估 - 五维全部真实(语义): novelty/uncertainty/social/threat/reward"]:::base
+    S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
     S04["04 神经调质系统 - 已由appraisal推导(语义)/无状态"]:::base
     S05["05 内感受体感层 - 神经调质推导(语义)/无状态"]:::base
     S06[06 记忆情感与重放 - 基线/输入仍shim]:::base
@@ -90,7 +90,7 @@ flowchart TD
 
 ## 4. 状态小结
 
-- 认知主链（02 到 17）端到端贯通；527 测试全绿、离线，外加真实 LLM 冒烟。
+- 认知主链（02 到 17）端到端贯通；536 测试全绿、离线，外加真实 LLM 冒烟。
 - 深度真实 owner：02 感觉接入、08 可报告意识、11 内部思考（真实 LLM 驱动的认知核心）、
   18 主动性（已接真实认知），加基础设施（01、21、22、23、24、25、33、34）。
 - P3 已开始（R35）：`03` 评估 owner 的 novelty 维在语义记忆装配下已是真实信号（novelty =
@@ -137,6 +137,13 @@ flowchart TD
   persistence）。无冷启动（原型装配期 embed）。诚实标注 C_engineering_hypothesis：原型集是人工、英语中心的占位锚点,非校准
   情感模型,不得过度宣称,是后续 P5 / 06 记忆-情感 / 慢速 LLM 再评估替换的接口。默认/recency/离线保持常量 threat 0.2 /
   reward 0.1;novelty/uncertainty/social 不变。五维全真后,常量 aggregate estimator 是下一刀。
+- P3 03-owner 收口（R41）：`03` 聚合判断（RapidSalienceVector.aggregate）现在是五维真实维度的真实凸组合
+  （owner 持有的 WeightedAggregateEstimator：aggregate = clamp(sum(weight_k * dim_k)),首版权重
+  threat 0.25 / reward 0.25 / novelty 0.20 / uncertainty 0.15 / social 0.15,和为 1.0），故语义装配下
+  `03` 的每个输出（五维 + 聚合）都真实,无常量。单调、确定性、有界、无状态;无需注入事实源（纯维度函数）。
+  诚实标注：权重是首版占位分配（P5 可学）,且聚合继承输入 grounding（threat/reward 仍是 R40 的
+  C_engineering_hypothesis 锚点）。默认/recency/离线保持常量聚合 0.4;五维不变。03 下一步：P5 权重/系数学习与
+  模型辅助整体评估。
 - 基线 owner（占大头）：03-07、09-10、12-17（13 的 planner 判断本身是真实的）——owner 真实、
   含契约与测试，但**输入仍是 composition 注入的确定性 shim**；默认装配里 13 的 channel 描述符/状态
   快照仍是 shim 注入,opt-in channel-bound 装配里则来自 `30` 的真实 channel-state 快照。

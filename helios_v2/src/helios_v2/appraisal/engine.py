@@ -104,6 +104,57 @@ class AggregateJudgmentEstimator(Protocol):
         """
 
 
+@dataclass
+class WeightedAggregateEstimator(AggregateJudgmentEstimator):
+    """Owner: rapid salience appraisal (R41).
+
+    Purpose:
+        Compute the aggregate coarse-salience judgment as a deterministic convex combination of
+        the five real `03` dimensions, replacing the constant first-version shim. This closes the
+        `03` owner's P3 de-shim: with R41 every `03` output (five dimensions + aggregate) is a real
+        signal under the semantic-memory assembly.
+
+    Failure semantics:
+        Total deterministic function of the dimensions + config weights; it never branches into a
+        degraded mode and never diverges outside `[0, 1]` (convex combination of in-range values
+        plus a defensive clamp).
+
+    Notes:
+        The aggregate semantic is owned here, not in composition glue. The per-dimension weights
+        are explicit first-version bounded constants summing to 1.0; they are a PLACEHOLDER
+        allocation (an engineering choice, not a calibrated importance prior) and are the surface a
+        later P5 learning slice or a model-assisted/non-linear overall appraisal replaces -- they
+        must not be over-claimed. The combination is monotonic non-decreasing in each dimension and
+        stateless (no prior-tick read). The aggregate inherits the grounding strength of its
+        inputs: while threat/reward are the R40 `C_engineering_hypothesis` prototype anchor, the
+        aggregate's threat/reward contribution is only as strong as that anchor; it strengthens
+        automatically as the input dimensions are upgraded.
+    """
+
+    weight_threat: float = 0.25
+    weight_reward: float = 0.25
+    weight_novelty: float = 0.20
+    weight_uncertainty: float = 0.15
+    weight_social: float = 0.15
+
+    def estimate_aggregate(self, stimulus: Stimulus, dimensions: RapidDimensionEstimate) -> float:
+        """Return the convex-combination aggregate of the five dimensions, clamped to `[0, 1]`.
+
+        Ignores `stimulus` (the aggregate is a function of the dimensions only in this slice).
+        Deterministic and stateless.
+        """
+
+        del stimulus
+        combined = (
+            self.weight_threat * dimensions.threat
+            + self.weight_reward * dimensions.reward
+            + self.weight_novelty * dimensions.novelty
+            + self.weight_uncertainty * dimensions.uncertainty
+            + self.weight_social * dimensions.social
+        )
+        return round(min(1.0, max(0.0, combined)), 4)
+
+
 @runtime_checkable
 class MemorySimilaritySource(Protocol):
     """Owner: rapid salience appraisal.

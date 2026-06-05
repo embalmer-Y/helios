@@ -30,6 +30,7 @@ from .engine import (
     REWARD_PROTOTYPES,
     SocialContextSource,
     THREAT_PROTOTYPES,
+    WeightedAggregateEstimator,
 )
 
 __all__ = [
@@ -49,4 +50,5 @@ __all__ = [
     "REWARD_PROTOTYPES",
     "SocialContextSource",
     "THREAT_PROTOTYPES",
+    "WeightedAggregateEstimator",
 ]

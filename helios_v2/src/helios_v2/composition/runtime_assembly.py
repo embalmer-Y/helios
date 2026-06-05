@@ -117,7 +117,11 @@ from helios_v2.runtime import (
     WorkspaceCompetitionRuntimeStage,
     WorkspaceConsciousContentMaterialBridge,
 )
-from helios_v2.appraisal import GroundedDimensionEstimator, RapidSalienceAppraisalEngine
+from helios_v2.appraisal import (
+    GroundedDimensionEstimator,
+    RapidSalienceAppraisalEngine,
+    WeightedAggregateEstimator,
+)
 from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
 from helios_v2.embedding import EmbeddingGatewayAPI, EmbeddingRequest
 from helios_v2.persistence import (
@@ -841,9 +845,19 @@ def assemble_runtime(
         )
     else:
         dimension_estimator = FirstVersionDimensionEstimator()
+    # `03` aggregate de-shim (R41): when enabled, the aggregate salience judgment is a real
+    # dimension-grounded convex combination of the five real dimensions (owner-owned weights),
+    # closing the `03` owner's P3 de-shim (all five dimensions + aggregate real). When off, the
+    # constant first-version aggregate (`0.4`) is unchanged, because aggregating still-constant
+    # dimensions carries no real signal.
+    aggregate_estimator = (
+        WeightedAggregateEstimator()
+        if semantic_memory_enabled
+        else FirstVersionAggregateEstimator()
+    )
     appraisal = RapidSalienceAppraisalEngine(
         dimension_estimator=dimension_estimator,
-        aggregate_estimator=FirstVersionAggregateEstimator(),
+        aggregate_estimator=aggregate_estimator,
     )
     # `04` neuromodulation de-shim (R36): when enabled, levels are derived deterministically
     # from the real appraisal batch around the tonic baseline (stateless; no prior-tick carry).
