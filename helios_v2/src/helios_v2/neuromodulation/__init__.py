@@ -22,11 +22,17 @@ from .contracts import (
     PublishNeuromodulatorStateOp,
     UpdateNeuromodulatorsOp,
 )
-from .engine import ActiveChannelReporter, NeuromodulatorEngine, NeuromodulatorUpdatePath
+from .engine import (
+    ActiveChannelReporter,
+    DualTimescaleNeuromodulatorUpdatePath,
+    NeuromodulatorEngine,
+    NeuromodulatorUpdatePath,
+)
 
 __all__ = [
     "ActiveChannelReporter",
     "DecayFamily",
+    "DualTimescaleNeuromodulatorUpdatePath",
     "LearnedParameterCategory",
     "NeuromodulatorConfig",
     "NeuromodulatorEngine",

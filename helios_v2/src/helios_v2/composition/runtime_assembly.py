@@ -62,7 +62,12 @@ from helios_v2.llm import (
     OpenAICompatibleProvider,
 )
 from helios_v2.memory import MemoryAffectReplayConfig, MemoryAffectReplayEngine
-from helios_v2.neuromodulation import NeuromodulatorConfig, NeuromodulatorEngine, NeuromodulatorLevels
+from helios_v2.neuromodulation import (
+    DualTimescaleNeuromodulatorUpdatePath,
+    NeuromodulatorConfig,
+    NeuromodulatorEngine,
+    NeuromodulatorLevels,
+)
 from helios_v2.observability import (
     ExecutionTimelineReconstructor,
     InMemoryLogSink,
@@ -555,6 +560,7 @@ class RuntimeHandle:
     continuity_checkpoint_bridge: "ContinuityCheckpointBridge | None" = None
     thought_gating_stage: "ThoughtGatingRuntimeStage | None" = None
     autonomy_stage: "AutonomyRuntimeStage | None" = None
+    neuromodulator_stage: "NeuromodulatorRuntimeStage | None" = None
     _reconstructor: ExecutionTimelineReconstructor = field(
         default_factory=ExecutionTimelineReconstructor
     )
@@ -595,6 +601,10 @@ class RuntimeHandle:
             snapshot.deferred_records,
             snapshot.continuity_threads,
         )
+        if self.neuromodulator_stage is not None:
+            restored_state = self.continuity_checkpoint_bridge.restore_neuromodulator_state(snapshot)
+            if restored_state is not None:
+                self.neuromodulator_stage.seed_prior_state(restored_state)
 
     def tick(self) -> RuntimeTickResult:
         """Execute one runtime tick and carry its completed timeline forward when instrumented."""
@@ -697,6 +707,7 @@ class RuntimeHandle:
             thought_gating_result,
             autonomy_result,
             result.tick_id,
+            neuromodulator_stage_result=result.stage_results.get("neuromodulator_system"),
         )
         self.continuity_checkpoint.save_latest(snapshot)
 
@@ -944,13 +955,16 @@ def assemble_runtime(
         dimension_estimator=dimension_estimator,
         aggregate_estimator=aggregate_estimator,
     )
-    # `04` neuromodulation de-shim (R36): when enabled, levels are derived deterministically
-    # from the real appraisal batch around the tonic baseline (stateless; no prior-tick carry).
-    # When off, the constant first-version update path is unchanged.
+    # `04` neuromodulation de-shim (R36) + dual-timescale dynamics (R43): when enabled, levels are
+    # derived from the real appraisal batch (R36 instantaneous drive) and then evolved across ticks
+    # by an owner-owned dual-timescale leaky-integrator that carries the prior-tick state (R43).
+    # When off, the constant first-version update path is unchanged (stateless).
     neuromodulator = NeuromodulatorEngine(
         config=resolved_config.neuromodulator,
         update_path=(
-            AppraisalDerivedNeuromodulatorUpdatePath()
+            DualTimescaleNeuromodulatorUpdatePath(
+                drive_path=AppraisalDerivedNeuromodulatorUpdatePath()
+            )
             if semantic_memory_enabled
             else FirstVersionNeuromodulatorUpdatePath()
         ),
@@ -1165,6 +1179,7 @@ def assemble_runtime(
     continuity_checkpoint_bridge: ContinuityCheckpointBridge | None = None
     thought_gating_stage_ref: ThoughtGatingRuntimeStage | None = None
     autonomy_stage_ref: AutonomyRuntimeStage | None = None
+    neuromodulator_stage_ref: NeuromodulatorRuntimeStage | None = None
     if continuity_checkpoint is not None:
         continuity_checkpoint_bridge = ContinuityCheckpointBridge()
         thought_gating_stage_ref = next(
@@ -1176,6 +1191,9 @@ def assemble_runtime(
             stage
             for stage in stages
             if stage.stage_name == "subjective_autonomy_and_proactive_evolution"
+        )
+        neuromodulator_stage_ref = next(
+            stage for stage in stages if stage.stage_name == "neuromodulator_system"
         )
 
     return RuntimeHandle(
@@ -1193,6 +1211,7 @@ def assemble_runtime(
         continuity_checkpoint_bridge=continuity_checkpoint_bridge,
         thought_gating_stage=thought_gating_stage_ref,
         autonomy_stage=autonomy_stage_ref,
+        neuromodulator_stage=neuromodulator_stage_ref,
     )
 
 

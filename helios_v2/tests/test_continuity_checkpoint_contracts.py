@@ -59,7 +59,7 @@ def test_snapshot_reuses_owner_contracts_verbatim() -> None:
     assert snapshot.continuation_state.active is True
     assert snapshot.deferred_records[0].record_id == "deferred:1"
     assert snapshot.continuity_threads[0].thread_id == "thread:1"
-    assert snapshot.snapshot_version == 1
+    assert snapshot.snapshot_version == 2
 
 
 def test_snapshot_rejects_non_positive_version() -> None:
@@ -122,7 +122,7 @@ def test_decode_invariant_violating_owner_state_is_hard_stop() -> None:
     # An active continuation state with a zero level violates the `09` owner invariant; the
     # decoder must surface it as a hard stop, never seed an invalid state.
     corrupt = (
-        '{"snapshot_version": 1, "tick_id": 1, '
+        '{"snapshot_version": 2, "tick_id": 1, '
         '"continuation_state": {"active": true, "level": 0.0, "origin_thought_id": "t", '
         '"reason": "r", "expires_at_tick": 3, "carry_count": 1}, '
         '"deferred_records": [], "continuity_threads": []}'

@@ -262,6 +262,7 @@ class FixedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
         batch,
         config: NeuromodulatorConfig,
         tick_id: int | None,
+        prior_levels: NeuromodulatorLevels | None = None,
     ) -> NeuromodulatorLevels:
         assert batch.batch_id.startswith("rapid-appraisal-batch:")
         assert config.decay_family == "dual_timescale_tonic_phasic"

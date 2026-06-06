@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R42 (durable runtime-continuity checkpoint; P2 third slice, cross-tick continuity survives restart). Test baseline: 560 passed. HEAD-era: R42. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R43 (`04` dual-timescale neuromodulator dynamics + checkpoint; `04` evolves cross-tick and resumes across restart). Test baseline: 573 passed. HEAD-era: R43. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -51,7 +51,7 @@ flowchart TD
     BODY["Internal body signal - interoceptive source: GAP, no producer yet (see gap_interoceptive_signal_source)"]:::gap
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
-    S04["04 Neuromodulator System - appraisal-derived (semantic)/stateless"]:::base
+    S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
     S05["05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless"]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
     S07[07 Workspace Competition - baseline/shim in]:::base
@@ -91,7 +91,7 @@ flowchart TD
     TH24[24 Continuity Threads - done, now active]:::infra
     PER[33 Durable Experience Store - infra done, opt-in]:::infra
     EMB[34 Embedding Gateway - infra done, opt-in]:::infra
-    CKPT[42 Continuity Checkpoint - infra done, opt-in]:::infra
+    CKPT[42/43 Continuity Checkpoint - infra done, opt-in]:::infra
     K01 -. startup gate + dispatch .-> S02
     OBS -. per-tick timeline .-> EV23
     EV23 --> S17
@@ -102,8 +102,10 @@ flowchart TD
     EMB -. embed-at-write + embed-at-query (opt-in semantic) .-> PER
     S09 -. continuation pressure (save after tick) .-> CKPT
     S18 -. deferred records + threads (save after tick) .-> CKPT
+    S04 -. neuromodulator levels (save after tick, R43) .-> CKPT
     CKPT -. restore-at-startup seeds prior cross-tick state (opt-in) .-> S09
     CKPT -. restore-at-startup seeds prior cross-tick state (opt-in) .-> S18
+    CKPT -. restore-at-startup seeds prior 04 levels (opt-in, R43) .-> S04
 ```
 
 ## 4. Status Summary
@@ -249,6 +251,22 @@ flowchart TD
   un-initializable backend; no degraded path once enabled. `04`/`05`/`14`/`06` state stays out of
   scope (not cross-tick in-process today; the snapshot is versioned for additive extension).
   Default/33/34/channel-bound assemblies byte-for-byte unchanged when off.
+- P2/P3 hinge (R43): `04` neuromodulator state now evolves across ticks. Under the semantic
+  assembly the `04` update path is replaced (from stateless) by an owner-owned dual-timescale
+  leaky-integrator (`DualTimescaleNeuromodulatorUpdatePath` wrapping the R36 instantaneous drive
+  path): per channel `next = clamp(prior + alpha_phasic*(drive-prior) + alpha_tonic*(baseline-prior))`,
+  phasic fast and tonic slow (`0 < alpha_tonic < alpha_phasic <= 1`, under the
+  `decay_speed_persistence` category, P5-learnable). The instantaneous drive stays owned by the
+  injected path; the cross-tick carry/decay is the new `04`-owned semantic. `NeuromodulatorUpdatePath`
+  /`update_state` gain an additive optional `prior_levels`/`prior_state` (default `None` reproduces
+  the stateless behavior byte-for-byte); `NeuromodulatorRuntimeStage` holds the prior-tick state
+  (like 09/18) and exposes `seed_prior_state`. Cold start (no prior / cold checkpoint) defaults
+  prior to the tonic baseline (one step from baseline; no fabricated history); the integrator is
+  bounded (clamped, alpha in (0,1]); an unstable alpha ordering is rejected at construction. The
+  R42 snapshot is bumped to version 2 with a `neuromodulator_levels` field, so `04` survives a
+  restart (save reads the published levels, restore seeds the stage); a version mismatch or corrupt
+  levels hard-stop on load (no v1 migration). Default/recency/offline keep the stateless constant
+  `04`. Deferred: cross-channel coupling, P5 coefficient learning, cortisol/inhibition hard gate.
 - Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
   signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
   produces them today — the sensory sources emit only text, so `internal_signals` is always empty

@@ -428,8 +428,9 @@ class FirstVersionNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
         batch,
         config: NeuromodulatorConfig,
         tick_id: int | None,
+        prior_levels: NeuromodulatorLevels | None = None,
     ) -> NeuromodulatorLevels:
-        del batch, config, tick_id
+        del batch, config, tick_id, prior_levels
         return NeuromodulatorLevels(
             dopamine=0.6,
             norepinephrine=0.4,
@@ -528,8 +529,9 @@ class AppraisalDerivedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
         batch,
         config: NeuromodulatorConfig,
         tick_id: int | None,
+        prior_levels: NeuromodulatorLevels | None = None,
     ) -> NeuromodulatorLevels:
-        del tick_id
+        del tick_id, prior_levels
         salience = _aggregate_salience(batch)
         base = config.tonic_baseline
         low = config.legal_min
@@ -900,6 +902,7 @@ class ContinuityCheckpointBridge:
         thought_gating_stage_result,
         autonomy_stage_result,
         tick_id,
+        neuromodulator_stage_result=None,
     ) -> RuntimeContinuitySnapshot:
         """Owner: composition.
 
@@ -913,6 +916,8 @@ class ContinuityCheckpointBridge:
                 `result.deferred_records` and `result.long_horizon_state.threads` are the
                 `18`/`24` cross-tick state).
             `tick_id` - the completed tick id.
+            `neuromodulator_stage_result` - optional `NeuromodulatorStageResult`; when present its
+                `state.levels` (the R43 cross-tick `04` state) are captured into the snapshot.
 
         Returns:
             A `RuntimeContinuitySnapshot` carrying the published cross-tick state verbatim.
@@ -921,11 +926,46 @@ class ContinuityCheckpointBridge:
             Copies owner-published values only; preserves no private state and computes nothing.
         """
 
+        levels = (
+            neuromodulator_stage_result.state.levels
+            if neuromodulator_stage_result is not None
+            else None
+        )
         return RuntimeContinuitySnapshot(
             tick_id=tick_id,
             continuation_state=thought_gating_stage_result.continuation_state,
             deferred_records=autonomy_stage_result.result.deferred_records,
             continuity_threads=autonomy_stage_result.result.long_horizon_state.threads,
+            neuromodulator_levels=levels,
+        )
+
+    def restore_neuromodulator_state(self, snapshot: RuntimeContinuitySnapshot):
+        """Owner: composition.
+
+        Purpose:
+            Reconstruct a `NeuromodulatorState` from a snapshot's `04` levels so composition can
+            seed the `04` stage's prior state on restart, or return `None` when the snapshot
+            carries no levels (a pre-`04`-checkpoint or stateless snapshot).
+
+        Inputs:
+            `snapshot` - the loaded `RuntimeContinuitySnapshot`.
+
+        Returns:
+            A `NeuromodulatorState` carrying the restored levels with a restore-provenance id, or
+            `None`.
+
+        Notes:
+            Owner-neutral: it only wraps the owner-published levels back into the owner's own state
+            contract (running that contract's validation). It computes no dynamics.
+        """
+
+        if snapshot.neuromodulator_levels is None:
+            return None
+        return NeuromodulatorState(
+            state_id=f"neuromodulator-state:restored:{snapshot.tick_id if snapshot.tick_id is not None else 'na'}",
+            source_appraisal_batch_id="restored-from-continuity-checkpoint",
+            levels=snapshot.neuromodulator_levels,
+            tick_id=snapshot.tick_id,
         )
 
 

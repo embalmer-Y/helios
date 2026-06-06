@@ -75,6 +75,7 @@ class CountingUpdatePath(NeuromodulatorUpdatePath):
         batch: RapidAppraisalBatch,
         config: NeuromodulatorConfig,
         tick_id: int | None,
+        prior_levels: NeuromodulatorLevels | None = None,
     ) -> NeuromodulatorLevels:
         self.calls += 1
         assert config.decay_family == "dual_timescale_tonic_phasic"
@@ -113,6 +114,7 @@ class UnavailableUpdatePath(NeuromodulatorUpdatePath):
         batch: RapidAppraisalBatch,
         config: NeuromodulatorConfig,
         tick_id: int | None,
+        prior_levels: NeuromodulatorLevels | None = None,
     ) -> NeuromodulatorLevels:
         raise NeuromodulatorError("Required neuromodulator update capability is unavailable")
 
@@ -325,3 +327,104 @@ def test_derived_path_aggregates_batch_by_per_dimension_max() -> None:
     multi = _derived_levels(batch)
     single_max = _derived_levels(_batch_with(novelty=0.8))
     assert multi.norepinephrine == pytest.approx(single_max.norepinephrine)
+
+
+# --- Requirement 43: dual-timescale dynamics ---
+
+from helios_v2.neuromodulation import DualTimescaleNeuromodulatorUpdatePath
+
+
+@dataclass
+class _FixedDrivePath(NeuromodulatorUpdatePath):
+    """Inner drive path returning a fixed level vector regardless of batch (test double)."""
+
+    drive_value: float = 0.9
+
+    def update_levels(self, batch, config, tick_id, prior_levels=None):
+        del batch, config, tick_id, prior_levels
+        return _build_levels(self.drive_value)
+
+
+def test_dual_timescale_cold_start_is_one_step_from_baseline() -> None:
+    # Cold prior (None) => prior = tonic baseline (0.3); one phasic+tonic step toward drive 0.9.
+    path = DualTimescaleNeuromodulatorUpdatePath(
+        drive_path=_FixedDrivePath(0.9), alpha_phasic=0.6, alpha_tonic=0.1
+    )
+    config = _build_config()
+    levels = path.update_levels(_build_batch(), config, tick_id=1, prior_levels=None)
+    # next = 0.3 + 0.6*(0.9-0.3) + 0.1*(0.3-0.3) = 0.3 + 0.36 = 0.66
+    assert levels.dopamine == pytest.approx(0.66, abs=1e-4)
+
+
+def test_dual_timescale_phasic_carry_then_tonic_regression() -> None:
+    config = _build_config()
+    path = DualTimescaleNeuromodulatorUpdatePath(
+        drive_path=_FixedDrivePath(0.9), alpha_phasic=0.6, alpha_tonic=0.1
+    )
+    # Tick 1 (cold): 0.66 as above.
+    t1 = path.update_levels(_build_batch(), config, tick_id=1, prior_levels=None)
+    # Tick 2 with a LOW drive (0.3 == baseline): level must stay ABOVE baseline (phasic carry),
+    # i.e. it does not snap back to baseline in one tick.
+    low_drive = DualTimescaleNeuromodulatorUpdatePath(
+        drive_path=_FixedDrivePath(0.3), alpha_phasic=0.6, alpha_tonic=0.1
+    )
+    t2 = low_drive.update_levels(_build_batch(), config, tick_id=2, prior_levels=t1)
+    assert t2.dopamine < t1.dopamine          # decays
+    assert t2.dopamine > config.tonic_baseline.dopamine  # but still above baseline (carry)
+    # Repeated low-drive ticks regress monotonically toward baseline.
+    t3 = low_drive.update_levels(_build_batch(), config, tick_id=3, prior_levels=t2)
+    assert config.tonic_baseline.dopamine <= t3.dopamine < t2.dopamine
+
+
+def test_dual_timescale_stays_bounded_over_many_ticks() -> None:
+    config = _build_config()
+    path = DualTimescaleNeuromodulatorUpdatePath(
+        drive_path=_FixedDrivePath(1.0), alpha_phasic=0.9, alpha_tonic=0.2
+    )
+    prior = None
+    for tick in range(1, 50):
+        levels = path.update_levels(_build_batch(), config, tick_id=tick, prior_levels=prior)
+        for channel in (
+            "dopamine",
+            "norepinephrine",
+            "serotonin",
+            "acetylcholine",
+            "cortisol",
+            "oxytocin",
+            "opioid_tone",
+            "excitation",
+            "inhibition",
+        ):
+            value = getattr(levels, channel)
+            assert 0.0 <= value <= 1.0
+        prior = levels
+
+
+def test_dual_timescale_rejects_unstable_alpha_ordering() -> None:
+    with pytest.raises(NeuromodulatorError, match="alpha"):
+        DualTimescaleNeuromodulatorUpdatePath(
+            drive_path=_FixedDrivePath(0.9), alpha_phasic=0.1, alpha_tonic=0.6
+        )
+    with pytest.raises(NeuromodulatorError, match="alpha"):
+        DualTimescaleNeuromodulatorUpdatePath(
+            drive_path=_FixedDrivePath(0.9), alpha_phasic=1.5, alpha_tonic=0.1
+        )
+    with pytest.raises(NeuromodulatorError, match="alpha"):
+        DualTimescaleNeuromodulatorUpdatePath(
+            drive_path=_FixedDrivePath(0.9), alpha_phasic=0.6, alpha_tonic=0.0
+        )
+
+
+def test_dual_timescale_engine_carries_prior_state_across_calls() -> None:
+    config = _build_config()
+    engine = NeuromodulatorEngine(
+        config=config,
+        update_path=DualTimescaleNeuromodulatorUpdatePath(
+            drive_path=_FixedDrivePath(0.9), alpha_phasic=0.6, alpha_tonic=0.1
+        ),
+        active_channel_reporter=CountingReporter(),
+    )
+    s1 = engine.update_state(_build_batch(), tick_id=1, prior_state=None)
+    s2 = engine.update_state(_build_batch(), tick_id=2, prior_state=s1)
+    # With a sustained high drive, level rises further on tick 2 than the cold-start tick 1.
+    assert s2.levels.dopamine > s1.levels.dopamine

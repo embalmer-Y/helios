@@ -29,6 +29,19 @@ from .contracts import (
 )
 
 
+_NEUROMODULATOR_CHANNELS: tuple[str, ...] = (
+    "dopamine",
+    "norepinephrine",
+    "serotonin",
+    "acetylcholine",
+    "cortisol",
+    "oxytocin",
+    "opioid_tone",
+    "excitation",
+    "inhibition",
+)
+
+
 def _validate_appraisal_batch(batch: RapidAppraisalBatch) -> None:
     if not batch.batch_id:
         raise NeuromodulatorError("RapidAppraisalBatch must declare a non-empty batch_id")
@@ -50,6 +63,7 @@ class NeuromodulatorUpdatePath(Protocol):
         batch: RapidAppraisalBatch,
         config: NeuromodulatorConfig,
         tick_id: int | None,
+        prior_levels: "NeuromodulatorLevels | None" = None,
     ) -> NeuromodulatorLevels:
         """Owner: neuromodulator system.
 
@@ -57,7 +71,9 @@ class NeuromodulatorUpdatePath(Protocol):
             Produce the next independently modeled neuromodulator levels.
 
         Inputs:
-            A validated `RapidAppraisalBatch`, one owner `NeuromodulatorConfig`, and an optional runtime tick id.
+            A validated `RapidAppraisalBatch`, one owner `NeuromodulatorConfig`, an optional runtime
+            tick id, and the optional prior-tick `NeuromodulatorLevels` (`None` on a cold start or
+            for a stateless path).
 
         Returns:
             One `NeuromodulatorLevels` value within contract range.
@@ -66,7 +82,10 @@ class NeuromodulatorUpdatePath(Protocol):
             NeuromodulatorError if the required update capability is unavailable or unsafe.
 
         Notes:
-            This interface is injected into the owner skeleton so unresolved modulation semantics are not guessed here.
+            `prior_levels` is additive (default `None`). A stateless path (constant or
+            instantaneous-drive) must ignore it and reproduce its prior behavior byte-for-byte; a
+            temporal (dual-timescale) path uses it as the integrator's prior state, treating `None`
+            as a cold start (the tonic baseline).
         """
 
 
@@ -117,14 +136,21 @@ class NeuromodulatorEngine(NeuromodulatorSystemAPI):
     update_path: NeuromodulatorUpdatePath
     active_channel_reporter: ActiveChannelReporter
 
-    def update_state(self, batch: RapidAppraisalBatch, tick_id: int | None = None) -> NeuromodulatorState:
+    def update_state(
+        self,
+        batch: RapidAppraisalBatch,
+        tick_id: int | None = None,
+        prior_state: NeuromodulatorState | None = None,
+    ) -> NeuromodulatorState:
         """Owner: neuromodulator system.
 
         Purpose:
             Consume one rapid appraisal batch and return one neuromodulator state snapshot.
 
         Inputs:
-            A `RapidAppraisalBatch` emitted by rapid salience appraisal and an optional runtime tick id.
+            A `RapidAppraisalBatch` emitted by rapid salience appraisal, an optional runtime tick
+            id, and the optional prior-tick `NeuromodulatorState` (`None` on a cold start or for a
+            stateless path).
 
         Returns:
             A `NeuromodulatorState` containing independently modeled channel levels.
@@ -133,11 +159,15 @@ class NeuromodulatorEngine(NeuromodulatorSystemAPI):
             NeuromodulatorError when batch invariants or update-path outputs are invalid.
 
         Notes:
-            Remaining unresolved modulation semantics stay inside the injected update path.
+            `prior_state` is additive (default `None`). The engine forwards `prior_state.levels`
+            (or `None`) to the injected update path; a stateless path ignores it and a
+            dual-timescale path uses it as the integrator's prior. Remaining unresolved modulation
+            semantics stay inside the injected update path.
         """
 
         _validate_appraisal_batch(batch)
-        levels = self.update_path.update_levels(batch, self.config, tick_id)
+        prior_levels = prior_state.levels if prior_state is not None else None
+        levels = self.update_path.update_levels(batch, self.config, tick_id, prior_levels)
         return NeuromodulatorState(
             state_id=f"neuromodulator-state:{batch.batch_id}:{tick_id if tick_id is not None else 'na'}",
             source_appraisal_batch_id=batch.batch_id,
@@ -202,3 +232,80 @@ class NeuromodulatorEngine(NeuromodulatorSystemAPI):
             source_appraisal_batch_id=state.source_appraisal_batch_id,
             active_channels=tuple(sorted(active_channels)),
         )
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    """Owner: neuromodulator system. Clamp a value into [low, high]."""
+
+    return round(min(high, max(low, value)), 4)
+
+
+@dataclass
+class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
+    """Owner: neuromodulator system (R43).
+
+    Purpose:
+        Add the temporal (dual-timescale) layer the `04` contract already reserves
+        (`decay_family = "dual_timescale_tonic_phasic"`, `decay_speed_persistence`). It wraps an
+        inner `drive_path` (the R36 appraisal-derived instantaneous drive) and applies a
+        leaky-integrator step against the prior-tick levels, so the neuromodulator state evolves
+        across ticks instead of being recomputed from baseline each tick (advancing FG-2).
+
+    Failure semantics:
+        Construction raises `NeuromodulatorError` unless `0 < alpha_tonic < alpha_phasic <= 1`, so
+        an unstable or non-decaying integrator cannot be assembled. The update itself is a total
+        deterministic function; every channel is clamped to the legal range, so it never diverges.
+
+    Notes:
+        The instantaneous drive stays owned by the injected inner path; this owner-owned wrapper
+        owns only the cross-tick carry/decay semantic. Per channel:
+        `next = clamp(prior + alpha_phasic * (drive - prior) + alpha_tonic * (baseline - prior))`.
+        `alpha_phasic` is the fast stimulus-tracking rate; `alpha_tonic` is the slow
+        baseline-regression rate. A `None` `prior_levels` is a cold start: the prior defaults to the
+        tonic baseline, so the first tick is one integrator step from baseline (no fabricated
+        history). The coefficients are explicit bounded first-version constants under the config's
+        declared `decay_speed_persistence` learned-parameter category; a later P5 slice tunes them
+        without changing the integrator shape. Cross-channel coupling remains a later slice.
+    """
+
+    drive_path: NeuromodulatorUpdatePath
+    alpha_phasic: float = 0.6
+    alpha_tonic: float = 0.1
+
+    def __post_init__(self) -> None:
+        if not (0.0 < self.alpha_tonic < self.alpha_phasic <= 1.0):
+            raise NeuromodulatorError(
+                "DualTimescaleNeuromodulatorUpdatePath requires 0 < alpha_tonic < alpha_phasic <= 1"
+            )
+
+    def update_levels(
+        self,
+        batch: RapidAppraisalBatch,
+        config: NeuromodulatorConfig,
+        tick_id: int | None,
+        prior_levels: NeuromodulatorLevels | None = None,
+    ) -> NeuromodulatorLevels:
+        """Return the next levels as one leaky-integrator step from the prior toward the drive.
+
+        The inner drive path produces the instantaneous appraisal-derived target; this method
+        moves the prior levels a phasic step toward that drive and a tonic step toward the
+        baseline, clamping each channel. `prior_levels is None` is a cold start (prior = baseline).
+        """
+
+        drive = self.drive_path.update_levels(batch, config, tick_id, None)
+        prior = prior_levels if prior_levels is not None else config.tonic_baseline
+        baseline = config.tonic_baseline
+        low = config.legal_min
+        high = config.legal_max
+        next_values: dict[str, float] = {}
+        for channel in _NEUROMODULATOR_CHANNELS:
+            prior_value = getattr(prior, channel)
+            drive_value = getattr(drive, channel)
+            baseline_value = getattr(baseline, channel)
+            stepped = (
+                prior_value
+                + self.alpha_phasic * (drive_value - prior_value)
+                + self.alpha_tonic * (baseline_value - prior_value)
+            )
+            next_values[channel] = _clamp(stepped, getattr(low, channel), getattr(high, channel))
+        return NeuromodulatorLevels(**next_values)

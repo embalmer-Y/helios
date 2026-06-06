@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R42（耐久运行时连续性检查点；P2 第三刀,跨 tick 连续性可跨重启续存）。测试基线：560 passed。版本：R42。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R43（`04` 双时间尺度神经调质动力学 + 纳入检查点；`04` 跨 tick 演化并跨重启续存）。测试基线：573 passed。版本：R43。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -43,7 +43,7 @@ flowchart TD
     BODY["内部身体信号 - 内感受来源: 留白,目前无生产者(见 gap_interoceptive_signal_source)"]:::gap
     S02[02 感觉接入 - 相对完整]:::deep
     S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
-    S04["04 神经调质系统 - 已由appraisal推导(语义)/无状态"]:::base
+    S04["04 神经调质系统 - appraisal推导+双时间尺度(语义)/跨tick演化"]:::base
     S05["05 内感受体感层 - 神经调质推导(语义)/无状态"]:::base
     S06[06 记忆情感与重放 - 基线/输入仍shim]:::base
     S07[07 工作空间竞争 - 基线/输入仍shim]:::base
@@ -83,7 +83,7 @@ flowchart TD
     TH24[24 连续性线程 - 完成,现已激活]:::infra
     PER[33 持久化经验存储 - 基础设施完成,opt-in]:::infra
     EMB[34 Embedding 网关 - 基础设施完成,opt-in]:::infra
-    CKPT[42 连续性检查点 - 基础设施完成,opt-in]:::infra
+    CKPT[42/43 连续性检查点 - 基础设施完成,opt-in]:::infra
     K01 -. 启动门+调度 .-> S02
     OBS -. 每tick时间线 .-> EV23
     EV23 --> S17
@@ -94,8 +94,10 @@ flowchart TD
     EMB -. 写时embed + 查询时embed(opt-in语义) .-> PER
     S09 -. 延续压力(tick后保存) .-> CKPT
     S18 -. 延迟记录+线程(tick后保存) .-> CKPT
+    S04 -. 神经调质levels(tick后保存,R43) .-> CKPT
     CKPT -. 启动时恢复,种入上次跨tick状态(opt-in) .-> S09
     CKPT -. 启动时恢复,种入上次跨tick状态(opt-in) .-> S18
+    CKPT -. 启动时恢复04 levels(opt-in,R43) .-> S04
 ```
 
 ## 4. 状态小结
@@ -188,6 +190,16 @@ flowchart TD
   （持久化的是不同状态）。重建跑 owner 自己的校验；冷库保持惰性默认；损坏快照在 load 时 fail-fast；
   `continuity_checkpoint_ready` 在后端不可初始化时 fail-fast；启用后无降级路径。`04`/`05`/`14`/`06` 状态在范围外
   （当前非跨 tick 进程内状态；快照已版本化以便后续增量扩展）。关闭时默认/33/34/channel-bound 装配字节级不变。
+- P2/P3 铰链（R43）：`04` 神经调质现在跨 tick 演化。语义装配下 `04` 更新路径从无状态换成 owner 持有的
+  双时间尺度 leaky-integrator（`DualTimescaleNeuromodulatorUpdatePath` 包裹 R36 的瞬时 drive path）：
+  每通道 `next = clamp(prior + alpha_phasic*(drive-prior) + alpha_tonic*(baseline-prior))`,相位快、张力慢
+  （`0 < alpha_tonic < alpha_phasic <= 1`,挂 `decay_speed_persistence` 类别,P5 可学）。瞬时 drive 仍归注入路径;
+  跨 tick carry/衰减是新的 `04` owner 语义。`NeuromodulatorUpdatePath`/`update_state` 加可选 `prior_levels`/
+  `prior_state`（默认 None 字节级复刻无状态行为）;`NeuromodulatorRuntimeStage` 像 09/18 一样持有上一 tick 状态
+  并提供 `seed_prior_state` 恢复口。冷启动（无 prior/冷检查点）prior=tonic baseline（从基线一步,无伪造历史）;
+  积分器有界（clamp,alpha∈(0,1]）;不稳定 alpha 在构造期被拒。R42 快照升到 version 2 并加 `neuromodulator_levels`
+  字段,故 `04` 跨重启续存（保存读已发布 levels,恢复 seed stage）;版本不符或 levels 损坏在 load 时 fail-fast（不迁移 v1）。
+  默认/recency/离线保持无状态常量 `04`。延后:跨通道耦合、P5 系数学习、cortisol/inhibition 硬门控。
 - 内感受来源留白（BODY 节点,红）：`05` 已建成可消费真实身体/内感受信号（feeling 阶段从 `02` 批次按 body/interoceptive
   modality 筛选）,但当前没有任何东西生产它们——sensory 源只产生 text,故 `internal_signals` 恒为空,体感仅由 `04`
   神经调质状态推导。BODY 节点是只有接口、无 owner 生产者的占位。真实生产者属后续 owner：模拟身体状态模型,或把

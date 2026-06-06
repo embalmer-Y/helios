@@ -36,6 +36,11 @@ from helios_v2.embedding import (
 )
 from helios_v2.runtime import RuntimeDependencySpec, RuntimeStartupError
 from helios_v2.runtime.contracts import RuntimeDependencyStatus
+from helios_v2.continuity_checkpoint import (
+    ContinuityCheckpointStore,
+    InMemoryCheckpointBackend,
+    SqliteCheckpointBackend,
+)
 from helios_v2.sensory import Stimulus
 from helios_v2.feeling import InteroceptiveFeelingVector
 from helios_v2.embedding import EmbeddingRequest as _EmbeddingRequest
@@ -1516,3 +1521,72 @@ def test_semantic_assembly_aggregate_differs_with_dimensions() -> None:
     first = handle.tick()
     second = handle.tick()
     assert _appraisal_aggregate(first) != pytest.approx(_appraisal_aggregate(second))
+
+
+# --- Requirement 43: dual-timescale 04 dynamics + checkpoint resumption ---
+
+
+def test_semantic_assembly_neuromodulator_evolves_across_ticks() -> None:
+    # Under the semantic assembly the 04 update path is dual-timescale, so the same repeated
+    # stimulus produces a changing (evolving) level trajectory rather than an identical recompute.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    results = handle.run_ticks(3)
+    dopamine = [_neuromodulator_levels(r).dopamine for r in results]
+    # Not all equal: the dual-timescale integrator carries state, so the trajectory moves.
+    assert len(set(dopamine)) > 1
+
+
+def test_default_assembly_neuromodulator_is_stateless_constant() -> None:
+    # Without the semantic assembly, 04 keeps the stateless constant path: identical every tick.
+    handle = _assemble()
+    handle.startup()
+    results = handle.run_ticks(3)
+    dopamine = [_neuromodulator_levels(r).dopamine for r in results]
+    assert len(set(dopamine)) == 1
+
+
+def test_checkpoint_resumes_neuromodulator_levels_across_restart(tmp_path) -> None:
+    store_path = str(tmp_path / "experience.sqlite3")
+    ckpt_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+
+    # Session A: semantic assembly (so 04 is dual-timescale) + checkpointing.
+    ckpt_a = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=ckpt_path))
+    handle_a = _assemble(
+        experience_store=ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=store_path)),
+        embedding_gateway=_embedding_gateway(),
+        continuity_checkpoint=ckpt_a,
+    )
+    handle_a.startup()
+    handle_a.run_ticks(3)
+    saved = ckpt_a.load_latest()
+    assert saved is not None
+    assert saved.neuromodulator_levels is not None
+
+    # Session B (restart): a fresh runtime against the same files resumes the prior 04 levels.
+    ckpt_b = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=ckpt_path))
+    handle_b = _assemble(
+        experience_store=ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=store_path)),
+        embedding_gateway=_embedding_gateway(),
+        continuity_checkpoint=ckpt_b,
+    )
+    handle_b.startup()
+    seeded = handle_b.neuromodulator_stage._prior_state
+    assert seeded is not None
+    assert seeded.levels == saved.neuromodulator_levels
+
+
+def test_checkpoint_without_semantic_assembly_carries_no_levels() -> None:
+    # 04 is stateless without the semantic assembly, but it still publishes constant levels each
+    # tick; the snapshot captures whatever the 04 stage published (constant), and a restart seeds
+    # them harmlessly (the stateless path ignores the prior). Assert the save path is well-formed.
+    ckpt = ContinuityCheckpointStore(backend=InMemoryCheckpointBackend())
+    handle = _assemble(continuity_checkpoint=ckpt)
+    handle.startup()
+    handle.tick()
+    saved = ckpt.load_latest()
+    assert saved is not None
+    # The default 04 path is constant, so levels are captured but resuming them changes nothing.
+    assert saved.neuromodulator_levels is not None

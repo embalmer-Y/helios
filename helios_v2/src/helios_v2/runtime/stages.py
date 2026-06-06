@@ -812,6 +812,11 @@ class NeuromodulatorRuntimeStage(RuntimeStage):
 
     neuromodulator_system: NeuromodulatorSystemAPI
     upstream_stage_name: str = "rapid_salience_appraisal"
+    _prior_state: NeuromodulatorState | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     @property
     def stage_name(self) -> str:
@@ -819,12 +824,40 @@ class NeuromodulatorRuntimeStage(RuntimeStage):
 
         return "neuromodulator_system"
 
+    def seed_prior_state(self, state: NeuromodulatorState) -> None:
+        """Owner: neuromodulator system (composition-time restore seam, R43).
+
+        Purpose:
+            Seed the stage's prior `04` state before the first tick, so a restarted runtime
+            resumes its dual-timescale neuromodulator trajectory instead of recomputing from the
+            tonic baseline.
+
+        Inputs:
+            `state` - the owner-validated `NeuromodulatorState` to resume from.
+
+        Returns:
+            None.
+
+        Notes:
+            One-shot composition-time seed point, not a per-tick mutator. The cross-tick field
+            remains owned by this stage; composition only restores it. Each tick still overwrites
+            it with the state produced this tick. Harmless for the stateless (non-dual-timescale)
+            assembly, whose update path ignores the prior levels.
+        """
+
+        self._prior_state = state
+
     def run(self, frame: RuntimeFrame) -> NeuromodulatorStageResult:
         """Execute neuromodulator update against the declared upstream appraisal stage result."""
 
         appraisal_result = _require_stage_result(frame, self.upstream_stage_name, RapidSalienceAppraisalStageResult)
         update_op = self.neuromodulator_system.build_update_op(appraisal_result.batch)
-        state = self.neuromodulator_system.update_state(appraisal_result.batch, tick_id=frame.tick_id)
+        state = self.neuromodulator_system.update_state(
+            appraisal_result.batch,
+            tick_id=frame.tick_id,
+            prior_state=self._prior_state,
+        )
+        self._prior_state = state
         publish_op = self.neuromodulator_system.build_publish_state_op(state)
         return NeuromodulatorStageResult(
             update_op=update_op,

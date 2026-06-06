@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helios_v2.autonomy import ContinuityThread, DeferredContinuityRecord
+from helios_v2.neuromodulation import NeuromodulatorLevels
 from helios_v2.thought_gating import ContinuationPressureState
 
 from .contracts import (
@@ -26,6 +27,35 @@ from .contracts import (
     RuntimeContinuitySnapshot,
     SNAPSHOT_VERSION,
 )
+
+_NEUROMODULATOR_CHANNELS: tuple[str, ...] = (
+    "dopamine",
+    "norepinephrine",
+    "serotonin",
+    "acetylcholine",
+    "cortisol",
+    "oxytocin",
+    "opioid_tone",
+    "excitation",
+    "inhibition",
+)
+
+
+def _encode_neuromodulator_levels(levels: NeuromodulatorLevels) -> dict[str, float]:
+    """Owner: durable runtime-continuity checkpoint. Project `04` levels to a plain dict."""
+
+    return {channel: getattr(levels, channel) for channel in _NEUROMODULATOR_CHANNELS}
+
+
+def _decode_neuromodulator_levels(payload: dict[str, object]) -> NeuromodulatorLevels:
+    """Owner: durable runtime-continuity checkpoint. Reconstruct the `04` levels contract.
+
+    Runs the `04` owner's own level-range validation, so a corrupt stored level hard-stops.
+    """
+
+    return NeuromodulatorLevels(
+        **{channel: float(payload[channel]) for channel in _NEUROMODULATOR_CHANNELS}
+    )
 
 
 def _encode_continuation_state(state: ContinuationPressureState) -> dict[str, object]:
@@ -149,6 +179,11 @@ def encode_snapshot(snapshot: RuntimeContinuitySnapshot) -> str:
                 "continuity_threads": [
                     _encode_thread(thread) for thread in snapshot.continuity_threads
                 ],
+                "neuromodulator_levels": (
+                    _encode_neuromodulator_levels(snapshot.neuromodulator_levels)
+                    if snapshot.neuromodulator_levels is not None
+                    else None
+                ),
             },
             sort_keys=True,
         )
@@ -170,13 +205,14 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
         The reconstructed `RuntimeContinuitySnapshot`.
 
     Raises:
-        CheckpointError on non-JSON, a non-object payload, or a missing/malformed field. An
-        invariant-violating reconstructed owner state raises that owner's own error, which is
-        wrapped here into a `CheckpointError` so a corrupt snapshot is always a hard stop on load.
+        CheckpointError on non-JSON, a non-object payload, a snapshot version that does not match
+        the current `SNAPSHOT_VERSION`, or a missing/malformed field. An invariant-violating
+        reconstructed owner state raises that owner's own error, which is wrapped here into a
+        `CheckpointError` so a corrupt snapshot is always a hard stop on load.
 
     Notes:
-        A field absent in an older snapshot version reconstructs to the existing inert default
-        (empty deferred records / threads), never a fabricated value.
+        Version is not migrated: a payload whose `snapshot_version` differs from the current one is
+        rejected rather than silently upgraded (no production data exists to migrate).
     """
 
     try:
@@ -186,6 +222,12 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
     if not isinstance(data, dict):
         raise CheckpointError("Stored runtime-continuity snapshot must be a JSON object")
     try:
+        snapshot_version = int(data.get("snapshot_version", -1))
+        if snapshot_version != SNAPSHOT_VERSION:
+            raise CheckpointError(
+                f"Stored runtime-continuity snapshot version {snapshot_version} does not match "
+                f"the current version {SNAPSHOT_VERSION}; it is rejected rather than migrated"
+            )
         continuation_payload = data["continuation_state"]
         if not isinstance(continuation_payload, dict):
             raise CheckpointError("Stored snapshot continuation_state must be an object")
@@ -196,7 +238,12 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
         continuity_threads = tuple(
             _decode_thread(item) for item in data.get("continuity_threads", [])
         )
-        snapshot_version = int(data.get("snapshot_version", SNAPSHOT_VERSION))
+        levels_payload = data.get("neuromodulator_levels")
+        neuromodulator_levels = (
+            _decode_neuromodulator_levels(levels_payload)
+            if isinstance(levels_payload, dict)
+            else None
+        )
         tick_id_value = data.get("tick_id")
         tick_id = None if tick_id_value is None else int(tick_id_value)
     except CheckpointError:
@@ -204,14 +251,16 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
     except (KeyError, TypeError, ValueError) as error:
         raise CheckpointError(f"Stored runtime-continuity snapshot is malformed: {error}") from error
     except RuntimeError as error:
-        # An invariant-violating owner contract (e.g. ContinuationPressureState) raises its own
-        # *Error (a RuntimeError subclass). Wrap it so a corrupt snapshot is a hard stop on load.
+        # An invariant-violating owner contract (e.g. ContinuationPressureState, NeuromodulatorLevels)
+        # raises its own *Error (a RuntimeError subclass). Wrap it so a corrupt snapshot is a hard
+        # stop on load.
         raise CheckpointError(f"Stored runtime-continuity snapshot violates an owner invariant: {error}") from error
     return RuntimeContinuitySnapshot(
         tick_id=tick_id,
         continuation_state=continuation_state,
         deferred_records=deferred_records,
         continuity_threads=continuity_threads,
+        neuromodulator_levels=neuromodulator_levels,
         snapshot_version=snapshot_version,
     )
 

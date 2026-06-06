@@ -185,14 +185,21 @@ class NeuromodulatorSystemAPI(Protocol):
         Define the public owner-facing API from rapid appraisal into neuromodulator state update.
     """
 
-    def update_state(self, batch: RapidAppraisalBatch, tick_id: int | None = None) -> NeuromodulatorState:
+    def update_state(
+        self,
+        batch: RapidAppraisalBatch,
+        tick_id: int | None = None,
+        prior_state: "NeuromodulatorState | None" = None,
+    ) -> NeuromodulatorState:
         """Owner: neuromodulator system.
 
         Purpose:
             Consume one rapid appraisal batch and return one neuromodulator state snapshot.
 
         Inputs:
-            A `RapidAppraisalBatch` emitted by rapid salience appraisal and an optional runtime tick id.
+            A `RapidAppraisalBatch` emitted by rapid salience appraisal, an optional runtime tick
+            id, and the optional prior-tick `NeuromodulatorState` (`None` on a cold start or for a
+            stateless path).
 
         Returns:
             A `NeuromodulatorState` owned by neuromodulator system.
@@ -201,7 +208,9 @@ class NeuromodulatorSystemAPI(Protocol):
             NeuromodulatorError when required batch or update invariants are violated.
 
         Notes:
-            The returned state contains modulation semantics only, not feeling or action semantics.
+            `prior_state` is additive (default `None`); a stateless update path ignores it, a
+            dual-timescale path uses it as the integrator's prior. The returned state contains
+            modulation semantics only, not feeling or action semantics.
         """
 
         ...

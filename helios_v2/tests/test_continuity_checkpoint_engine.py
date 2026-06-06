@@ -10,7 +10,22 @@ from helios_v2.continuity_checkpoint import (
     RuntimeContinuitySnapshot,
     SqliteCheckpointBackend,
 )
+from helios_v2.neuromodulation import NeuromodulatorLevels
 from helios_v2.thought_gating import ContinuationPressureState
+
+
+def _levels(value: float = 0.42) -> NeuromodulatorLevels:
+    return NeuromodulatorLevels(
+        dopamine=value,
+        norepinephrine=value,
+        serotonin=value,
+        acetylcholine=value,
+        cortisol=value,
+        oxytocin=value,
+        opioid_tone=value,
+        excitation=value,
+        inhibition=value,
+    )
 
 
 def _snapshot(tick_id: int, *, level: float = 0.5, carry_count: int = 1) -> RuntimeContinuitySnapshot:
@@ -47,6 +62,7 @@ def _snapshot(tick_id: int, *, level: float = 0.5, carry_count: int = 1) -> Runt
                 last_carry_reason="recurring tendency",
             ),
         ),
+        neuromodulator_levels=_levels(0.3 + 0.01 * tick_id),
     )
 
 
@@ -140,6 +156,67 @@ def test_corrupt_stored_payload_raises_on_load(tmp_path) -> None:
     backend.initialize()
     # Write a non-JSON payload directly through the backend; load must hard-stop.
     backend.save_latest("{not valid json")
+    store = ContinuityCheckpointStore(backend=backend)
+    with pytest.raises(CheckpointError):
+        store.load_latest()
+
+
+# --- Requirement 43: snapshot v2 carries 04 neuromodulator levels ---
+
+
+def test_snapshot_round_trips_neuromodulator_levels(tmp_path) -> None:
+    db_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+    store = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=db_path))
+    snapshot = _snapshot(5)
+    store.save_latest(snapshot)
+    loaded = store.load_latest()
+    assert loaded is not None
+    assert loaded.neuromodulator_levels == snapshot.neuromodulator_levels
+    assert loaded.snapshot_version == 2
+
+
+def test_snapshot_without_levels_round_trips_as_none() -> None:
+    store = ContinuityCheckpointStore(backend=InMemoryCheckpointBackend())
+    snapshot = RuntimeContinuitySnapshot(
+        tick_id=1,
+        continuation_state=ContinuationPressureState.inactive(),
+    )
+    store.save_latest(snapshot)
+    loaded = store.load_latest()
+    assert loaded is not None
+    assert loaded.neuromodulator_levels is None
+
+
+def test_version_one_payload_is_rejected_not_migrated(tmp_path) -> None:
+    db_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+    backend = SqliteCheckpointBackend(db_path=db_path)
+    backend.initialize()
+    # A version-1 payload (the pre-R43 shape) must be rejected on load, not silently migrated.
+    backend.save_latest(
+        '{"snapshot_version": 1, "tick_id": 1, '
+        '"continuation_state": {"active": false, "level": 0.0, "origin_thought_id": "", '
+        '"reason": "", "expires_at_tick": 0, "carry_count": 0}, '
+        '"deferred_records": [], "continuity_threads": []}'
+    )
+    store = ContinuityCheckpointStore(backend=backend)
+    with pytest.raises(CheckpointError, match="version"):
+        store.load_latest()
+
+
+def test_corrupt_neuromodulator_levels_hard_stop_on_load(tmp_path) -> None:
+    db_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+    backend = SqliteCheckpointBackend(db_path=db_path)
+    backend.initialize()
+    # An out-of-range level (1.5) violates the 04 owner invariant; load must hard-stop.
+    backend.save_latest(
+        '{"snapshot_version": 2, "tick_id": 1, '
+        '"continuation_state": {"active": false, "level": 0.0, "origin_thought_id": "", '
+        '"reason": "", "expires_at_tick": 0, "carry_count": 0}, '
+        '"deferred_records": [], "continuity_threads": [], '
+        '"neuromodulator_levels": {"dopamine": 1.5, "norepinephrine": 0.3, "serotonin": 0.3, '
+        '"acetylcholine": 0.3, "cortisol": 0.3, "oxytocin": 0.3, "opioid_tone": 0.3, '
+        '"excitation": 0.3, "inhibition": 0.3}}'
+    )
     store = ContinuityCheckpointStore(backend=backend)
     with pytest.raises(CheckpointError):
         store.load_latest()
