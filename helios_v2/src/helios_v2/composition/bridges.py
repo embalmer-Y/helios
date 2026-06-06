@@ -1352,7 +1352,7 @@ class FirstVersionThoughtGateSignalBridge:
         return ThoughtGateSignalSnapshot(
             snapshot_id=f"gate-snapshot:runtime:{tick_id}",
             source_conscious_state_id=conscious_result.state.state_id,
-            workload_pressure=0.1,
+            workload_pressure=_interoceptive_workload_pressure(frame),
             global_activation_level=0.9,
             temporal_signal=0.4,
             drive_urgency_signal=0.7,
@@ -1437,7 +1437,7 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
         return ThoughtGateSignalSnapshot(
             snapshot_id=f"gate-snapshot:runtime:{tick_id}",
             source_conscious_state_id=conscious_result.state.state_id,
-            workload_pressure=0.1,
+            workload_pressure=_interoceptive_workload_pressure(frame),
             global_activation_level=global_activation_level,
             temporal_signal=0.4,
             drive_urgency_signal=0.7,
@@ -1477,6 +1477,59 @@ def _workspace_activation(workspace_result) -> float:
     if not scores:
         return 0.0
     return round(min(1.0, max(0.0, max(scores))), 4)
+
+
+# R53: the interoceptive load channels (the R50 compute/runtime-pressure afferent) that ground the
+# `09` gate's `workload_pressure`. cpu+memory are the runtime-load channels; latency/error are
+# first-version injectable defaults in the R50 sampler and are not load-suppressive here.
+_WORKLOAD_PRESSURE_CHANNELS = frozenset({"cpu", "memory"})
+
+# Reserved interoceptive-afferent metadata keys the `50` runtime interoceptive source sets on each
+# interoceptive stimulus (mirrored here as the producer-side literals; the `05` feeling owner reads
+# the same keys for R51). These are owner-read transport facts, not a typed cross-owner contract.
+_PRESSURE_CHANNEL_METADATA_KEY = "pressure_channel"
+_PRESSURE_VALUE_METADATA_KEY = "pressure_value"
+
+
+def _interoceptive_workload_pressure(frame, default: float = 0.1) -> float:
+    """Owner: composition (R53). Derive the `09` gate `workload_pressure` from the `02` afferent.
+
+    Reads the current tick's `02` sensory batch for interoceptive cpu/memory load stimuli (the R50
+    afferent) and returns the maximum of their bounded `pressure_value`s (the dominant resource
+    pressure), or `default` when no recognized load stimulus is present (so an assembly without the
+    interoceptive source keeps the constant first-version value byte-for-byte).
+
+    Owner-neutral glue: it forwards a raw bounded load fact only; the gate weight and the
+    resource-pressure block threshold stay owned by the `09` thought-gating owner. It reads only the
+    reserved `pressure_channel`/`pressure_value` metadata the `50` producer set (never the content
+    string) and skips any stimulus whose channel is not a recognized load channel or whose value is
+    not a numeric in `[0,1]`, contributing nothing rather than raising or fabricating a load.
+    """
+
+    from helios_v2.runtime.stages import SensoryIngressStageResult
+
+    stage_results = frame.stage_results or {}
+    sensory = stage_results.get("sensory_ingress")
+    if not isinstance(sensory, SensoryIngressStageResult):
+        return default
+    pressures: list[float] = []
+    for stimulus in sensory.batch.stimuli:
+        if stimulus.modality != "interoceptive":
+            continue
+        metadata = stimulus.metadata or {}
+        channel = metadata.get(_PRESSURE_CHANNEL_METADATA_KEY)
+        value = metadata.get(_PRESSURE_VALUE_METADATA_KEY)
+        if channel not in _WORKLOAD_PRESSURE_CHANNELS:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        numeric = float(value)
+        if numeric < 0.0 or numeric > 1.0:
+            continue
+        pressures.append(numeric)
+    if not pressures:
+        return default
+    return _clamp(round(max(pressures), 4), 0.0, 1.0)
 
 
 @dataclass

@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R52 (`06` recalls prior affect-memories as additional replay candidates feeding `07`: the workspace competes over genuine multiplicity for the first time, R46/47/48 exercised end to end, opt-in semantic assembly). Test baseline: 678 passed. HEAD-era: R52. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R53 (`09` gate `workload_pressure` grounded in real compute/runtime load: R50 interoceptive cpu/memory forwarded through the gate-signal bridge in place of the constant 0.1; surfaced the gate-no-fire closure requirement). Test baseline: 685 passed. HEAD-era: R53. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -56,7 +56,7 @@ flowchart TD
     S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall + recalled affect-memory as multi-candidate (R52, semantic)"]:::base
     S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
-    S09["09 Thought Gating - NE arousal + workspace activation coupled (semantic)/other inputs shim"]:::base
+    S09["09 Thought Gating - NE arousal + workspace activation + workload_pressure from real load (R53, semantic)/other inputs shim"]:::base
     S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
@@ -429,6 +429,28 @@ flowchart TD
   embedding/store failure during recall is a hard stop (no silent single-candidate fallback). Opt-in on
   the semantic assembly; default/recency/non-semantic/offline assemblies byte-for-byte unchanged;
   existing store files read back. 664 -> 678 tests green and network-free.
+- P3 gate-input de-shim (R53): the `09` gate's `workload_pressure` is grounded in the runtime's real
+  compute/runtime load, the second consumer of the interoceptive afferent (after `05` feeling, R51).
+  Both gate-signal bridges hardcoded `workload_pressure=0.1`, yet in the `09` owner it is a real
+  load-suppressive term (subtractive `* 0.45` in the gate score, and above
+  `resource_pressure_block_threshold` with low continuation it blocks firing with
+  `resource_pressure_too_high`). An owner-neutral `_interoceptive_workload_pressure(frame)` helper
+  reads the R50 interoceptive cpu/memory load stimuli already present in the same tick's `02` batch
+  (from the reserved `pressure_channel`/`pressure_value` metadata; max per channel = dominant
+  resource pressure; unrecognized/out-of-range/non-numeric skipped, never raising) and both bridges
+  forward it in place of `0.1`. The `09` owner keeps sole ownership of the gate weight and block
+  threshold; the bridge forwards a raw bounded fact only and imports no interoception owner (the
+  afferent flows through `02`). Real machine load now monotonically raises the gate's resource-pressure
+  term, surfacing in `contributing_signals["workload_pressure"]`. **Surfaced constraint (recorded
+  honestly):** high real load now correctly drives the gate to `resource_pressure_too_high`/no-fire,
+  but the assembled chain has no gate-no-fire closure yet (directed retrieval raises on a non-fired
+  gate), so R53 exercises the real value end to end only within the firing window (cpu/memory up to
+  ~0.3 given the other first-version constant gate signals) and validates the
+  high-load -> high-`workload_pressure` -> block relationship at the owner-neutral helper level; the
+  full-range end-to-end exercise is unlocked by a dedicated **gate-no-fire tick-closure requirement**
+  (the gating-no-fire analog of R28's `internal_only` closure). Absence of a recognized load stimulus
+  keeps the constant `0.1` byte-for-byte, so the default, recency-only, channel-bound-without-interoception,
+  and semantic-without-sampler assemblies are unchanged. 678 -> 685 tests green and network-free.
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real

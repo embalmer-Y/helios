@@ -2135,8 +2135,10 @@ class _FixedInteroceptiveSampler:
     def sample(self):
         from helios_v2.interoception import RuntimePressureSample
 
+        # cpu/memory kept low so the R53 workload_pressure stays in the gate's firing window and
+        # the full tick completes; this test asserts the 02->05 afferent count, not gate behavior.
         return RuntimePressureSample(
-            cpu_pressure=0.5, memory_pressure=0.4, latency_pressure=0.0, error_pressure=0.0
+            cpu_pressure=0.2, memory_pressure=0.1, latency_pressure=0.0, error_pressure=0.0
         )
 
 
@@ -2204,8 +2206,11 @@ def test_r51_interoceptive_pressure_shapes_feeling_and_workspace_under_semantic_
     high = _assemble(
         experience_store=high_store,
         embedding_gateway=_embedding_gateway(),
+        # Drive felt stress through the latency/error channels (which feed tension/fatigue/pain)
+        # while keeping cpu/memory (the R53 workload channels) low, so the gate still fires and the
+        # full tick completes. The no-fire-on-high-compute-load chain closure is a future slice.
         interoceptive_sampler=_ConfigurableInteroceptiveSampler(
-            cpu=0.9, memory=0.9, latency=0.9, error=0.9
+            cpu=0.2, memory=0.2, latency=0.9, error=0.9
         ),
     )
     high.startup()
@@ -2337,3 +2342,146 @@ def test_r52_recency_only_assembly_has_single_candidate() -> None:
     handle.run_ticks(3)
     result = handle.tick()
     assert _workspace_candidate_count(result) == 1
+
+
+# --- Requirement 53: workload pressure from the interoceptive afferent ---
+
+
+def test_r53_workload_pressure_tracks_interoceptive_load() -> None:
+    # Under an interoceptive assembly, the 09 gate's workload_pressure is the max cpu/memory
+    # interoceptive load, not the constant 0.1. Kept within the firing window (load <= ~0.3) so the
+    # tick still completes; the no-fire-on-high-load chain closure is a separate future requirement.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(cpu=0.3, memory=0.2),
+    )
+    handle.startup()
+    result = handle.tick()
+    workload = _gate_result(result).contributing_signals["workload_pressure"]
+    assert workload == pytest.approx(0.3)  # max(cpu=0.3, memory=0.2)
+
+
+def test_r53_at_rest_interoception_yields_real_zero_workload() -> None:
+    # An at-rest sampler yields real 0.0 load, distinct from the constant 0.1 shim — proving the
+    # value is genuinely sourced from the afferent (and not the old constant).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(cpu=0.0, memory=0.0),
+    )
+    handle.startup()
+    result = handle.tick()
+    workload = _gate_result(result).contributing_signals["workload_pressure"]
+    assert workload == pytest.approx(0.0)
+
+
+def test_r53_higher_load_lowers_gate_score_within_firing_window() -> None:
+    # workload_pressure is subtractive in the gate score; higher real load lowers it. Both ticks
+    # stay within the firing window so the chain completes end to end.
+    low_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    low = _assemble(
+        experience_store=low_store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(cpu=0.0, memory=0.0),
+    )
+    low.startup()
+    low_result = low.tick()
+
+    high_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    high = _assemble(
+        experience_store=high_store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(cpu=0.3, memory=0.3),
+    )
+    high.startup()
+    high_result = high.tick()
+
+    low_gate = _gate_result(low_result)
+    high_gate = _gate_result(high_result)
+    assert (
+        high_gate.contributing_signals["workload_pressure"]
+        > low_gate.contributing_signals["workload_pressure"]
+    )
+    assert high_gate.gate_score < low_gate.gate_score
+
+
+def test_r53_default_assembly_keeps_constant_workload_pressure() -> None:
+    # No interoceptive source -> the gate keeps the constant 0.1 byte-for-byte.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    workload = _gate_result(result).contributing_signals["workload_pressure"]
+    assert workload == pytest.approx(0.1)
+
+
+def test_r53_semantic_without_sampler_keeps_constant_workload_pressure() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    result = handle.tick()
+    workload = _gate_result(result).contributing_signals["workload_pressure"]
+    assert workload == pytest.approx(0.1)
+
+
+def test_r53_helper_maps_high_load_to_high_workload_pressure() -> None:
+    # Owner-neutral helper: a high cpu/memory afferent maps to a high workload_pressure (>= the
+    # gate's resource_pressure_block_threshold of 0.9), which is what would drive the gate's
+    # documented resource-pressure block path. Tested at the helper level because the assembled
+    # chain has no no-fire closure yet (a future requirement).
+    from helios_v2.composition.bridges import _interoceptive_workload_pressure
+    from helios_v2.runtime.stages import RuntimeFrame, SensoryIngressStageResult
+    from helios_v2.sensory import SensoryIngress, RawSignal
+
+    ingress = SensoryIngress()
+
+    @dataclass
+    class _LoadSource:
+        source_name_value: str = "interoception"
+
+        @property
+        def source_name(self) -> str:
+            return self.source_name_value
+
+        def emit_raw_signals(self):
+            return (
+                RawSignal(
+                    signal_id="interoceptive:cpu",
+                    source_name="interoception",
+                    signal_type="interoceptive",
+                    content="cpu_pressure=0.9500",
+                    channel="interoception",
+                    metadata={"pressure_channel": "cpu", "pressure_value": 0.95},
+                    required=False,
+                ),
+                RawSignal(
+                    signal_id="interoceptive:memory",
+                    source_name="interoception",
+                    signal_type="interoceptive",
+                    content="memory_pressure=0.7000",
+                    channel="interoception",
+                    metadata={"pressure_channel": "memory", "pressure_value": 0.7},
+                    required=False,
+                ),
+            )
+
+    ingress.register_source(_LoadSource())
+    batch = ingress.collect_stimuli()
+    publish_op = ingress.build_publish_batch_op(batch)
+    frame = RuntimeFrame(
+        tick_id=1,
+        stage_results={"sensory_ingress": SensoryIngressStageResult(batch=batch, publish_op=publish_op)},
+    )
+    workload = _interoceptive_workload_pressure(frame)
+    assert workload == pytest.approx(0.95)  # max(cpu=0.95, memory=0.7)
+    assert workload >= 0.9  # would trigger the gate's resource-pressure block path
+
+
+def test_r53_helper_returns_default_without_interoceptive_stimuli() -> None:
+    from helios_v2.composition.bridges import _interoceptive_workload_pressure
+    from helios_v2.runtime.stages import RuntimeFrame
+
+    # No sensory result at all -> default 0.1.
+    assert _interoceptive_workload_pressure(RuntimeFrame(tick_id=1, stage_results={})) == pytest.approx(0.1)
