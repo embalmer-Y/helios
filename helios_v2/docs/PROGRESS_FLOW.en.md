@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R47 (`08` commitment de-shim: global-workspace ignition winner-take-all; retained multiplicity no longer treated as conflict). Test baseline: 626 passed. HEAD-era: R47. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R48 (`09` gate `global_activation_level` grounded in the real `07` workspace activation; the gate now consumes two real signals: arousal + activation). Test baseline: 631 passed. HEAD-era: R48. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -56,7 +56,7 @@ flowchart TD
     S06[06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall (semantic)]:::base
     S07[07 Workspace Competition - real competition + bounded attention bottleneck (semantic)]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); upstream 06/07 de-shimmed"]:::base
-    S09["09 Thought Gating - NE arousal coupled (semantic)/other inputs shim"]:::base
+    S09["09 Thought Gating - NE arousal + workspace activation coupled (semantic)/other inputs shim"]:::base
     S10[10 Directed Retrieval - baseline/shim in]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
@@ -337,6 +337,21 @@ flowchart TD
   now and becomes end-to-end visible once a multi-candidate source lands. 626 tests green and
   network-free. Deferred: genuine semantic-conflict detection, an LLM semantic renderer, P5
   ignition-threshold learning.
+- P3 mid-chain (R48): the `09` gate's `global_activation_level` (its second-largest non-stimulus
+  term, weight `* 0.20`) is de-shimmed from the constant `0.9` to the real `07` workspace
+  activation. Under the semantic assembly the gate-signal bridge sources it from the same tick's
+  `07` `WorkspaceCompetitionStageResult` — the maximum `workspace_score_hint` among the retained
+  working-state candidates (the dominant ignition strength held in attention), or `0.0` when
+  nothing is retained. Owner-neutral glue (the bridge forwards a raw bounded fact clamped to
+  `[0,1]`); `09` keeps sole ownership of the gate decision and the term weight. The R37 arousal
+  coupling is preserved (both real facts ride one snapshot). `07` runs before `09`, so a
+  missing/wrong-typed `07` result is a hard fail. No contract change; the real value surfaces in
+  `contributing_signals["global_activation_level"]`. Opt-in on the same switch; default/non-semantic
+  keep `0.9`. The other four constant gate inputs (`workload_pressure`, `temporal_signal`,
+  `drive_urgency_signal`, `dmn_available`) and the `selected_stimuli` projection remain first-version
+  constants (no real producer running before `09` yet — `drive_urgency_signal` is owned by `18`,
+  which runs after `09`; the rest need unowned compute/clock/DMN producers). 631 tests green and
+  network-free.
 - Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
   signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
   produces them today — the sensory sources emit only text, so `internal_signals` is always empty

@@ -1869,3 +1869,137 @@ def test_default_assembly_uses_count_based_commitment_policy() -> None:
     # Single retained candidate under the count-based default → committed (unchanged behavior).
     assert len(ws.retained_candidate_ids) == 1
     assert state.commit_status == "committed"
+
+
+# --- Requirement 48: workspace-grounded thought-gate activation ---
+
+
+def _gate_result(result):
+    return result.stage_results["thought_gating_and_continuation_pressure"].result
+
+
+def _max_retained_workspace_score(result) -> float:
+    ws = result.stage_results["workspace_competition_and_working_state"]
+    retained = set(ws.working_state.retained_candidate_ids)
+    scores = [
+        c.workspace_score_hint or 0.0
+        for c in ws.candidate_set.candidates
+        if c.candidate_id in retained
+    ]
+    return max(scores) if scores else 0.0
+
+
+def test_semantic_assembly_grounds_gate_activation_in_workspace() -> None:
+    # Under the semantic assembly, 09's global_activation_level equals the real 07 workspace
+    # activation (max retained workspace_score_hint), not the constant 0.9.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    for result in handle.run_ticks(3):
+        gate = _gate_result(result)
+        activation = gate.contributing_signals["global_activation_level"]
+        assert activation != 0.9  # not the constant shim
+        assert activation == pytest.approx(round(_max_retained_workspace_score(result), 4))
+        assert 0.0 <= activation <= 1.0
+
+
+def test_semantic_assembly_gate_activation_varies_across_ticks() -> None:
+    # The 07 score evolves across ticks (R44/R46 feeling momentum), so the grounded activation
+    # is not a fixed value.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    activations = [
+        _gate_result(result).contributing_signals["global_activation_level"]
+        for result in handle.run_ticks(3)
+    ]
+    assert len(set(activations)) > 1
+
+
+def test_semantic_assembly_preserves_arousal_coupling_with_grounded_activation() -> None:
+    # R37 regression guard: the real neuromodulatory_arousal coupling still rides the snapshot
+    # alongside the newly-grounded global_activation_level.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    gate = _gate_result(handle.tick())
+    assert "neuromodulatory_arousal" in gate.contributing_signals
+    assert "global_activation_level" in gate.contributing_signals
+
+
+def test_default_assembly_keeps_constant_gate_activation() -> None:
+    # Without the semantic opt-in, 09 keeps the constant global_activation_level = 0.9.
+    handle = _assemble()
+    handle.startup()
+    gate = _gate_result(handle.tick())
+    assert gate.contributing_signals["global_activation_level"] == 0.9
+    # And no arousal coupling on the default (first-version) bridge.
+    assert "neuromodulatory_arousal" not in gate.contributing_signals
+
+
+def test_workspace_activation_helper_behavior() -> None:
+    from helios_v2.composition.bridges import _workspace_activation
+    from helios_v2.workspace import WorkingStateSnapshot, WorkspaceCandidate, WorkspaceCandidateSet
+    from helios_v2.runtime.stages import WorkspaceCompetitionStageResult
+    from helios_v2.workspace import (
+        PublishWorkingStateOp,
+        PublishWorkspaceCandidateSetOp,
+        RunWorkspaceCompetitionOp,
+    )
+
+    def _candidate(cid: str, score: float) -> WorkspaceCandidate:
+        return WorkspaceCandidate(
+            candidate_id=cid,
+            source_memory_candidate_id=f"m:{cid}",
+            source_feeling_state_id="feeling:1",
+            priority_hint=0.5,
+            forced_consolidation=False,
+            workspace_score_hint=score,
+        )
+
+    def _result(retained_ids, candidates) -> WorkspaceCompetitionStageResult:
+        candidate_set = WorkspaceCandidateSet(
+            set_id="ws:1",
+            source_feeling_state_id="feeling:1",
+            candidates=candidates,
+            tick_id=1,
+        )
+        working_state = WorkingStateSnapshot(
+            state_id="working:1",
+            source_candidate_set_id="ws:1",
+            retained_candidate_ids=retained_ids,
+            tick_id=1,
+        )
+        return WorkspaceCompetitionStageResult(
+            run_op=RunWorkspaceCompetitionOp(
+                op_name="run_workspace_competition",
+                owner="workspace_competition_and_working_state",
+                candidate_count=len(candidates),
+                feeling_state_id="feeling:1",
+            ),
+            candidate_set=candidate_set,
+            working_state=working_state,
+            publish_candidate_set_op=PublishWorkspaceCandidateSetOp(
+                op_name="publish_workspace_candidate_set",
+                owner="workspace_competition_and_working_state",
+                set_id="ws:1",
+                candidate_count=len(candidates),
+                forced_candidate_count=0,
+            ),
+            publish_working_state_op=PublishWorkingStateOp(
+                op_name="publish_working_state_snapshot",
+                owner="workspace_competition_and_working_state",
+                state_id="working:1",
+                candidate_set_id="ws:1",
+                retained_candidate_count=len(retained_ids),
+            ),
+        )
+
+    # Max of retained scores.
+    cands = (_candidate("a", 0.3), _candidate("b", 0.8), _candidate("c", 0.5))
+    assert _workspace_activation(_result(("a", "b"), cands)) == pytest.approx(0.8)
+    # Empty retained → 0.0.
+    assert _workspace_activation(_result((), cands)) == 0.0
+    # Only the retained subset counts (c is not retained).
+    assert _workspace_activation(_result(("a", "c"), cands)) == pytest.approx(0.5)

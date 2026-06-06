@@ -1228,28 +1228,35 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
 
     Purpose:
         Build the normalized thought-gate signal snapshot exactly like the first-version
-        bridge, but additionally forward the real `04` norepinephrine level (already computed
-        this tick and present in the frame's stage results) as the raw `neuromodulatory_arousal`
-        fact.
+        bridge, but additionally forward two real upstream facts: the real `04` norepinephrine
+        level (R37) as `neuromodulatory_arousal`, and (R48) the real `07` workspace activation as
+        `global_activation_level` (the dominant ignition strength held in the working state),
+        replacing the constant `0.9`.
 
     Failure semantics:
-        The `04` neuromodulator stage runs before `09` in the canonical order, so its result must
-        be present. A missing or wrong-typed neuromodulator result is a hard fail (the existing
-        runtime stage error), never a silent uncoupled snapshot.
+        The `04` neuromodulator and `07` workspace stages both run before `09` in the canonical
+        order, so their results must be present. A missing or wrong-typed result of either is a
+        hard fail (the existing runtime stage error), never a silent uncoupled snapshot.
 
     Notes:
-        Owner-neutral glue. It forwards the raw norepinephrine level verbatim; it computes no
-        gate score and no activation mapping. The arousal-to-gate semantic is owned by the `09`
-        `ArousalAwareThoughtGatePath`, exactly as R35 keeps the novelty salience semantic in `03`
-        while composition only forwards the raw retrieval fact.
+        Owner-neutral glue. It forwards the raw norepinephrine level and the raw workspace
+        activation fact verbatim; it computes no gate score and no gate weighting. The
+        arousal-to-gate and activation-to-gate semantics are owned by the `09` gate path (its
+        existing weights), exactly as R35 keeps the novelty salience semantic in `03` while
+        composition only forwards the raw fact. The remaining gate-signal inputs
+        (`workload_pressure`, `temporal_signal`, `drive_urgency_signal`, `dmn_available`, and the
+        `selected_stimuli` projection) stay first-version constants this slice; they have no real
+        producer running before `09` yet (later slices).
     """
 
     neuromodulator_stage_name: str = "neuromodulator_system"
+    workspace_stage_name: str = "workspace_competition_and_working_state"
 
     def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
         from helios_v2.runtime.stages import (
             NeuromodulatorStageResult,
             RuntimeStageExecutionError,
+            WorkspaceCompetitionStageResult,
         )
 
         tick_id = frame.tick_id
@@ -1266,11 +1273,23 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
                 f"'{self.neuromodulator_stage_name}' result to be NeuromodulatorStageResult"
             )
         norepinephrine = neuromodulator_result.state.levels.norepinephrine
+        workspace_result = stage_results.get(self.workspace_stage_name)
+        if workspace_result is None:
+            raise RuntimeStageExecutionError(
+                "Workspace-grounded gate signal requires the upstream "
+                f"'{self.workspace_stage_name}' result before thought gating"
+            )
+        if not isinstance(workspace_result, WorkspaceCompetitionStageResult):
+            raise RuntimeStageExecutionError(
+                "Workspace-grounded gate signal expected the upstream "
+                f"'{self.workspace_stage_name}' result to be WorkspaceCompetitionStageResult"
+            )
+        global_activation_level = _workspace_activation(workspace_result)
         return ThoughtGateSignalSnapshot(
             snapshot_id=f"gate-snapshot:runtime:{tick_id}",
             source_conscious_state_id=conscious_result.state.state_id,
             workload_pressure=0.1,
-            global_activation_level=0.9,
+            global_activation_level=global_activation_level,
             temporal_signal=0.4,
             drive_urgency_signal=0.7,
             dmn_available=True,
@@ -1287,6 +1306,28 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
             tick_id=tick_id,
             neuromodulatory_arousal=norepinephrine,
         )
+
+
+def _workspace_activation(workspace_result) -> float:
+    """Owner: composition. Project the real `07` workspace activation for the `09` gate signal.
+
+    The global workspace's activation level is the strength of the dominant content it is
+    currently holding in attention: the maximum `workspace_score_hint` among the candidates
+    retained in the working state. An empty working state means the workspace did not ignite this
+    tick, yielding `0.0`. A candidate with no score floors to `0.0`. The result is clamped into
+    `[0, 1]` and rounded for determinism. This reads only already-published `07` values and
+    applies no gate semantic.
+    """
+
+    retained = set(workspace_result.working_state.retained_candidate_ids)
+    scores = [
+        candidate.workspace_score_hint or 0.0
+        for candidate in workspace_result.candidate_set.candidates
+        if candidate.candidate_id in retained
+    ]
+    if not scores:
+        return 0.0
+    return round(min(1.0, max(0.0, max(scores))), 4)
 
 
 @dataclass

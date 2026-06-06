@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R47（`08` 承诺去 shim：全局工作空间点火 winner-take-all,多数不再判冲突）。测试基线：626 passed。版本：R47。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R48（`09` 门控 `global_activation_level` 接真实 `07` 工作空间激活;门控现消费两个真实信号 arousal+activation）。测试基线：631 passed。版本：R48。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -48,7 +48,7 @@ flowchart TD
     S06[06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回(语义装配)]:::base
     S07[07 工作空间竞争 - 真实竞争+有界注意力瓶颈(语义装配)]:::base
     S08["08 可报告意识内容 - 真实点火承诺(语义装配);上游06/07已去shim"]:::base
-    S09["09 思考门控与延续压力 - NE arousal已耦合(语义)/其余输入仍shim"]:::base
+    S09["09 思考门控与延续压力 - NE arousal + 工作空间激活已耦合(语义)/其余输入仍shim"]:::base
     S10[10 定向检索 - 基线/输入仍shim]:::base
     S16P[16 具身prompt契约 - 基线]:::base
     S16O["16 外化表达草稿 - 仅草稿(非授权)"]:::base
@@ -240,6 +240,13 @@ flowchart TD
   `context_not_reportable`（焦点摘要空）;`semantic_conflict_unresolved` 留给后续真实冲突切片,不再因单纯多数触发。无契约/引擎/
   渲染器变更。opt-in 于与 R45/R46 同一开关;默认/非语义装配保持 count-based。端到端现状:链每 tick 只形成一个候选,故"多数→
   点火赢家"头条今天 owner 级验证,待多候选来源落地后端到端可见。618→626 测试全绿、离线。延后:真实语义冲突检测、LLM 语义渲染器、P5 学点火阈值。
+- P3 中段（R48）：`09` 门控的 `global_activation_level`（门控分中第二大的非刺激项,权重 `* 0.20`）从常量 `0.9` 去 shim,接真实 `07`
+  工作空间激活。语义装配下门控信号 bridge 从同 tick 的 `07` `WorkspaceCompetitionStageResult` 取保留候选中的最大 `workspace_score_hint`
+  （注意力中持有的主导点火强度,无保留则 `0.0`）。owner-neutral glue（bridge 只转发有界原始事实,clamp `[0,1]`）;`09` 仍独占门控决策与该项
+  权重。R37 的 arousal 耦合保留（两个真实事实同乘一快照）。`07` 在 `09` 前运行,缺失/类型错的 `07` 结果 hard fail。无契约变更;真实值现于
+  `contributing_signals["global_activation_level"]`。opt-in 于同一开关;默认/非语义装配保持 `0.9`。其余四个常量门控输入
+  （`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）与 `selected_stimuli` 投影仍首版常量（`09` 前暂无真实
+  生产者——`drive_urgency_signal` 归 `18`,在 `09` 后;其余需未拥有的 compute/时钟/DMN 源）。626→631 测试全绿、离线。
 - 内感受来源留白（BODY 节点,红）：`05` 已建成可消费真实身体/内感受信号（feeling 阶段从 `02` 批次按 body/interoceptive
   modality 筛选）,但当前没有任何东西生产它们——sensory 源只产生 text,故 `internal_signals` 恒为空,体感仅由 `04`
   神经调质状态推导。BODY 节点是只有接口、无 owner 生产者的占位。真实生产者属后续 owner：模拟身体状态模型,或把

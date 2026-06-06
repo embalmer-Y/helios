@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R47。测试基线：626 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R48。测试基线：631 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -106,11 +106,11 @@
 - 下一步：（1）✅ 真实点火承诺——**R47 已交付**；（2）真实语义冲突检测（内容矛盾才判 `semantic_conflict_unresolved`）;（3）经已搭好的 owner 受控能力口接 LLM 语义渲染器;（4）P5 学习点火阈值/tie-break。
 
 ### 2.9 `09` 思考门控与延续压力 — `helios_v2.thought_gating`
-- 完成度：`baseline_real`（多数输入仍 shim；语义记忆装配下 arousal 输入已真实）。
+- 完成度：`baseline_real`（语义记忆装配下两个输入已真实：arousal（R37）+ global_activation（R48）；其余输入仍 shim）。
 - 职责：思考窗口触发决策与多 tick 延续压力 carry 的唯一 owner；紧凑门控可观测。不坍缩进检索或思考生成。
 - 在循环中的作用：决定一个 tick 是否触发思考路径，并把延续压力向前 carry。
-- 完成度细节：`37`（P3 第三刀去 shim）使 `09` 门控决策成为 `04` 神经调质水平的首个真实消费者。owner 新增 `ArousalAwareThoughtGatePath` 与 `ThoughtGateSignalSnapshot` 上一个附加可选原始事实字段 `neuromodulatory_arousal`；语义记忆装配下 composition 把真实 `04` 去甲肾上腺素水平转发进来（仅原始事实——arousal→门控的映射归属本 owner,不在 composition）。该 path 向门控分数加一个非负有界项 `arousal_gain * arousal`（首版 `0.15`,属 `gate_policy` 类别）；单调、确定性、无状态,且结构上绝非硬门控（权重 `0.15 < fire 阈值 0.55`,且加项非负）。其余门控信号输入（`global_activation_level`、`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）仍为首版常量；当 `neuromodulatory_arousal` 为 `None` 时该 path 字节级复刻首版行为（默认/recency/离线不变）。
-- 下一步：（1）把其余门控信号输入从各自真实 owner 去 shim（例如 `global_activation_level` 来自去 shim 的 `07` workspace），各自一刀；（2）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道（它可以合法地压制 fire,有自己的安全语义）；（3）`P5` 在 `gate_policy` 类别下学习 `arousal_gain` 与门控阈值；（4）深化多 tick carry；（5）跨重启持久化/恢复延续压力——**R42 已落地**：`09` 延续压力现经 `42` 检查点跨重启续存（opt-in）。
+- 完成度细节：`37`（P3 第三刀去 shim）使 `09` 门控决策成为 `04` 神经调质水平的首个真实消费者。owner 新增 `ArousalAwareThoughtGatePath` 与 `ThoughtGateSignalSnapshot` 上一个附加可选原始事实字段 `neuromodulatory_arousal`；语义记忆装配下 composition 把真实 `04` 去甲肾上腺素水平转发进来（仅原始事实——arousal→门控的映射归属本 owner,不在 composition）。该 path 向门控分数加一个非负有界项 `arousal_gain * arousal`（首版 `0.15`,属 `gate_policy` 类别）；单调、确定性、无状态,且结构上绝非硬门控（权重 `0.15 < fire 阈值 0.55`,且加项非负）。`48`（接 R46）把门控分中第二大的非刺激项 `global_activation_level`（权重 `* 0.20`）从常量 `0.9` 去 shim：语义装配下 composition 的门控信号 bridge 现从同 tick 的 `07` `WorkspaceCompetitionStageResult` 取真实工作空间激活——保留候选中的最大 `workspace_score_hint`（注意力中持有的主导点火强度）,无保留则 `0.0`。owner-neutral glue（bridge 只转发有界原始事实,clamp 到 `[0,1]`）;`09` 仍独占门控决策与该项权重（门控 path 不变）。R37 的 arousal 耦合保留（两个真实事实同乘一个快照）。`07` 在 `09` 前运行,故缺失/类型错的 `07` 结果是 hard fail（既有 `RuntimeStageExecutionError`）,无静默回退。其余门控信号输入（`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）与 `selected_stimuli` 投影仍为首版常量；当 `neuromodulatory_arousal` 为 `None` 时门控 path 仍字节级复刻首版（默认/recency/离线不变）。
+- 下一步：（1）✅ `global_activation_level` 接真实 `07`——**R48 已交付**；其余输入各自一刀：`workload_pressure`（待真实 compute/runtime 压力生产者）、`temporal_signal`（时钟源）、`dmn_available`（DMN 源）、`drive_urgency_signal`（`18` 在 `09` 后,需跨 tick carry）、`selected_stimuli`（`02`/`03` 投影）；（2）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（3）`P5` 在 `gate_policy` 类别下学习权重与门控阈值；（4）深化多 tick carry；（5）跨重启持久化/恢复延续压力——**R42 已落地**。
 
 ### 2.10 `10` 定向检索进思考窗口 — `helios_v2.directed_retrieval`
 - 完成度：`baseline_real`（规划仍 shim；启用持久化/语义记忆时候选来源已真实）。
