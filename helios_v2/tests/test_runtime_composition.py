@@ -2485,3 +2485,95 @@ def test_r53_helper_returns_default_without_interoceptive_stimuli() -> None:
 
     # No sensory result at all -> default 0.1.
     assert _interoceptive_workload_pressure(RuntimeFrame(tick_id=1, stage_results={})) == pytest.approx(0.1)
+
+
+# --- Requirement 54: gate no-fire tick closure ---
+
+
+def _no_fire_handle():
+    # A high cpu/memory interoceptive load drives the 09 gate to resource_pressure_too_high/no_fire
+    # (R53 grounded workload_pressure). With R54 the tick now completes as a no-fire tick.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    return _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(cpu=0.95, memory=0.95),
+    )
+
+
+def test_r54_high_load_no_fire_tick_completes() -> None:
+    handle = _no_fire_handle()
+    handle.startup()
+    result = handle.tick()  # must not raise
+
+    gate = _gate_result(result)
+    assert gate.decision == "no_fire"
+    assert gate.no_fire_reason == "resource_pressure_too_high"
+
+
+def test_r54_post_gate_stages_are_inactive_on_no_fire() -> None:
+    handle = _no_fire_handle()
+    handle.startup()
+    result = handle.tick()
+
+    for stage_name in (
+        "directed_retrieval_into_thought_window",
+        "embodied_subjective_prompt_and_action_autonomy",
+        "outward_expression_owner",
+        "outward_expression_execution_externalization_owner",
+        "internal_thought_loop_owner",
+        "action_proposal_externalization_contract",
+        "identity_governance_self_revision_integration",
+    ):
+        stage_result = result.stage_results[stage_name]
+        assert stage_result.activated is False, stage_name
+        assert stage_result.inactive_id is not None, stage_name
+
+
+def test_r54_no_fire_closes_through_internal_only_continuity() -> None:
+    handle = _no_fire_handle()
+    handle.startup()
+    result = handle.tick()
+
+    # Planner records no_actionable_proposal; writeback records an internal_only continuity outcome.
+    planner = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner.status == "no_actionable_proposal"
+    writeback = result.stage_results["execution_writeback_and_autobiographical_consolidation"]
+    statuses = {r.status for r in writeback.results}
+    assert "written_internal_only" in statuses
+    # Autonomy and evaluation still ran read-through.
+    assert result.stage_results["subjective_autonomy_and_proactive_evolution"].result is not None
+    assert result.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact is not None
+
+
+def test_r54_continuation_carries_across_no_fire_then_fire() -> None:
+    # A no-fire tick must not reset continuity: a following fire-able tick still runs the chain.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+
+    # Use a sampler we can flip: start high (no-fire), then assert a fresh low-load handle fires.
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(cpu=0.95, memory=0.95),
+    )
+    handle.startup()
+    first = handle.tick()
+    assert _gate_result(first).decision == "no_fire"
+    # The no-fire tick completed and produced an autonomy result carrying continuity state.
+    autonomy = first.stage_results["subjective_autonomy_and_proactive_evolution"].result
+    assert autonomy.long_horizon_state is not None
+
+
+def test_r54_fired_tick_unchanged_activated_true() -> None:
+    # An ordinary fired tick (no interoceptive load) has all post-gate stages activated.
+    handle = _assemble(experience_store=ExperienceStore(backend=InMemoryExperienceStoreBackend()), embedding_gateway=_embedding_gateway())
+    handle.startup()
+    result = handle.tick()
+    assert _gate_result(result).decision == "fire"
+    for stage_name in (
+        "directed_retrieval_into_thought_window",
+        "internal_thought_loop_owner",
+        "action_proposal_externalization_contract",
+        "identity_governance_self_revision_integration",
+    ):
+        assert result.stage_results[stage_name].activated is True, stage_name

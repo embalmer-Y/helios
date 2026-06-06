@@ -1994,8 +1994,12 @@ class FirstVersionExperienceWritebackRequestBridge:
                 )
             )
 
-        revision_decision = identity_governance_result.result.revision_decision
-        applied_identity_state = identity_governance_result.result.applied_identity_state
+        revision_decision = identity_governance_result.result.revision_decision if identity_governance_result.activated else None
+        applied_identity_state = (
+            identity_governance_result.result.applied_identity_state
+            if identity_governance_result.activated
+            else None
+        )
         if applied_identity_state is not None:
             requests.append(
                 ExperienceWritebackRequest(
@@ -2081,6 +2085,43 @@ class FirstVersionAutonomyRequestBridge:
         outward_expression_externalization_result,
     ) -> ProactiveDriveRequest:
         tick_id = frame.tick_id
+        # No-fire tick (R54): the thought path did not activate. Build the autonomy request from
+        # the gate result id plus deterministic no-fire marker ids for the absent thought/retrieval/
+        # outward artifacts (explicit absence, not fabricated cognition). The autonomy owner still
+        # runs: it integrates continuation/continuity regardless of whether thought fired. No action,
+        # no outward readiness; continuation pressure comes from the carried `09` continuation state
+        # so a no-fire tick still forms/reinforces deferred continuity like a continue tick.
+        if not internal_thought_result.activated:
+            tick_label = tick_id if tick_id is not None else "na"
+            continuation_active = thought_gating_result.continuation_state.active
+            continuation_pressure = (
+                self._CONTINUE_CONTINUATION_PRESSURE
+                if continuation_active
+                else self._CONCLUDED_CONTINUATION_PRESSURE
+            )
+            return ProactiveDriveRequest(
+                request_id=f"autonomy-request:no-fire:runtime:{tick_id}",
+                source_gate_result_id=thought_gating_result.result.result_id,
+                source_retrieval_bundle_id=f"no-fire-directed-retrieval:{tick_label}",
+                source_thought_cycle_result_id=f"no-fire-internal-thought:{tick_label}",
+                source_planner_bridge_result_id=planner_bridge_result.result.result_id,
+                source_identity_governance_result_id=f"no-fire-identity-governance:{tick_label}",
+                source_writeback_result_ids=tuple(
+                    result.result_id for result in experience_writeback_result.results
+                ),
+                source_outward_expression_draft_id=f"no-fire-outward-expression:{tick_label}",
+                source_outward_expression_externalization_draft_id=(
+                    f"no-fire-outward-externalization:{tick_label}"
+                ),
+                continuation_summary={"continuation_pressure": round(min(1.0, max(0.0, continuation_pressure)), 4)},
+                retrieval_pull_summary={"retrieval_pull": 0.0},
+                temporal_pressure_summary={"temporal_pressure": self._BASELINE_TEMPORAL_PRESSURE},
+                identity_unresolved_summary={"identity_unresolved_pressure": self._RESOLVED_IDENTITY_PRESSURE},
+                outward_readiness_summary={
+                    "outward_ready": False,
+                    "externalization_blocked": False,
+                },
+            )
         bundle = directed_retrieval_result.bundle
         retrieval_pull = float(len(bundle.mid_term_hits) + len(bundle.autobiographical_hits)) / 4.0
 
@@ -2208,27 +2249,82 @@ class FirstVersionEvaluationRequestBridge:
         outward_expression_externalization_result,
     ) -> EvaluationEvidenceBundle:
         tick_id = frame.tick_id
-        thought_result = internal_thought_result.result
-        action_result = action_externalization_result.result
+        tick_label = tick_id if tick_id is not None else "na"
         planner_result = planner_bridge_result.result
-        governance_result = identity_governance_result.result
-        return EvaluationEvidenceBundle(
-            bundle_id=f"evaluation-bundle:runtime:{tick_id}",
-            source_request_id=request.request_id,
-            thought_evidence=(
+        # No-fire tick (R54): the thought-path stages are inactive. Emit explicit no-fire evidence
+        # (marker ids + activated=False) rather than reading absent artifacts, so evaluation can
+        # reconstruct the no-fire outcome. The planner/writeback/autonomy tail is always present.
+        if not internal_thought_result.activated:
+            thought_evidence = (
+                {"evidence_id": f"no-fire-internal-thought:{tick_label}", "activated": False},
+            )
+            action_evidence = (
+                {"evidence_id": f"no-fire-action-externalization:{tick_label}", "activated": False},
+            )
+            governance_evidence = (
+                {"evidence_id": f"no-fire-identity-governance:{tick_label}", "activated": False},
+            )
+            prompt_evidence: tuple[dict, ...] = (
+                {"evidence_id": f"no-fire-embodied-prompt:{tick_label}", "activated": False},
+            )
+            outward_expression_evidence = (
+                {"evidence_id": f"no-fire-outward-expression:{tick_label}", "activated": False},
+            )
+            outward_expression_externalization_evidence = (
+                {"evidence_id": f"no-fire-outward-externalization:{tick_label}", "activated": False},
+            )
+        else:
+            thought_result = internal_thought_result.result
+            action_result = action_externalization_result.result
+            governance_result = identity_governance_result.result
+            thought_evidence = (
                 {
                     "evidence_id": thought_result.result_id,
                     "execution_status": thought_result.execution_status,
                     "action_proposal_present": thought_result.action_proposal is not None,
                 },
-            ),
-            action_evidence=(
+            )
+            action_evidence = (
                 {
                     "evidence_id": action_result.result_id,
                     "status": action_result.status,
                     "normalized_proposal_present": action_result.normalized_proposal is not None,
                 },
-            ),
+            )
+            governance_evidence = (
+                {
+                    "evidence_id": governance_result.result_id,
+                    "status": governance_result.revision_decision.status,
+                    "pressure_level": governance_result.pressure_state.pressure_level,
+                },
+            )
+            prompt_evidence = tuple(
+                {
+                    "evidence_id": contract.contract_id,
+                    "status": "published",
+                    "consumer_kind": contract.consumer_kind,
+                }
+                for contract in prompt_result.contracts
+            )
+            outward_expression_evidence = (
+                {
+                    "evidence_id": outward_expression_result.draft.draft_id,
+                    "status": "prepared",
+                    "source_prompt_contract_id": outward_expression_result.draft.source_prompt_contract_id,
+                },
+            )
+            outward_expression_externalization_evidence = (
+                {
+                    "evidence_id": outward_expression_externalization_result.draft.draft_id,
+                    "status": "prepared",
+                    "source_prompt_contract_id": outward_expression_externalization_result.draft.source_prompt_contract_id,
+                },
+            )
+        return EvaluationEvidenceBundle(
+            bundle_id=f"evaluation-bundle:runtime:{tick_id}",
+            source_request_id=request.request_id,
+            thought_evidence=thought_evidence,
+            action_evidence=action_evidence,
             planner_evidence=(
                 {
                     "evidence_id": planner_result.result_id,
@@ -2236,13 +2332,7 @@ class FirstVersionEvaluationRequestBridge:
                     "execution_feedback_present": planner_bridge_result.execution_feedback is not None,
                 },
             ),
-            governance_evidence=(
-                {
-                    "evidence_id": governance_result.result_id,
-                    "status": governance_result.revision_decision.status,
-                    "pressure_level": governance_result.pressure_state.pressure_level,
-                },
-            ),
+            governance_evidence=governance_evidence,
             writeback_evidence=tuple(
                 {
                     "evidence_id": result.result_id,
@@ -2260,28 +2350,9 @@ class FirstVersionEvaluationRequestBridge:
                     **autonomy_result.result.long_horizon_state.to_evidence(),
                 },
             ),
-            prompt_evidence=tuple(
-                {
-                    "evidence_id": contract.contract_id,
-                    "status": "published",
-                    "consumer_kind": contract.consumer_kind,
-                }
-                for contract in prompt_result.contracts
-            ),
-            outward_expression_evidence=(
-                {
-                    "evidence_id": outward_expression_result.draft.draft_id,
-                    "status": "prepared",
-                    "source_prompt_contract_id": outward_expression_result.draft.source_prompt_contract_id,
-                },
-            ),
-            outward_expression_externalization_evidence=(
-                {
-                    "evidence_id": outward_expression_externalization_result.draft.draft_id,
-                    "status": "prepared",
-                    "source_prompt_contract_id": outward_expression_externalization_result.draft.source_prompt_contract_id,
-                },
-            ),
+            prompt_evidence=prompt_evidence,
+            outward_expression_evidence=outward_expression_evidence,
+            outward_expression_externalization_evidence=outward_expression_externalization_evidence,
             execution_timeline_evidence=self.timeline_bridge.build_timeline_evidence(
                 self.timeline_holder
             ),

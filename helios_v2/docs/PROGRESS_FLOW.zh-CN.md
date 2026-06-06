@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R53（`09` 门控 `workload_pressure` 接真实 compute/runtime 负载：R50 内感受 cpu/memory 经门控信号 bridge 取代常量 0.1；浮现 gate-no-fire 收口需求）。测试基线：685 passed。版本：R53。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R54（gate-no-fire tick 收口：no-fire 门控时 gate 后阶段产出 not-activated 结果,经既有 internal-only 连续性尾收口,高负载 tick 端到端完成,解除 R53 fire 窗口约束）。测试基线：690 passed。版本：R54。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -275,6 +275,8 @@ flowchart TD
   valence/comfort/social_safety 本刀不受影响（首版窄、单调）;系数为首版常量（挂 `feeling_coupling_strength`,P5 可学）。opt-in 于语义+内感受装配;
   默认/recency/channel-bound/无 sampler 的语义装配字节级不变。650→664 测试全绿、离线。
 - P3 多候选激活（R52）：`06` 现召回过往情感记忆作为额外重放候选喂 `07`,给工作空间**第一次真实的多候选竞争**,使 R46 竞争/R47 点火/R48 门控激活端到端被激活（此前链每 tick 只形成一个候选,三者只在 owner 级被验证）。`06` owner 新增 recalled-replay 路径:把注入的 `RecalledMemoryFact` 重新成形为非 forced 的 `MemoryReplayCandidate`（保留原 `memory_id`、stored family、原始持久化 `affect_tag`,锚定当前 feeling state + binding context,故 `MemoryFormationState` 既有不变量全成立）,优先级由 owner 持有的 recall-relevance + 召回情感强度有界混合（挂 `replay_priority_policy`,P5 可学）。召回源经窄协议 `RecalledMemoryProvider` 注入（`06` 不 import persistence/embedding）;composition 的 `StoreBackedRecalledMemoryProvider` embed 当前 binding-context 内容、按余弦排 `affect_memory` 类记录（复用 R34 `search_similar`）,并从持久化记录重建召回情感向量。为支持忠实召回,R45 的 `MemoryRecordBridge` 现额外把情感向量写进 affect-memory 记录的不透明 `metadata`（additive 字符串编码;无持久化契约变更;旧记录无此键则不参与工作空间召回）。端到端:语义装配下一旦有过往可巩固情感记忆,后续 tick `07` 对 >1 候选竞争、`08` 点火单一最高分焦点（其余降为支持上下文）、`09` `global_activation_level` 等于最大保留分;足够强的召回记忆可赢得工作空间。召回候选 additive 且永不 forced（故 R45 持久化 carry 不重存）;当前 tick 形成记忆与门控不变。冷库/空 binding context/无相似记忆 → 零召回候选（单候选行为不变）;召回时 embedding/store 失败 hard stop（无静默单候选回退）。opt-in 于语义装配;默认/recency/非语义/离线字节级不变;旧 store 文件可读回。664→678 测试全绿、离线。
+- P3 门控输入去 shim（R53）：`09` 门控的 `workload_pressure` 接真实 compute/runtime 负载,成为内感受 afferent 的第二个消费者（继 R51 的 `05` 体感）。owner-neutral 的 `_interoceptive_workload_pressure(frame)` 从同 tick `02` 批次读 R50 的 cpu/memory 负载刺激（读保留元数据,每通道取 max;不认识/越界跳过、不抛错）取代常量 `0.1`;`09` 仍独占该项权重与 block 阈值;bridge 只转发有界原始事实、不算门控分、不 import interoception owner。default/recency/无 sampler 装配保持 `0.1` 字节级不变。**浮现约束（后由 R54 收口）**：高负载会正确地把门控压到 no-fire,而当时装配链无 no-fire 收口。631→685 测试全绿、离线。
+- P3 使能项（R54）：gate-no-fire tick 收口。装配链此前无法完成 `09` 门控判 `no_fire` 的 tick（gate 后阶段 `10`/`16`-族/`11`/`12`/`14` 硬要求 fire 门控而抛错）,阻碍 R53 高负载 no-fire,也将阻碍 R55/R56。R54 是 R28 fired-but-no-proposal internal-only 收口的上游镜像：每个 gate 后阶段结果新增可加的 `activated` 判别符（+ `inactive_id`、Optional artifact、`inactive(tick_id)` 工厂,均默认 fire 形状）,no-fire 时观察 gate owner 发布的 `decision`（或上游 `activated` 标志）返回显式 not-activated 结果而不调 owner 的 fire 路径 API,故这些 owner 的"需 fire 门控"不变式从不被违反或放宽。收口尾复用 R28：planner 阶段 no-fire 分支合成 owner-neutral 的 `status="no_externalization"` 标记外化结果（无伪造提议）经既有 `evaluate_internal_only` → `no_actionable_proposal`;writeback bridge 已为该结果发 `internal_only` 连续性记录（加 governance-inactive 守卫）;`18` 主动性与 `17` 评估仍运行（主动性无论是否 fire 都整合连续性;评估只读）,从 no-fire 标记锚点请求 + 无动作驱动输入 + 显式 `activated=False` 证据构建,故延续压力与 `18`/`24` 长程连续性跨 no-fire tick carry,tick 可被评估层重建而非中止。无伪造认知（not-activated 结果携 `None` artifact;标记仅 id）。fire 路径字节级不变。此举解除 R53 fire 窗口约束：高计算负载 tick 现端到端作为 no-fire tick 完成。685→690 测试全绿、离线。
 - 前运动预备 vs 执行（16 标签）：`16` 外化表达/外化执行节点产出的是**非授权草案**,功能上对标前运动区/SMA 的运动
   预备与内部预演,**不是执行**。真正的 go/no-go 在 `13` planner,真正的传输在 `30`/`31` channel。草案带显式的
   `forbidden_capabilities` / `final_authorities` / `execution_boundary_summary`；"草稿"绝不可读作"执行"

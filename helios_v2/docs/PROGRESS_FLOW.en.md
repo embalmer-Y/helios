@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R53 (`09` gate `workload_pressure` grounded in real compute/runtime load: R50 interoceptive cpu/memory forwarded through the gate-signal bridge in place of the constant 0.1; surfaced the gate-no-fire closure requirement). Test baseline: 685 passed. HEAD-era: R53. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R54 (gate no-fire tick closure: on a no-fire gate the post-gate stages emit not-activated results and the tick closes through the existing internal-only continuity tail, so a high-load tick completes end to end, lifting the R53 firing-window constraint). Test baseline: 690 passed. HEAD-era: R54. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -451,6 +451,26 @@ flowchart TD
   (the gating-no-fire analog of R28's `internal_only` closure). Absence of a recognized load stimulus
   keeps the constant `0.1` byte-for-byte, so the default, recency-only, channel-bound-without-interoception,
   and semantic-without-sampler assemblies are unchanged. 678 -> 685 tests green and network-free.
+- P3 enabler (R54): gate no-fire tick closure. The assembled chain could not complete a tick whose
+  `09` gate decided `no_fire` (the post-gate stages `10`/`16`-family/`11`/`12`/`14` hard-require a
+  fired gate and raised), which blocked R53's high-load no-fire and would block R55/R56. R54 is the
+  upstream mirror of R28's fired-but-no-proposal internal-only closure: each post-gate stage result
+  gains an additive `activated: bool = True` discriminator (+ `inactive_id`, Optional artifacts, an
+  `inactive(tick_id)` factory, all defaulting to the fired shape), and each post-gate stage observes
+  the gate owner's published `decision` (or the upstream `activated` flag) and returns an explicit
+  not-activated result without calling its owner's fired-path API — so those owners' "requires a
+  fired gate" invariants are never violated or relaxed. The closure tail reuses R28: the planner
+  stage's no-fire branch synthesizes an owner-neutral no-fire marker externalization result
+  (`status="no_externalization"`, no fabricated proposal) and routes it through the existing
+  `evaluate_internal_only` -> `no_actionable_proposal`; the writeback bridge already emits an
+  `internal_only` continuity record (a governance-inactive guard added); `18` autonomy and `17`
+  evaluation still run (autonomy integrates continuation/continuity regardless of firing; evaluation
+  is read-only) from no-fire-marker-anchored requests with no-action drive inputs and explicit
+  `activated=False` evidence — so continuation pressure and `18`/`24` long-horizon continuity carry
+  across a no-fire tick and the tick is diagnostically reconstructable rather than aborting. No
+  fabricated cognition (inactive results carry `None` artifacts; markers are ids only). The fired
+  path is byte-for-byte unchanged. This lifts the R53 firing-window constraint: a high-compute-load
+  tick now completes end to end as a no-fire tick. 685 -> 690 tests green and network-free.
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real

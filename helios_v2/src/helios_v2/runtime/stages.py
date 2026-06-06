@@ -289,11 +289,27 @@ class ThoughtGatingStageResult:
 class DirectedRetrievalStageResult:
     """Structured runtime-visible result emitted by the directed-retrieval stage adapter."""
 
-    plan_op: PlanDirectedRetrievalOp
-    request: RetrievalRequest
-    plan: RetrievalQueryPlan
-    bundle: ThoughtWindowBundle
-    publish_bundle_op: PublishThoughtWindowBundleOp
+    plan_op: PlanDirectedRetrievalOp | None
+    request: RetrievalRequest | None
+    plan: RetrievalQueryPlan | None
+    bundle: ThoughtWindowBundle | None
+    publish_bundle_op: PublishThoughtWindowBundleOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "DirectedRetrievalStageResult":
+        """Owner: runtime (R54). The not-activated result for a no-fire tick (no owner call)."""
+
+        return cls(
+            plan_op=None,
+            request=None,
+            plan=None,
+            bundle=None,
+            publish_bundle_op=None,
+            activated=False,
+            inactive_id=f"directed-retrieval-no-fire:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
@@ -308,48 +324,129 @@ class EmbodiedPromptStageResult:
     publish_outward_expression_view_op: PublishOutwardExpressionPromptViewOp | None
     outward_expression_request: OutwardExpressionRequest | None
     build_outward_expression_request_op: BuildOutwardExpressionRequestOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "EmbodiedPromptStageResult":
+        """Owner: runtime (R54). The not-activated result for a no-fire tick (no owner call)."""
+
+        return cls(
+            requests=(),
+            build_ops=(),
+            contracts=(),
+            publish_ops=(),
+            outward_expression_view=None,
+            publish_outward_expression_view_op=None,
+            outward_expression_request=None,
+            build_outward_expression_request_op=None,
+            activated=False,
+            inactive_id=f"embodied-prompt-no-fire:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
 class OutwardExpressionStageResult:
     """Structured runtime-visible result emitted by the outward-expression owner stage adapter."""
 
-    request: OutwardExpressionRequest
-    prepare_op: PrepareOutwardExpressionOp
-    draft: OutwardExpressionDraft
-    publish_draft_op: PublishOutwardExpressionDraftOp
+    request: OutwardExpressionRequest | None
+    prepare_op: PrepareOutwardExpressionOp | None
+    draft: OutwardExpressionDraft | None
+    publish_draft_op: PublishOutwardExpressionDraftOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "OutwardExpressionStageResult":
+        """Owner: runtime (R54). The not-activated result for a no-fire tick (no owner call)."""
+
+        return cls(
+            request=None,
+            prepare_op=None,
+            draft=None,
+            publish_draft_op=None,
+            activated=False,
+            inactive_id=f"outward-expression-no-fire:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
 class OutwardExpressionExternalizationStageResult:
     """Structured runtime-visible result emitted by the outward-expression externalization stage adapter."""
 
-    request_op: RequestOutwardExpressionExternalizationOp
-    request: OutwardExpressionExternalizationRequest
-    draft: OutwardExpressionExternalizationDraft
-    publish_draft_op: PublishOutwardExpressionExternalizationDraftOp
+    request_op: RequestOutwardExpressionExternalizationOp | None
+    request: OutwardExpressionExternalizationRequest | None
+    draft: OutwardExpressionExternalizationDraft | None
+    publish_draft_op: PublishOutwardExpressionExternalizationDraftOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "OutwardExpressionExternalizationStageResult":
+        """Owner: runtime (R54). The not-activated result for a no-fire tick (no owner call)."""
+
+        return cls(
+            request_op=None,
+            request=None,
+            draft=None,
+            publish_draft_op=None,
+            activated=False,
+            inactive_id=f"outward-externalization-no-fire:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
 class InternalThoughtStageResult:
     """Structured runtime-visible result emitted by the internal-thought stage adapter."""
 
-    run_op: RunInternalThoughtOp
-    request: InternalThoughtRequest
-    result: ThoughtCycleResult
-    trace: InternalThoughtTrace
-    publish_result_op: PublishThoughtCycleResultOp
+    run_op: RunInternalThoughtOp | None
+    request: InternalThoughtRequest | None
+    result: ThoughtCycleResult | None
+    trace: InternalThoughtTrace | None
+    publish_result_op: PublishThoughtCycleResultOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "InternalThoughtStageResult":
+        """Owner: runtime (R54). The not-activated result for a no-fire tick (no owner call)."""
+
+        return cls(
+            run_op=None,
+            request=None,
+            result=None,
+            trace=None,
+            publish_result_op=None,
+            activated=False,
+            inactive_id=f"internal-thought-no-fire:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
 class ActionExternalizationStageResult:
     """Structured runtime-visible result emitted by the action-externalization stage adapter."""
 
-    request_op: RequestThoughtExternalizationOp
-    request: ThoughtExternalizationRequest
-    result: ThoughtExternalizationResult
+    request_op: RequestThoughtExternalizationOp | None
+    request: ThoughtExternalizationRequest | None
+    result: ThoughtExternalizationResult | None
     publish_externalization_op: PublishThoughtExternalizationOp | None
     publish_rejection_op: PublishThoughtExternalizationRejectionOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "ActionExternalizationStageResult":
+        """Owner: runtime (R54). The not-activated result for a no-fire tick (no owner call)."""
+
+        return cls(
+            request_op=None,
+            request=None,
+            result=None,
+            publish_externalization_op=None,
+            publish_rejection_op=None,
+            activated=False,
+            inactive_id=f"action-externalization-no-fire:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
@@ -369,12 +466,29 @@ class PlannerBridgeStageResult:
 class IdentityGovernanceStageResult:
     """Structured runtime-visible result emitted by the identity-governance stage adapter."""
 
-    evaluate_op: EvaluateIdentityGovernanceOp
-    request: IdentityGovernanceRequest
-    result: IdentityGovernanceResult
-    publish_pressure_op: PublishGovernancePressureOp
-    publish_revision_decision_op: PublishRevisionDecisionOp
+    evaluate_op: EvaluateIdentityGovernanceOp | None
+    request: IdentityGovernanceRequest | None
+    result: IdentityGovernanceResult | None
+    publish_pressure_op: PublishGovernancePressureOp | None
+    publish_revision_decision_op: PublishRevisionDecisionOp | None
     publish_applied_identity_state_op: PublishAppliedIdentityStateOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "IdentityGovernanceStageResult":
+        """Owner: runtime (R54). The not-activated result for a no-fire tick (no owner call)."""
+
+        return cls(
+            evaluate_op=None,
+            request=None,
+            result=None,
+            publish_pressure_op=None,
+            publish_revision_decision_op=None,
+            publish_applied_identity_state_op=None,
+            activated=False,
+            inactive_id=f"identity-governance-no-fire:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
@@ -1174,6 +1288,10 @@ class DirectedRetrievalRuntimeStage(RuntimeStage):
         """Execute directed retrieval against the declared upstream thought-gating stage result."""
 
         thought_gating_result = _require_stage_result(frame, self.upstream_stage_name, ThoughtGatingStageResult)
+        if thought_gating_result.result.decision != "fire":
+            # No-fire tick (R54): the gate did not fire, so retrieval does not run. The owner's
+            # fired-path API is not called (its "requires a fired gate" invariant is preserved).
+            return DirectedRetrievalStageResult.inactive(frame.tick_id)
         request = self.request_provider.build_request(frame, thought_gating_result)
         if request.source_gate_result_id != thought_gating_result.result.result_id:
             raise RuntimeStageExecutionError(
@@ -1216,6 +1334,9 @@ class EmbodiedPromptRuntimeStage(RuntimeStage):
 
         conscious_result = _require_stage_result(frame, self.conscious_stage_name, ConsciousContentStageResult)
         thought_gating_result = _require_stage_result(frame, self.gate_stage_name, ThoughtGatingStageResult)
+        if thought_gating_result.result.decision != "fire":
+            # No-fire tick (R54): no prompt is assembled when the gate did not fire.
+            return EmbodiedPromptStageResult.inactive(frame.tick_id)
         directed_retrieval_result = _require_stage_result(
             frame,
             self.retrieval_stage_name,
@@ -1295,6 +1416,9 @@ class OutwardExpressionRuntimeStage(RuntimeStage):
         """Execute outward-expression draft assembly against the declared upstream prompt stage result."""
 
         prompt_result = _require_stage_result(frame, self.prompt_stage_name, EmbodiedPromptStageResult)
+        if not prompt_result.activated:
+            # No-fire tick (R54): the prompt stage did not activate, so there is no draft to prepare.
+            return OutwardExpressionStageResult.inactive(frame.tick_id)
         request = prompt_result.outward_expression_request
         view = prompt_result.outward_expression_view
         if request is None or view is None:
@@ -1356,6 +1480,9 @@ class OutwardExpressionExternalizationRuntimeStage(RuntimeStage):
             self.outward_expression_stage_name,
             OutwardExpressionStageResult,
         )
+        if not outward_expression_result.activated:
+            # No-fire tick (R54): no outward-expression draft exists to externalize.
+            return OutwardExpressionExternalizationStageResult.inactive(frame.tick_id)
         request = self.request_provider.build_request(frame, outward_expression_result)
         if request.source_outward_expression_draft_id != outward_expression_result.draft.draft_id:
             raise RuntimeStageExecutionError(
@@ -1396,6 +1523,10 @@ class InternalThoughtRuntimeStage(RuntimeStage):
         """Execute internal thought against the declared upstream gate and retrieval stage results."""
 
         thought_gating_result = _require_stage_result(frame, self.gate_stage_name, ThoughtGatingStageResult)
+        if thought_gating_result.result.decision != "fire":
+            # No-fire tick (R54): the thought owner's fired-path API is not called (its "requires a
+            # fired gate" invariant is preserved); the cycle simply does not run this tick.
+            return InternalThoughtStageResult.inactive(frame.tick_id)
         directed_retrieval_result = _require_stage_result(
             frame,
             self.retrieval_stage_name,
@@ -1455,6 +1586,9 @@ class ActionExternalizationRuntimeStage(RuntimeStage):
         """Execute action externalization against the declared upstream internal-thought stage result."""
 
         internal_thought_result = _require_stage_result(frame, self.upstream_stage_name, InternalThoughtStageResult)
+        if not internal_thought_result.activated:
+            # No-fire tick (R54): no thought cycle ran, so there is no proposal to externalize.
+            return ActionExternalizationStageResult.inactive(frame.tick_id)
         request = self.request_provider.build_request(frame, internal_thought_result)
         if request.source_thought_cycle_result_id != internal_thought_result.result.result_id:
             raise RuntimeStageExecutionError(
@@ -1508,6 +1642,11 @@ class PlannerBridgeRuntimeStage(RuntimeStage):
             self.upstream_stage_name,
             ActionExternalizationStageResult,
         )
+        if not action_externalization_result.activated:
+            # No-fire tick (R54): no externalization ran. Synthesize an owner-neutral no-fire
+            # marker externalization result + request (no fabricated proposal) and route through
+            # the existing R28 internal-only path, yielding `no_actionable_proposal`.
+            return self._run_no_fire(frame.tick_id)
         request = self.request_provider.build_request(frame, action_externalization_result)
         if request.source_externalization_result_id != action_externalization_result.result.result_id:
             raise RuntimeStageExecutionError(
@@ -1559,6 +1698,51 @@ class PlannerBridgeRuntimeStage(RuntimeStage):
             publish_decision_op=publish_decision_op,
             publish_rejection_op=publish_rejection_op,
             publish_feedback_op=publish_feedback_op,
+        )
+
+    def _run_no_fire(self, tick_id: int | None) -> PlannerBridgeStageResult:
+        """Owner: runtime (R54). Close a no-fire tick at the planner bridge.
+
+        On a no-fire tick the gate did not fire, so no externalization ran. This synthesizes an
+        owner-neutral no-fire marker externalization result (`status="no_externalization"`, no
+        fabricated proposal) and a matching no-fire planner request, then routes them through the
+        existing R28 `evaluate_internal_only` path so the tick closes as `no_actionable_proposal`
+        — exactly the internal-only outcome, now reached on a no-fire tick. No owner gains a new
+        path; this reuses the planner's existing internal-only API.
+        """
+
+        tick_label = tick_id if tick_id is not None else "na"
+        marker_externalization = ThoughtExternalizationResult(
+            result_id=f"no-fire-externalization:{tick_label}",
+            source_request_id=f"no-fire-externalization-request:{tick_label}",
+            status="no_externalization",
+            normalized_proposal=None,
+            bridge_rejection_reason=None,
+            equivalent_evidence=None,
+            tick_id=tick_id,
+        )
+        request = PlannerBridgeRequest(
+            request_id=f"planner-bridge-request:no-fire:{tick_label}",
+            source_externalization_result_id=marker_externalization.result_id,
+            normalized_proposal_present=False,
+            behavior_snapshot={},
+            channel_descriptor_snapshot={},
+            channel_status_snapshot={},
+            tick_id=tick_id,
+        )
+        result = self.planner_bridge_layer.evaluate_internal_only(marker_externalization, request)
+        evaluate_op = self.planner_bridge_layer.build_evaluate_op_internal_only(
+            marker_externalization,
+            request,
+        )
+        return PlannerBridgeStageResult(
+            evaluate_op=evaluate_op,
+            request=request,
+            result=result,
+            execution_feedback=None,
+            publish_decision_op=None,
+            publish_rejection_op=None,
+            publish_feedback_op=None,
         )
 
 
@@ -1640,6 +1824,9 @@ class IdentityGovernanceRuntimeStage(RuntimeStage):
         """Execute identity governance against the declared upstream internal-thought stage result."""
 
         internal_thought_result = _require_stage_result(frame, self.upstream_stage_name, InternalThoughtStageResult)
+        if not internal_thought_result.activated:
+            # No-fire tick (R54): no thought cycle ran, so there is no self-revision to govern.
+            return IdentityGovernanceStageResult.inactive(frame.tick_id)
         request = self.request_provider.build_request(frame, internal_thought_result)
         if request.source_thought_cycle_result_id != internal_thought_result.result.result_id:
             raise RuntimeStageExecutionError(
@@ -1709,7 +1896,14 @@ class ExperienceWritebackRuntimeStage(RuntimeStage):
         publish_candidate_ops: list[PublishConsolidationCandidateOp] = []
         expected_outcome_ids = {
             "planner_bridge": planner_bridge_result.result.result_id,
-            "identity_governance": identity_governance_result.result.result_id,
+            # On a no-fire tick (R54) identity governance is inactive (no result); only the
+            # planner-bridge and internal-only outcome kinds occur, so a missing governance id is
+            # represented as None and simply never matched (no governance writeback is requested).
+            "identity_governance": (
+                identity_governance_result.result.result_id
+                if identity_governance_result.activated
+                else None
+            ),
             # An internal-only continuity writeback references the internal-only planner
             # result, so its expected source-outcome id is the planner result id.
             "internal_thought_cycle": planner_bridge_result.result.result_id,
@@ -1865,37 +2059,42 @@ class AutonomyRuntimeStage(RuntimeStage):
             raise RuntimeStageExecutionError(
                 "Autonomy requests must preserve the upstream thought-gate result provenance"
             )
-        if request.source_retrieval_bundle_id != directed_retrieval_result.bundle.bundle_id:
-            raise RuntimeStageExecutionError(
-                "Autonomy requests must preserve the upstream retrieval-bundle provenance"
-            )
-        if request.source_thought_cycle_result_id != internal_thought_result.result.result_id:
-            raise RuntimeStageExecutionError(
-                "Autonomy requests must preserve the upstream thought-cycle result provenance"
-            )
+        # On a no-fire tick (R54) the thought-path stage results are inactive, so the autonomy
+        # request is anchored on explicit no-fire marker ids rather than the (absent) artifact
+        # ids. The artifact-provenance checks below apply only to an activated (fired) thought path;
+        # the planner-bridge and writeback results are always present (the closure tail runs).
+        if internal_thought_result.activated:
+            if request.source_retrieval_bundle_id != directed_retrieval_result.bundle.bundle_id:
+                raise RuntimeStageExecutionError(
+                    "Autonomy requests must preserve the upstream retrieval-bundle provenance"
+                )
+            if request.source_thought_cycle_result_id != internal_thought_result.result.result_id:
+                raise RuntimeStageExecutionError(
+                    "Autonomy requests must preserve the upstream thought-cycle result provenance"
+                )
+            if request.source_outward_expression_draft_id != outward_expression_result.draft.draft_id:
+                raise RuntimeStageExecutionError(
+                    "Autonomy requests must preserve the upstream outward-expression draft provenance"
+                )
+            if (
+                request.source_outward_expression_externalization_draft_id
+                != outward_expression_externalization_result.draft.draft_id
+            ):
+                raise RuntimeStageExecutionError(
+                    "Autonomy requests must preserve the upstream outward-expression externalization draft provenance"
+                )
+            if request.source_identity_governance_result_id != identity_governance_result.result.result_id:
+                raise RuntimeStageExecutionError(
+                    "Autonomy requests must preserve the upstream identity-governance result provenance"
+                )
         if request.source_planner_bridge_result_id != planner_bridge_result.result.result_id:
             raise RuntimeStageExecutionError(
                 "Autonomy requests must preserve the upstream planner-bridge result provenance"
-            )
-        if request.source_identity_governance_result_id != identity_governance_result.result.result_id:
-            raise RuntimeStageExecutionError(
-                "Autonomy requests must preserve the upstream identity-governance result provenance"
             )
         expected_writeback_result_ids = tuple(result.result_id for result in experience_writeback_result.results)
         if request.source_writeback_result_ids != expected_writeback_result_ids:
             raise RuntimeStageExecutionError(
                 "Autonomy requests must preserve the upstream writeback-result provenance"
-            )
-        if request.source_outward_expression_draft_id != outward_expression_result.draft.draft_id:
-            raise RuntimeStageExecutionError(
-                "Autonomy requests must preserve the upstream outward-expression draft provenance"
-            )
-        if (
-            request.source_outward_expression_externalization_draft_id
-            != outward_expression_externalization_result.draft.draft_id
-        ):
-            raise RuntimeStageExecutionError(
-                "Autonomy requests must preserve the upstream outward-expression externalization draft provenance"
             )
         evaluate_op = self.autonomy_layer.build_evaluate_op(request)
         result = self.autonomy_layer.evaluate(request)
