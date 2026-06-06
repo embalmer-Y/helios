@@ -340,6 +340,7 @@ class FixedFeelingConstructionPath(FeelingConstructionPath):
         internal_signals: tuple[Stimulus, ...],
         config: InteroceptiveFeelingConfig,
         tick_id: int | None,
+        prior_feeling: InteroceptiveFeelingVector | None = None,
     ) -> InteroceptiveFeelingVector:
         assert neuromodulator_state.state_id.startswith("neuromodulator-state:")
         assert config.baseline_feeling.valence == 0.3

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from helios_v2.autonomy import ContinuityThread, DeferredContinuityRecord
+from helios_v2.feeling import InteroceptiveFeelingVector
 from helios_v2.neuromodulation import NeuromodulatorLevels
 from helios_v2.thought_gating import ContinuationPressureState
 
@@ -40,6 +41,16 @@ _NEUROMODULATOR_CHANNELS: tuple[str, ...] = (
     "inhibition",
 )
 
+_FEELING_DIMENSIONS: tuple[str, ...] = (
+    "valence",
+    "arousal",
+    "tension",
+    "comfort",
+    "fatigue",
+    "pain_like",
+    "social_safety",
+)
+
 
 def _encode_neuromodulator_levels(levels: NeuromodulatorLevels) -> dict[str, float]:
     """Owner: durable runtime-continuity checkpoint. Project `04` levels to a plain dict."""
@@ -55,6 +66,23 @@ def _decode_neuromodulator_levels(payload: dict[str, object]) -> NeuromodulatorL
 
     return NeuromodulatorLevels(
         **{channel: float(payload[channel]) for channel in _NEUROMODULATOR_CHANNELS}
+    )
+
+
+def _encode_feeling(feeling: InteroceptiveFeelingVector) -> dict[str, float]:
+    """Owner: durable runtime-continuity checkpoint. Project `05` feeling to a plain dict."""
+
+    return {dimension: getattr(feeling, dimension) for dimension in _FEELING_DIMENSIONS}
+
+
+def _decode_feeling(payload: dict[str, object]) -> InteroceptiveFeelingVector:
+    """Owner: durable runtime-continuity checkpoint. Reconstruct the `05` feeling contract.
+
+    Runs the `05` owner's own range validation, so a corrupt stored feeling hard-stops.
+    """
+
+    return InteroceptiveFeelingVector(
+        **{dimension: float(payload[dimension]) for dimension in _FEELING_DIMENSIONS}
     )
 
 
@@ -184,6 +212,11 @@ def encode_snapshot(snapshot: RuntimeContinuitySnapshot) -> str:
                     if snapshot.neuromodulator_levels is not None
                     else None
                 ),
+                "feeling": (
+                    _encode_feeling(snapshot.feeling)
+                    if snapshot.feeling is not None
+                    else None
+                ),
             },
             sort_keys=True,
         )
@@ -244,6 +277,12 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
             if isinstance(levels_payload, dict)
             else None
         )
+        feeling_payload = data.get("feeling")
+        feeling = (
+            _decode_feeling(feeling_payload)
+            if isinstance(feeling_payload, dict)
+            else None
+        )
         tick_id_value = data.get("tick_id")
         tick_id = None if tick_id_value is None else int(tick_id_value)
     except CheckpointError:
@@ -261,6 +300,7 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
         deferred_records=deferred_records,
         continuity_threads=continuity_threads,
         neuromodulator_levels=neuromodulator_levels,
+        feeling=feeling,
         snapshot_version=snapshot_version,
     )
 

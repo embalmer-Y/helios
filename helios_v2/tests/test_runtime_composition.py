@@ -1285,12 +1285,15 @@ def test_semantic_assembly_derives_feeling_from_neuromodulator_state() -> None:
     )
 
     # A later tick whose stimulus embeds close to stored experience yields lower novelty -> lower
-    # 04 norepinephrine -> measurably lower arousal in the derived feeling.
+    # 04 norepinephrine. The 04 drive drop is immediate (04 dual-timescale carries its own prior,
+    # but the drive target falls). The 05 feeling now carries momentum (R44 dual-timescale), so its
+    # arousal does not necessarily drop in a single tick — it tracks toward the lower target over
+    # ticks rather than snapping down. We assert the 04 drive truth plus that feeling evolves.
     second = handle.tick()
     second_feeling = _feeling(second)
     second_levels = _neuromodulator_levels(second)
     assert second_levels.norepinephrine < first_levels.norepinephrine
-    assert second_feeling.arousal < first_feeling.arousal
+    assert second_feeling != first_feeling  # 05 feeling evolves across ticks (not constant)
 
 
 # --- Requirement 39: memory-grounded uncertainty + transport-grounded social ---
@@ -1590,3 +1593,54 @@ def test_checkpoint_without_semantic_assembly_carries_no_levels() -> None:
     assert saved is not None
     # The default 04 path is constant, so levels are captured but resuming them changes nothing.
     assert saved.neuromodulator_levels is not None
+
+
+# --- Requirement 44: dual-timescale 05 feeling persistence + checkpoint resumption ---
+
+
+def test_semantic_assembly_feeling_evolves_across_ticks() -> None:
+    # Under the semantic assembly the 05 construction path is dual-timescale, so the felt
+    # body-state carries momentum and the trajectory moves rather than recomputing identically.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    results = handle.run_ticks(3)
+    valence = [_feeling(r).valence for r in results]
+    assert len(set(valence)) > 1
+
+
+def test_default_assembly_feeling_is_stateless_constant() -> None:
+    handle = _assemble()
+    handle.startup()
+    results = handle.run_ticks(3)
+    valence = [_feeling(r).valence for r in results]
+    assert len(set(valence)) == 1
+
+
+def test_checkpoint_resumes_feeling_across_restart(tmp_path) -> None:
+    store_path = str(tmp_path / "experience.sqlite3")
+    ckpt_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+
+    ckpt_a = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=ckpt_path))
+    handle_a = _assemble(
+        experience_store=ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=store_path)),
+        embedding_gateway=_embedding_gateway(),
+        continuity_checkpoint=ckpt_a,
+    )
+    handle_a.startup()
+    handle_a.run_ticks(3)
+    saved = ckpt_a.load_latest()
+    assert saved is not None
+    assert saved.feeling is not None
+
+    ckpt_b = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=ckpt_path))
+    handle_b = _assemble(
+        experience_store=ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=store_path)),
+        embedding_gateway=_embedding_gateway(),
+        continuity_checkpoint=ckpt_b,
+    )
+    handle_b.startup()
+    seeded = handle_b.feeling_stage._prior_state
+    assert seeded is not None
+    assert seeded.feeling == saved.feeling

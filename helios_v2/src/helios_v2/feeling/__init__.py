@@ -27,12 +27,14 @@ from .engine import (
     FeelingConstructionPath,
     InteroceptiveFeelingEngine,
     NeuromodulatorDerivedFeelingConstructionPath,
+    PersistentFeelingConstructionPath,
 )
 
 __all__ = [
     "DominantDimensionReporter",
     "FeelingConstructionPath",
     "NeuromodulatorDerivedFeelingConstructionPath",
+    "PersistentFeelingConstructionPath",
     "FeelingLearnedParameterCategory",
     "InteroceptiveFeelingAPI",
     "InteroceptiveFeelingConfig",

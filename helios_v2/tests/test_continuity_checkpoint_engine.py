@@ -12,6 +12,19 @@ from helios_v2.continuity_checkpoint import (
 )
 from helios_v2.neuromodulation import NeuromodulatorLevels
 from helios_v2.thought_gating import ContinuationPressureState
+from helios_v2.feeling import InteroceptiveFeelingVector
+
+
+def _feeling(value: float = 0.4) -> InteroceptiveFeelingVector:
+    return InteroceptiveFeelingVector(
+        valence=value,
+        arousal=value,
+        tension=value,
+        comfort=value,
+        fatigue=value,
+        pain_like=value,
+        social_safety=value,
+    )
 
 
 def _levels(value: float = 0.42) -> NeuromodulatorLevels:
@@ -63,6 +76,7 @@ def _snapshot(tick_id: int, *, level: float = 0.5, carry_count: int = 1) -> Runt
             ),
         ),
         neuromodulator_levels=_levels(0.3 + 0.01 * tick_id),
+        feeling=_feeling(0.4 + 0.01 * tick_id),
     )
 
 
@@ -172,7 +186,7 @@ def test_snapshot_round_trips_neuromodulator_levels(tmp_path) -> None:
     loaded = store.load_latest()
     assert loaded is not None
     assert loaded.neuromodulator_levels == snapshot.neuromodulator_levels
-    assert loaded.snapshot_version == 2
+    assert loaded.snapshot_version == 3
 
 
 def test_snapshot_without_levels_round_trips_as_none() -> None:
@@ -209,13 +223,64 @@ def test_corrupt_neuromodulator_levels_hard_stop_on_load(tmp_path) -> None:
     backend.initialize()
     # An out-of-range level (1.5) violates the 04 owner invariant; load must hard-stop.
     backend.save_latest(
-        '{"snapshot_version": 2, "tick_id": 1, '
+        '{"snapshot_version": 3, "tick_id": 1, '
         '"continuation_state": {"active": false, "level": 0.0, "origin_thought_id": "", '
         '"reason": "", "expires_at_tick": 0, "carry_count": 0}, '
         '"deferred_records": [], "continuity_threads": [], '
         '"neuromodulator_levels": {"dopamine": 1.5, "norepinephrine": 0.3, "serotonin": 0.3, '
         '"acetylcholine": 0.3, "cortisol": 0.3, "oxytocin": 0.3, "opioid_tone": 0.3, '
         '"excitation": 0.3, "inhibition": 0.3}}'
+    )
+    store = ContinuityCheckpointStore(backend=backend)
+    with pytest.raises(CheckpointError):
+        store.load_latest()
+
+
+# --- Requirement 44: snapshot v3 carries 05 feeling ---
+
+
+def test_snapshot_round_trips_feeling(tmp_path) -> None:
+    db_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+    store = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=db_path))
+    snapshot = _snapshot(6)
+    store.save_latest(snapshot)
+    loaded = store.load_latest()
+    assert loaded is not None
+    assert loaded.feeling == snapshot.feeling
+    assert loaded.snapshot_version == 3
+
+
+def test_version_two_payload_is_rejected_not_migrated(tmp_path) -> None:
+    db_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+    backend = SqliteCheckpointBackend(db_path=db_path)
+    backend.initialize()
+    # A version-2 payload (the pre-R44 shape, with 04 levels but no 05 feeling) must be rejected.
+    backend.save_latest(
+        '{"snapshot_version": 2, "tick_id": 1, '
+        '"continuation_state": {"active": false, "level": 0.0, "origin_thought_id": "", '
+        '"reason": "", "expires_at_tick": 0, "carry_count": 0}, '
+        '"deferred_records": [], "continuity_threads": [], '
+        '"neuromodulator_levels": {"dopamine": 0.3, "norepinephrine": 0.3, "serotonin": 0.3, '
+        '"acetylcholine": 0.3, "cortisol": 0.3, "oxytocin": 0.3, "opioid_tone": 0.3, '
+        '"excitation": 0.3, "inhibition": 0.3}}'
+    )
+    store = ContinuityCheckpointStore(backend=backend)
+    with pytest.raises(CheckpointError, match="version"):
+        store.load_latest()
+
+
+def test_corrupt_feeling_hard_stop_on_load(tmp_path) -> None:
+    db_path = str(tmp_path / "continuity_checkpoint.sqlite3")
+    backend = SqliteCheckpointBackend(db_path=db_path)
+    backend.initialize()
+    # An out-of-range feeling dimension (1.5) violates the 05 owner invariant; load must hard-stop.
+    backend.save_latest(
+        '{"snapshot_version": 3, "tick_id": 1, '
+        '"continuation_state": {"active": false, "level": 0.0, "origin_thought_id": "", '
+        '"reason": "", "expires_at_tick": 0, "carry_count": 0}, '
+        '"deferred_records": [], "continuity_threads": [], "neuromodulator_levels": null, '
+        '"feeling": {"valence": 1.5, "arousal": 0.4, "tension": 0.4, "comfort": 0.4, '
+        '"fatigue": 0.4, "pain_like": 0.4, "social_safety": 0.4}}'
     )
     store = ContinuityCheckpointStore(backend=backend)
     with pytest.raises(CheckpointError):

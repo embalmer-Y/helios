@@ -83,6 +83,7 @@ class CountingConstructionPath(FeelingConstructionPath):
         internal_signals: tuple[Stimulus, ...],
         config: InteroceptiveFeelingConfig,
         tick_id: int | None,
+        prior_feeling: InteroceptiveFeelingVector | None = None,
     ) -> InteroceptiveFeelingVector:
         self.calls += 1
         assert neuromodulator_state.state_id == "neuromodulator-state:rapid-appraisal-batch:abc:7"
@@ -122,6 +123,7 @@ class UnavailableConstructionPath(FeelingConstructionPath):
         internal_signals: tuple[Stimulus, ...],
         config: InteroceptiveFeelingConfig,
         tick_id: int | None,
+        prior_feeling: InteroceptiveFeelingVector | None = None,
     ) -> InteroceptiveFeelingVector:
         raise InteroceptiveFeelingError("Required feeling construction capability is unavailable")
 
@@ -360,3 +362,81 @@ def test_derived_feeling_engine_integration_uses_real_state() -> None:
 
     assert high.feeling.tension > low.feeling.tension
     assert high.source_neuromodulator_state_id == "neuromodulator-state:rapid-appraisal-batch:r38:1"
+
+
+# --- Requirement 44: dual-timescale feeling persistence ---
+
+from helios_v2.feeling import PersistentFeelingConstructionPath
+
+
+@dataclass
+class _FixedTargetPath(FeelingConstructionPath):
+    """Inner target path returning a fixed feeling vector regardless of input (test double)."""
+
+    target_value: float = 0.9
+
+    def construct_feeling(self, neuromodulator_state, internal_signals, config, tick_id, prior_feeling=None):
+        del neuromodulator_state, internal_signals, config, tick_id, prior_feeling
+        return _build_feeling(self.target_value)
+
+
+def test_persistent_feeling_cold_start_is_one_step_from_baseline() -> None:
+    path = PersistentFeelingConstructionPath(
+        target_path=_FixedTargetPath(0.9), alpha_phasic=0.6, alpha_tonic=0.1
+    )
+    config = _build_config()
+    feeling = path.construct_feeling(
+        _build_neuromodulator_state(), (), config, tick_id=1, prior_feeling=None
+    )
+    # next = 0.3 + 0.6*(0.9-0.3) + 0.1*(0.3-0.3) = 0.66
+    assert feeling.valence == pytest.approx(0.66, abs=1e-4)
+
+
+def test_persistent_feeling_phasic_carry_then_tonic_regression() -> None:
+    config = _build_config()
+    high = PersistentFeelingConstructionPath(
+        target_path=_FixedTargetPath(0.9), alpha_phasic=0.6, alpha_tonic=0.1
+    )
+    t1 = high.construct_feeling(_build_neuromodulator_state(), (), config, tick_id=1, prior_feeling=None)
+    low = PersistentFeelingConstructionPath(
+        target_path=_FixedTargetPath(0.3), alpha_phasic=0.6, alpha_tonic=0.1
+    )
+    t2 = low.construct_feeling(_build_neuromodulator_state(), (), config, tick_id=2, prior_feeling=t1)
+    assert t2.valence < t1.valence                          # decays toward the lower target
+    assert t2.valence > config.baseline_feeling.valence     # but still above baseline (carry)
+    t3 = low.construct_feeling(_build_neuromodulator_state(), (), config, tick_id=3, prior_feeling=t2)
+    assert config.baseline_feeling.valence <= t3.valence < t2.valence
+
+
+def test_persistent_feeling_stays_bounded_over_many_ticks() -> None:
+    config = _build_config()
+    path = PersistentFeelingConstructionPath(
+        target_path=_FixedTargetPath(1.0), alpha_phasic=0.9, alpha_tonic=0.2
+    )
+    prior = None
+    for tick in range(1, 50):
+        feeling = path.construct_feeling(_build_neuromodulator_state(), (), config, tick_id=tick, prior_feeling=prior)
+        for dimension in ("valence", "arousal", "tension", "comfort", "fatigue", "pain_like", "social_safety"):
+            assert 0.0 <= getattr(feeling, dimension) <= 1.0
+        prior = feeling
+
+
+def test_persistent_feeling_rejects_unstable_alpha() -> None:
+    with pytest.raises(InteroceptiveFeelingError, match="alpha"):
+        PersistentFeelingConstructionPath(target_path=_FixedTargetPath(), alpha_phasic=0.1, alpha_tonic=0.6)
+    with pytest.raises(InteroceptiveFeelingError, match="alpha"):
+        PersistentFeelingConstructionPath(target_path=_FixedTargetPath(), alpha_phasic=0.6, alpha_tonic=0.0)
+
+
+def test_persistent_feeling_engine_carries_prior_state_across_calls() -> None:
+    config = _build_config()
+    engine = InteroceptiveFeelingEngine(
+        config=config,
+        construction_path=PersistentFeelingConstructionPath(
+            target_path=_FixedTargetPath(0.9), alpha_phasic=0.6, alpha_tonic=0.1
+        ),
+        dominant_dimension_reporter=CountingReporter(),
+    )
+    s1 = engine.update_state(_build_neuromodulator_state(), (), tick_id=1, prior_state=None)
+    s2 = engine.update_state(_build_neuromodulator_state(), (), tick_id=2, prior_state=s1)
+    assert s2.feeling.valence > s1.feeling.valence  # rises further on tick 2 toward the target

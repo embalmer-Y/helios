@@ -23,14 +23,16 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from helios_v2.autonomy import ContinuityThread, DeferredContinuityRecord
+from helios_v2.feeling import InteroceptiveFeelingVector
 from helios_v2.neuromodulation import NeuromodulatorLevels
 from helios_v2.thought_gating import ContinuationPressureState
 
 # Current snapshot schema version. Bumped only when the snapshot's persisted shape changes
 # in a way the facade's decode must branch on. The version is persisted so a loaded payload
 # whose version does not match is rejected rather than silently migrated (R43: bumped to 2 to
-# add the `04` neuromodulator levels; no v1 migration, since no production data exists yet).
-SNAPSHOT_VERSION = 2
+# add the `04` neuromodulator levels; R44: bumped to 3 to add the `05` feeling; no migration,
+# since no production data exists yet).
+SNAPSHOT_VERSION = 3
 
 
 class CheckpointError(RuntimeError):
@@ -44,25 +46,25 @@ class RuntimeContinuitySnapshot:
     Purpose:
         One immutable latest-state snapshot of the runtime's genuinely cross-tick continuity
         state at a given tick: the `09` continuation-pressure state, the `18`/`24` long-horizon
-        continuity (deferred-continuity records plus continuity threads), and (R43) the `04`
-        neuromodulator levels.
+        continuity (deferred-continuity records plus continuity threads), (R43) the `04`
+        neuromodulator levels, and (R44) the `05` interoceptive feeling.
 
     Failure semantics:
         Construction raises `CheckpointError` on a non-positive `snapshot_version`. The reused
         owner-contract fields (`continuation_state`, `deferred_records`, `continuity_threads`,
-        `neuromodulator_levels`) are validated by their own owners' constructors, so an invalid
-        value cannot reach this snapshot without that owner having raised first.
+        `neuromodulator_levels`, `feeling`) are validated by their own owners' constructors, so an
+        invalid value cannot reach this snapshot without that owner having raised first.
 
     Notes:
         This snapshot reuses the owners' own frozen contracts directly as its fields rather
         than inventing parallel shapes, so the owners remain the sole definition of their state
         shape and reconstruction runs their validation. It carries no authority and is never an
         inter-owner decision transport; it exists only so a restarted runtime can resume its
-        prior cross-tick continuity. With R43 the `04` neuromodulator levels are included (now
-        that `04` carries cross-tick state through its dual-timescale dynamics). `05`/`14`/`06`
-        state remains out of scope: it is not cross-tick in-process state in the current runtime.
-        The `snapshot_version` field is bumped when the shape changes; a loaded payload whose
-        version does not match the current one is rejected rather than migrated.
+        prior cross-tick continuity. With R43/R44 the `04` neuromodulator levels and `05` feeling
+        are included (now that both carry cross-tick state through their dual-timescale dynamics).
+        `14`/`06` state remains out of scope: it is not cross-tick in-process state in the current
+        runtime. The `snapshot_version` field is bumped when the shape changes; a loaded payload
+        whose version does not match the current one is rejected rather than migrated.
     """
 
     tick_id: int | None
@@ -70,6 +72,7 @@ class RuntimeContinuitySnapshot:
     deferred_records: tuple[DeferredContinuityRecord, ...] = ()
     continuity_threads: tuple[ContinuityThread, ...] = ()
     neuromodulator_levels: NeuromodulatorLevels | None = None
+    feeling: InteroceptiveFeelingVector | None = None
     snapshot_version: int = SNAPSHOT_VERSION
 
     def __post_init__(self) -> None:

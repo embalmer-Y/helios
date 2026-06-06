@@ -873,12 +873,40 @@ class InteroceptiveFeelingRuntimeStage(RuntimeStage):
     feeling_layer: InteroceptiveFeelingAPI
     upstream_stage_name: str = "neuromodulator_system"
     internal_signal_stage_name: str | None = "sensory_ingress"
+    _prior_state: InteroceptiveFeelingState | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     @property
     def stage_name(self) -> str:
         """Stable runtime stage name for interoceptive feeling execution."""
 
         return "interoceptive_feeling_layer"
+
+    def seed_prior_state(self, state: InteroceptiveFeelingState) -> None:
+        """Owner: interoceptive feeling layer (composition-time restore seam, R44).
+
+        Purpose:
+            Seed the stage's prior `05` feeling-state before the first tick, so a restarted
+            runtime resumes its dual-timescale felt body-state trajectory instead of recomputing
+            from the baseline feeling.
+
+        Inputs:
+            `state` - the owner-validated `InteroceptiveFeelingState` to resume from.
+
+        Returns:
+            None.
+
+        Notes:
+            One-shot composition-time seed point, not a per-tick mutator. The cross-tick field
+            remains owned by this stage; composition only restores it. Each tick still overwrites
+            it with the state produced this tick. Harmless for the stateless (non-persistence)
+            assembly, whose construction path ignores the prior feeling.
+        """
+
+        self._prior_state = state
 
     def run(self, frame: RuntimeFrame) -> InteroceptiveFeelingStageResult:
         """Execute feeling update against the declared upstream neuromodulator stage result."""
@@ -900,7 +928,9 @@ class InteroceptiveFeelingRuntimeStage(RuntimeStage):
             neuromodulator_result.state,
             internal_signals,
             tick_id=frame.tick_id,
+            prior_state=self._prior_state,
         )
+        self._prior_state = state
         publish_op = self.feeling_layer.build_publish_state_op(state)
         return InteroceptiveFeelingStageResult(
             update_op=update_op,

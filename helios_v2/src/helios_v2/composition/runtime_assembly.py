@@ -42,6 +42,7 @@ from helios_v2.feeling import (
     InteroceptiveFeelingConfig,
     InteroceptiveFeelingEngine,
     NeuromodulatorDerivedFeelingConstructionPath,
+    PersistentFeelingConstructionPath,
 )
 from helios_v2.identity_governance import (
     FirstVersionIdentityGovernancePath,
@@ -561,6 +562,7 @@ class RuntimeHandle:
     thought_gating_stage: "ThoughtGatingRuntimeStage | None" = None
     autonomy_stage: "AutonomyRuntimeStage | None" = None
     neuromodulator_stage: "NeuromodulatorRuntimeStage | None" = None
+    feeling_stage: "InteroceptiveFeelingRuntimeStage | None" = None
     _reconstructor: ExecutionTimelineReconstructor = field(
         default_factory=ExecutionTimelineReconstructor
     )
@@ -605,6 +607,10 @@ class RuntimeHandle:
             restored_state = self.continuity_checkpoint_bridge.restore_neuromodulator_state(snapshot)
             if restored_state is not None:
                 self.neuromodulator_stage.seed_prior_state(restored_state)
+        if self.feeling_stage is not None:
+            restored_feeling = self.continuity_checkpoint_bridge.restore_feeling_state(snapshot)
+            if restored_feeling is not None:
+                self.feeling_stage.seed_prior_state(restored_feeling)
 
     def tick(self) -> RuntimeTickResult:
         """Execute one runtime tick and carry its completed timeline forward when instrumented."""
@@ -708,6 +714,7 @@ class RuntimeHandle:
             autonomy_result,
             result.tick_id,
             neuromodulator_stage_result=result.stage_results.get("neuromodulator_system"),
+            feeling_stage_result=result.stage_results.get("interoceptive_feeling_layer"),
         )
         self.continuity_checkpoint.save_latest(snapshot)
 
@@ -970,14 +977,17 @@ def assemble_runtime(
         ),
         active_channel_reporter=FirstVersionActiveChannelReporter(),
     )
-    # `05` feeling de-shim (R38): when enabled, the feeling vector is derived deterministically
-    # from the real `04` neuromodulator state around the configured baseline (stateless; no
-    # prior-tick feeling carry). When off, the constant first-version construction path is
-    # unchanged. The channel->dimension mapping is owned by the `05` owner, not composition.
+    # `05` feeling de-shim (R38) + dual-timescale persistence (R44): when enabled, the feeling
+    # vector is derived from the real `04` state (R38 instantaneous target) and then evolved across
+    # ticks by an owner-owned dual-timescale leaky-integrator carrying the prior-tick feeling (R44,
+    # the `05` mirror of R43). When off, the constant first-version construction path is unchanged
+    # (stateless). The channel->dimension mapping is owned by the `05` owner, not composition.
     feeling = InteroceptiveFeelingEngine(
         config=resolved_config.feeling,
         construction_path=(
-            NeuromodulatorDerivedFeelingConstructionPath()
+            PersistentFeelingConstructionPath(
+                target_path=NeuromodulatorDerivedFeelingConstructionPath()
+            )
             if semantic_memory_enabled
             else FirstVersionFeelingConstructionPath()
         ),
@@ -1180,6 +1190,7 @@ def assemble_runtime(
     thought_gating_stage_ref: ThoughtGatingRuntimeStage | None = None
     autonomy_stage_ref: AutonomyRuntimeStage | None = None
     neuromodulator_stage_ref: NeuromodulatorRuntimeStage | None = None
+    feeling_stage_ref: InteroceptiveFeelingRuntimeStage | None = None
     if continuity_checkpoint is not None:
         continuity_checkpoint_bridge = ContinuityCheckpointBridge()
         thought_gating_stage_ref = next(
@@ -1194,6 +1205,9 @@ def assemble_runtime(
         )
         neuromodulator_stage_ref = next(
             stage for stage in stages if stage.stage_name == "neuromodulator_system"
+        )
+        feeling_stage_ref = next(
+            stage for stage in stages if stage.stage_name == "interoceptive_feeling_layer"
         )
 
     return RuntimeHandle(
@@ -1212,6 +1226,7 @@ def assemble_runtime(
         thought_gating_stage=thought_gating_stage_ref,
         autonomy_stage=autonomy_stage_ref,
         neuromodulator_stage=neuromodulator_stage_ref,
+        feeling_stage=feeling_stage_ref,
     )
 
 

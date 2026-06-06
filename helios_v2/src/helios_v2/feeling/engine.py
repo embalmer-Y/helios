@@ -56,6 +56,7 @@ class FeelingConstructionPath(Protocol):
         internal_signals: tuple[Stimulus, ...],
         config: InteroceptiveFeelingConfig,
         tick_id: int | None,
+        prior_feeling: "InteroceptiveFeelingVector | None" = None,
     ) -> InteroceptiveFeelingVector:
         """Owner: interoceptive feeling layer.
 
@@ -63,7 +64,9 @@ class FeelingConstructionPath(Protocol):
             Produce the next dimensional feeling vector.
 
         Inputs:
-            One validated `NeuromodulatorState`, optional validated internal signals, one owner config, and an optional tick id.
+            One validated `NeuromodulatorState`, optional validated internal signals, one owner
+            config, an optional tick id, and the optional prior-tick `InteroceptiveFeelingVector`
+            (`None` on a cold start or for a stateless path).
 
         Returns:
             One `InteroceptiveFeelingVector` within contract range.
@@ -72,7 +75,10 @@ class FeelingConstructionPath(Protocol):
             InteroceptiveFeelingError if the required construction capability is unavailable or unsafe.
 
         Notes:
-            This interface is injected into the owner skeleton so unresolved construction semantics are not guessed here.
+            `prior_feeling` is additive (default `None`). A stateless path (constant or
+            neuromodulator-derived target) must ignore it and reproduce its prior behavior
+            byte-for-byte; a persistence (dual-timescale) path uses it as the integrator's prior,
+            treating `None` as a cold start (the baseline feeling).
         """
 
 
@@ -128,6 +134,7 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
         neuromodulator_state: NeuromodulatorState,
         internal_signals: tuple[Stimulus, ...] = (),
         tick_id: int | None = None,
+        prior_state: InteroceptiveFeelingState | None = None,
     ) -> InteroceptiveFeelingState:
         """Owner: interoceptive feeling layer.
 
@@ -135,7 +142,9 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
             Consume one neuromodulator state snapshot and optional internal signals and return one feeling-state snapshot.
 
         Inputs:
-            One `NeuromodulatorState`, optional body/interoceptive `Stimulus` values, and an optional runtime tick id.
+            One `NeuromodulatorState`, optional body/interoceptive `Stimulus` values, an optional
+            runtime tick id, and the optional prior-tick `InteroceptiveFeelingState` (`None` on a
+            cold start or for a stateless path).
 
         Returns:
             An `InteroceptiveFeelingState` containing the owner-produced dimensional feeling vector.
@@ -144,17 +153,22 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
             InteroceptiveFeelingError when input invariants or construction-path outputs are invalid.
 
         Notes:
-            Remaining unresolved feeling semantics stay inside the injected construction path.
+            `prior_state` is additive (default `None`); the engine forwards `prior_state.feeling`
+            (or `None`) to the construction path. A stateless path ignores it; a dual-timescale
+            persistence path uses it as the integrator's prior. Remaining unresolved feeling
+            semantics stay inside the injected construction path.
         """
 
         _validate_neuromodulator_state(neuromodulator_state)
         for signal in internal_signals:
             validate_internal_body_signal(signal)
+        prior_feeling = prior_state.feeling if prior_state is not None else None
         feeling = self.construction_path.construct_feeling(
             neuromodulator_state,
             internal_signals,
             self.config,
             tick_id,
+            prior_feeling,
         )
         return InteroceptiveFeelingState(
             state_id=f"interoceptive-feeling-state:{neuromodulator_state.state_id}:{tick_id if tick_id is not None else 'na'}",
@@ -236,131 +250,6 @@ class NeuromodulatorDerivedFeelingConstructionPath(FeelingConstructionPath):
     """Owner: interoceptive feeling layer (R38).
 
     Purpose:
-        Derive the next subjective body-feeling vector from the real `04` neuromodulator state
-        around the configured baseline, replacing the constant first-version shim so the real
-        modulatory state shapes feeling. This is the owner's core semantic (subjectivizing
-        neuromodulator state into feeling), so the mapping lives here, in the `05` owner, not in
-        composition glue.
-
-    Failure semantics:
-        A malformed neuromodulator state is rejected by the `05` engine before this path runs.
-        This path is a total deterministic function of the state + config; it never branches into
-        a degraded mode and never diverges outside the legal range (every dimension is clamped).
-
-    Notes:
-        Stateless by design: it reads no prior-tick feeling (true dual-timescale feeling
-        persistence is a later slice). It derives from the neuromodulator levels only and ignores
-        `internal_signals`/`tick_id` this slice (integrating real interoceptive signals is a later
-        slice). The per-dimension coupling coefficients are explicit bounded first-version
-        constants organized under the config's declared learned-parameter categories
-        (`feeling_mapping_strength` for the direct level->dimension gains, `feeling_coupling_strength`
-        for the cross-channel up/down combinations); a later P5 slice tunes them without changing
-        the equation shape. The mapping is a fixed linear combination plus clamp -- no NN, no
-        hidden branch.
-    """
-
-    # valence: reward/pleasure/well-being up; stress down
-    dopamine_to_valence: float = 0.30
-    opioid_to_valence: float = 0.15
-    serotonin_to_valence: float = 0.15
-    cortisol_to_valence: float = 0.30
-    # arousal: alerting/excitation up
-    norepinephrine_to_arousal: float = 0.40
-    excitation_to_arousal: float = 0.20
-    # tension: stress/alerting up
-    cortisol_to_tension: float = 0.40
-    norepinephrine_to_tension: float = 0.20
-    # comfort: analgesia/bonding/calm up; stress down
-    opioid_to_comfort: float = 0.30
-    oxytocin_to_comfort: float = 0.20
-    serotonin_to_comfort: float = 0.15
-    cortisol_to_comfort: float = 0.30
-    # pain_like: stress up; opioid analgesia down
-    cortisol_to_pain_like: float = 0.40
-    opioid_to_pain_like: float = 0.35
-    # social_safety: bonding up; stress down
-    oxytocin_to_social_safety: float = 0.40
-    serotonin_to_social_safety: float = 0.15
-    cortisol_to_social_safety: float = 0.25
-    # fatigue: weak first-version coupling (real fatigue needs cross-tick accumulation, deferred)
-    inhibition_to_fatigue: float = 0.20
-    excitation_to_fatigue: float = 0.20
-
-    def construct_feeling(
-        self,
-        neuromodulator_state: NeuromodulatorState,
-        internal_signals: tuple[Stimulus, ...],
-        config: InteroceptiveFeelingConfig,
-        tick_id: int | None,
-    ) -> InteroceptiveFeelingVector:
-        del internal_signals, tick_id
-        levels = neuromodulator_state.levels
-        base = config.baseline_feeling
-        low = config.legal_min
-        high = config.legal_max
-        return InteroceptiveFeelingVector(
-            valence=_clamp(
-                base.valence
-                + self.dopamine_to_valence * levels.dopamine
-                + self.opioid_to_valence * levels.opioid_tone
-                + self.serotonin_to_valence * levels.serotonin
-                - self.cortisol_to_valence * levels.cortisol,
-                low.valence,
-                high.valence,
-            ),
-            arousal=_clamp(
-                base.arousal
-                + self.norepinephrine_to_arousal * levels.norepinephrine
-                + self.excitation_to_arousal * levels.excitation,
-                low.arousal,
-                high.arousal,
-            ),
-            tension=_clamp(
-                base.tension
-                + self.cortisol_to_tension * levels.cortisol
-                + self.norepinephrine_to_tension * levels.norepinephrine,
-                low.tension,
-                high.tension,
-            ),
-            comfort=_clamp(
-                base.comfort
-                + self.opioid_to_comfort * levels.opioid_tone
-                + self.oxytocin_to_comfort * levels.oxytocin
-                + self.serotonin_to_comfort * levels.serotonin
-                - self.cortisol_to_comfort * levels.cortisol,
-                low.comfort,
-                high.comfort,
-            ),
-            fatigue=_clamp(
-                base.fatigue
-                + self.inhibition_to_fatigue * levels.inhibition
-                - self.excitation_to_fatigue * levels.excitation,
-                low.fatigue,
-                high.fatigue,
-            ),
-            pain_like=_clamp(
-                base.pain_like
-                + self.cortisol_to_pain_like * levels.cortisol
-                - self.opioid_to_pain_like * levels.opioid_tone,
-                low.pain_like,
-                high.pain_like,
-            ),
-            social_safety=_clamp(
-                base.social_safety
-                + self.oxytocin_to_social_safety * levels.oxytocin
-                + self.serotonin_to_social_safety * levels.serotonin
-                - self.cortisol_to_social_safety * levels.cortisol,
-                low.social_safety,
-                high.social_safety,
-            ),
-        )
-
-
-@dataclass
-class NeuromodulatorDerivedFeelingConstructionPath(FeelingConstructionPath):
-    """Owner: interoceptive feeling layer (R38).
-
-    Purpose:
         Derive the next interoceptive feeling vector from the real `04` neuromodulator state
         around the configured baseline feeling, replacing the constant first-version shim so the
         real neuromodulator state (the R36 appraisal-derived levels) measurably shapes subjective
@@ -418,8 +307,9 @@ class NeuromodulatorDerivedFeelingConstructionPath(FeelingConstructionPath):
         internal_signals: tuple[Stimulus, ...],
         config: InteroceptiveFeelingConfig,
         tick_id: int | None,
+        prior_feeling: InteroceptiveFeelingVector | None = None,
     ) -> InteroceptiveFeelingVector:
-        del internal_signals, tick_id
+        del internal_signals, tick_id, prior_feeling
         levels = neuromodulator_state.levels
         base = config.baseline_feeling
         low = config.legal_min
@@ -480,3 +370,90 @@ class NeuromodulatorDerivedFeelingConstructionPath(FeelingConstructionPath):
                 high.social_safety,
             ),
         )
+
+
+_FEELING_DIMENSIONS: tuple[str, ...] = (
+    "valence",
+    "arousal",
+    "tension",
+    "comfort",
+    "fatigue",
+    "pain_like",
+    "social_safety",
+)
+
+
+@dataclass
+class PersistentFeelingConstructionPath(FeelingConstructionPath):
+    """Owner: interoceptive feeling layer (R44).
+
+    Purpose:
+        Add the temporal (dual-timescale) layer the `05` contract already reserves
+        (`feeling_persistence`). It wraps an inner `target_path` (the R38 neuromodulator-derived
+        instantaneous target feeling) and applies a leaky-integrator step against the prior-tick
+        feeling, so the felt body-state evolves across ticks instead of being recomputed from
+        baseline each tick (the `05` mirror of R43's `04` dynamics; advancing FG-2).
+
+    Failure semantics:
+        Construction raises `InteroceptiveFeelingError` unless `0 < alpha_tonic < alpha_phasic <= 1`,
+        so an unstable or non-decaying integrator cannot be assembled. The update itself is a total
+        deterministic function; every dimension is clamped to the legal range, so it never diverges.
+
+    Notes:
+        The instantaneous target stays owned by the injected inner path; this owner-owned wrapper
+        owns only the cross-tick carry/decay semantic. Per dimension:
+        `next = clamp(prior + alpha_phasic * (target - prior) + alpha_tonic * (baseline - prior))`.
+        A `None` `prior_feeling` is a cold start: the prior defaults to the baseline feeling, so the
+        first tick is one integrator step from baseline (no fabricated history). The coefficients
+        are explicit bounded first-version constants under the config's declared
+        `feeling_persistence` learned-parameter category (P5-learnable later); they match R43's
+        defaults so the two affect owners share one decay timescale. `internal_signals`/`tick_id`
+        are forwarded to the inner path; real interoceptive-signal integration remains a later slice.
+    """
+
+    target_path: FeelingConstructionPath
+    alpha_phasic: float = 0.6
+    alpha_tonic: float = 0.1
+
+    def __post_init__(self) -> None:
+        if not (0.0 < self.alpha_tonic < self.alpha_phasic <= 1.0):
+            raise InteroceptiveFeelingError(
+                "PersistentFeelingConstructionPath requires 0 < alpha_tonic < alpha_phasic <= 1"
+            )
+
+    def construct_feeling(
+        self,
+        neuromodulator_state: NeuromodulatorState,
+        internal_signals: tuple[Stimulus, ...],
+        config: InteroceptiveFeelingConfig,
+        tick_id: int | None,
+        prior_feeling: InteroceptiveFeelingVector | None = None,
+    ) -> InteroceptiveFeelingVector:
+        """Return the next feeling as one leaky-integrator step from the prior toward the target.
+
+        The inner target path produces the instantaneous neuromodulator-derived feeling; this
+        method moves the prior feeling a phasic step toward that target and a tonic step toward the
+        baseline, clamping each dimension. `prior_feeling is None` is a cold start (prior = baseline).
+        """
+
+        target = self.target_path.construct_feeling(
+            neuromodulator_state, internal_signals, config, tick_id, None
+        )
+        prior = prior_feeling if prior_feeling is not None else config.baseline_feeling
+        baseline = config.baseline_feeling
+        low = config.legal_min
+        high = config.legal_max
+        next_values: dict[str, float] = {}
+        for dimension in _FEELING_DIMENSIONS:
+            prior_value = getattr(prior, dimension)
+            target_value = getattr(target, dimension)
+            baseline_value = getattr(baseline, dimension)
+            stepped = (
+                prior_value
+                + self.alpha_phasic * (target_value - prior_value)
+                + self.alpha_tonic * (baseline_value - prior_value)
+            )
+            next_values[dimension] = _clamp(
+                round(stepped, 4), getattr(low, dimension), getattr(high, dimension)
+            )
+        return InteroceptiveFeelingVector(**next_values)

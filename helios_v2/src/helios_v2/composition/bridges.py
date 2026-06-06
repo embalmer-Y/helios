@@ -577,8 +577,9 @@ class FirstVersionFeelingConstructionPath(FeelingConstructionPath):
         internal_signals: tuple[Stimulus, ...],
         config: InteroceptiveFeelingConfig,
         tick_id: int | None,
+        prior_feeling: InteroceptiveFeelingVector | None = None,
     ) -> InteroceptiveFeelingVector:
-        del neuromodulator_state, internal_signals, config, tick_id
+        del neuromodulator_state, internal_signals, config, tick_id, prior_feeling
         return InteroceptiveFeelingVector(
             valence=0.4,
             arousal=0.7,
@@ -903,6 +904,7 @@ class ContinuityCheckpointBridge:
         autonomy_stage_result,
         tick_id,
         neuromodulator_stage_result=None,
+        feeling_stage_result=None,
     ) -> RuntimeContinuitySnapshot:
         """Owner: composition.
 
@@ -918,6 +920,8 @@ class ContinuityCheckpointBridge:
             `tick_id` - the completed tick id.
             `neuromodulator_stage_result` - optional `NeuromodulatorStageResult`; when present its
                 `state.levels` (the R43 cross-tick `04` state) are captured into the snapshot.
+            `feeling_stage_result` - optional `InteroceptiveFeelingStageResult`; when present its
+                `state.feeling` (the R44 cross-tick `05` state) is captured into the snapshot.
 
         Returns:
             A `RuntimeContinuitySnapshot` carrying the published cross-tick state verbatim.
@@ -931,12 +935,18 @@ class ContinuityCheckpointBridge:
             if neuromodulator_stage_result is not None
             else None
         )
+        feeling = (
+            feeling_stage_result.state.feeling
+            if feeling_stage_result is not None
+            else None
+        )
         return RuntimeContinuitySnapshot(
             tick_id=tick_id,
             continuation_state=thought_gating_stage_result.continuation_state,
             deferred_records=autonomy_stage_result.result.deferred_records,
             continuity_threads=autonomy_stage_result.result.long_horizon_state.threads,
             neuromodulator_levels=levels,
+            feeling=feeling,
         )
 
     def restore_neuromodulator_state(self, snapshot: RuntimeContinuitySnapshot):
@@ -965,6 +975,35 @@ class ContinuityCheckpointBridge:
             state_id=f"neuromodulator-state:restored:{snapshot.tick_id if snapshot.tick_id is not None else 'na'}",
             source_appraisal_batch_id="restored-from-continuity-checkpoint",
             levels=snapshot.neuromodulator_levels,
+            tick_id=snapshot.tick_id,
+        )
+
+    def restore_feeling_state(self, snapshot: RuntimeContinuitySnapshot):
+        """Owner: composition.
+
+        Purpose:
+            Reconstruct an `InteroceptiveFeelingState` from a snapshot's `05` feeling so
+            composition can seed the `05` stage's prior state on restart, or return `None` when
+            the snapshot carries no feeling (a pre-`05`-checkpoint or stateless snapshot).
+
+        Inputs:
+            `snapshot` - the loaded `RuntimeContinuitySnapshot`.
+
+        Returns:
+            An `InteroceptiveFeelingState` carrying the restored feeling with a restore-provenance
+            id, or `None`.
+
+        Notes:
+            Owner-neutral: it only wraps the owner-published feeling back into the owner's own
+            state contract (running that contract's validation). It computes no dynamics.
+        """
+
+        if snapshot.feeling is None:
+            return None
+        return InteroceptiveFeelingState(
+            state_id=f"interoceptive-feeling-state:restored:{snapshot.tick_id if snapshot.tick_id is not None else 'na'}",
+            source_neuromodulator_state_id="restored-from-continuity-checkpoint",
+            feeling=snapshot.feeling,
             tick_id=snapshot.tick_id,
         )
 

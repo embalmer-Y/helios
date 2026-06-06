@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R43 (`04` dual-timescale neuromodulator dynamics + checkpoint; `04` evolves cross-tick and resumes across restart). Test baseline: 573 passed. HEAD-era: R43. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R44 (`05` interoceptive feeling dual-timescale persistence + checkpoint; `05` evolves cross-tick and resumes across restart, completing the affect pair). Test baseline: 584 passed. HEAD-era: R44. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -52,7 +52,7 @@ flowchart TD
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
-    S05["05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless"]:::base
+    S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
     S07[07 Workspace Competition - baseline/shim in]:::base
     S08["08 Reportable Conscious Content - owner semantics rel. complete, but upstream/commitment path still first-version shim"]:::base
@@ -91,7 +91,7 @@ flowchart TD
     TH24[24 Continuity Threads - done, now active]:::infra
     PER[33 Durable Experience Store - infra done, opt-in]:::infra
     EMB[34 Embedding Gateway - infra done, opt-in]:::infra
-    CKPT[42/43 Continuity Checkpoint - infra done, opt-in]:::infra
+    CKPT[42/43/44 Continuity Checkpoint - infra done, opt-in]:::infra
     K01 -. startup gate + dispatch .-> S02
     OBS -. per-tick timeline .-> EV23
     EV23 --> S17
@@ -103,9 +103,11 @@ flowchart TD
     S09 -. continuation pressure (save after tick) .-> CKPT
     S18 -. deferred records + threads (save after tick) .-> CKPT
     S04 -. neuromodulator levels (save after tick, R43) .-> CKPT
+    S05 -. feeling (save after tick, R44) .-> CKPT
     CKPT -. restore-at-startup seeds prior cross-tick state (opt-in) .-> S09
     CKPT -. restore-at-startup seeds prior cross-tick state (opt-in) .-> S18
     CKPT -. restore-at-startup seeds prior 04 levels (opt-in, R43) .-> S04
+    CKPT -. restore-at-startup seeds prior 05 feeling (opt-in, R44) .-> S05
 ```
 
 ## 4. Status Summary
@@ -267,6 +269,22 @@ flowchart TD
   restart (save reads the published levels, restore seeds the stage); a version mismatch or corrupt
   levels hard-stop on load (no v1 migration). Default/recency/offline keep the stateless constant
   `04`. Deferred: cross-channel coupling, P5 coefficient learning, cortisol/inhibition hard gate.
+- P2/P3 hinge (R44): `05` interoceptive feeling now evolves across ticks (the `05` mirror of R43,
+  completing the affect pair). Under the semantic assembly the `05` construction path is replaced
+  (from stateless) by an owner-owned `PersistentFeelingConstructionPath` (wrapping the R38
+  instantaneous neuromodulator-derived target path), per dimension the same form as R43:
+  `next = clamp(prior + alpha_phasic*(target-prior) + alpha_tonic*(baseline-prior))` (under the
+  `feeling_persistence` category, P5-learnable; same constants as R43 so the two affect owners
+  share one decay timescale). The instantaneous target stays owned by the injected R38 path; the
+  cross-tick carry is the new `05`-owned semantic. `FeelingConstructionPath`/`update_state` gain an
+  additive optional `prior_feeling`/`prior_state` (default `None` reproduces stateless behavior
+  byte-for-byte); `InteroceptiveFeelingRuntimeStage` holds the prior-tick state (like `04`/`09`/`18`)
+  and exposes `seed_prior_state`. Cold start defaults prior to the baseline feeling. The snapshot is
+  bumped to version 3 with a `feeling` field, so `05` survives a restart; a version mismatch (v1/v2)
+  or corrupt feeling hard-stops on load. Default/recency/offline keep the stateless constant `05`.
+  Also removed a pre-existing dead duplicate `NeuromodulatorDerivedFeelingConstructionPath`. Deferred:
+  real interoceptive-signal integration, P5 coefficient learning, feeding the evolving `05` feeling
+  into `06`/behavior (FG-2).
 - Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
   signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
   produces them today — the sensory sources emit only text, so `internal_signals` is always empty

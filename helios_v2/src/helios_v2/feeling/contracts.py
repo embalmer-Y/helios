@@ -189,6 +189,7 @@ class InteroceptiveFeelingAPI(Protocol):
         neuromodulator_state: NeuromodulatorState,
         internal_signals: tuple[Stimulus, ...] = (),
         tick_id: int | None = None,
+        prior_state: "InteroceptiveFeelingState | None" = None,
     ) -> InteroceptiveFeelingState:
         """Owner: interoceptive feeling layer.
 
@@ -196,7 +197,7 @@ class InteroceptiveFeelingAPI(Protocol):
             Consume one neuromodulator state snapshot and optional internal signals and return one feeling-state snapshot.
 
         Inputs:
-            A `NeuromodulatorState`, optional `Stimulus` values limited to `body` or `interoceptive` modality, and an optional runtime tick id.
+            A `NeuromodulatorState`, optional `Stimulus` values limited to `body` or `interoceptive` modality, an optional runtime tick id, and the optional prior-tick `InteroceptiveFeelingState` (`None` on a cold start or for a stateless path).
 
         Returns:
             An `InteroceptiveFeelingState` owned by the interoceptive feeling layer.
@@ -205,7 +206,7 @@ class InteroceptiveFeelingAPI(Protocol):
             InteroceptiveFeelingError when required input or construction invariants are violated.
 
         Notes:
-            The returned state contains subjective feeling semantics only, not memory or action semantics.
+            `prior_state` is additive (default `None`); a stateless construction path ignores it, a dual-timescale persistence path uses it as the integrator's prior. The returned state contains subjective feeling semantics only, not memory or action semantics.
         """
 
         ...
