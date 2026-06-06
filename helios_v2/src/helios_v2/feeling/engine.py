@@ -372,6 +372,15 @@ class NeuromodulatorDerivedFeelingConstructionPath(FeelingConstructionPath):
         )
 
 
+# Reserved interoceptive-afferent metadata keys the `50` runtime interoceptive source sets on
+# each interoceptive `RawSignal` (preserved verbatim by sensory normalization onto the `Stimulus`).
+# These are owner-read keys for `05`: the feeling owner reads the bounded numeric pressure fact
+# rather than parsing the human-readable content string. They mirror the `30` QoS reserved-key
+# pattern (a string-keyed metadata fact, not a typed cross-owner contract field).
+_PRESSURE_CHANNEL_METADATA_KEY = "pressure_channel"
+_PRESSURE_VALUE_METADATA_KEY = "pressure_value"
+
+
 _FEELING_DIMENSIONS: tuple[str, ...] = (
     "valence",
     "arousal",
@@ -457,3 +466,145 @@ class PersistentFeelingConstructionPath(FeelingConstructionPath):
                 round(stepped, 4), getattr(low, dimension), getattr(high, dimension)
             )
         return InteroceptiveFeelingVector(**next_values)
+
+
+@dataclass
+class InteroceptiveSignalModulatedFeelingConstructionPath(FeelingConstructionPath):
+    """Owner: interoceptive feeling layer (R51).
+
+    Purpose:
+        Make the real interoceptive afferent shape the felt body-state. It wraps an inner
+        `target_path` (the R38 neuromodulator-derived instantaneous feeling) and adds a bounded,
+        non-negative, stress-directional per-dimension contribution derived from the real
+        compute/runtime-pressure signals the `50` interoceptive source produces (delivered to `05`
+        as `internal_signals` since R50), so the runtime's real internal condition measurably and
+        traceably changes feeling in addition to the top-down `04`-derived target. This closes the
+        consumption half of `gap_interoceptive_signal_source` and forms the first end-to-end FG-2
+        causal chain (real machine condition -> `05` feeling -> `07` workspace competition).
+
+    Failure semantics:
+        Total deterministic function. An interoceptive stimulus without a recognized string
+        `pressure_channel` or a numeric `pressure_value` in `[0,1]` contributes nothing (skipped),
+        never raising and never fabricating a body condition. Every dimension is clamped to the
+        configured legal range, so it never diverges.
+
+    Notes:
+        The body-signal-to-feeling mapping is owned here, inside the `05` owner (as the
+        channel-to-dimension neuromodulator mapping already is); this path imports no interoception,
+        appraisal, neuromodulation, or workspace owner and reads only the already-normalized
+        `Stimulus` values it is handed. The contribution is additive over the inner target and never
+        replaces it. The inner target path still owns the neuromodulator-derived component and still
+        ignores `internal_signals`; this wrapper is the sole consumer of the afferent. When nested
+        inside `PersistentFeelingConstructionPath` (the R44 carry), the body contribution flows
+        through the same dual-timescale integrator as the neuromodulator component -- there is no
+        second persistence mechanism. On empty/unrecognized `internal_signals` the result is the
+        inner target byte-for-byte, so an assembly without an interoceptive source is unchanged.
+        valence/comfort/social_safety are intentionally untouched in this first version, keeping the
+        claim narrow and monotone (pressure can only push toward stress/load). The per-channel
+        coefficients are explicit bounded first-version constants under the config's declared
+        `feeling_coupling_strength` learned-parameter category (P5-learnable later).
+    """
+
+    target_path: FeelingConstructionPath
+    # cpu pressure -> alertness/activation load
+    cpu_to_arousal: float = 0.30
+    cpu_to_tension: float = 0.20
+    # memory pressure -> sustained load / fatigue
+    memory_to_fatigue: float = 0.30
+    memory_to_tension: float = 0.15
+    # latency pressure -> sluggishness / fatigue
+    latency_to_fatigue: float = 0.20
+    latency_to_tension: float = 0.10
+    # error pressure -> distress
+    error_to_pain_like: float = 0.30
+    error_to_tension: float = 0.20
+
+    def construct_feeling(
+        self,
+        neuromodulator_state: NeuromodulatorState,
+        internal_signals: tuple[Stimulus, ...],
+        config: InteroceptiveFeelingConfig,
+        tick_id: int | None,
+        prior_feeling: InteroceptiveFeelingVector | None = None,
+    ) -> InteroceptiveFeelingVector:
+        """Return the inner neuromodulator-derived target plus the bounded interoceptive contribution.
+
+        The inner target path produces the instantaneous neuromodulator-derived feeling (it ignores
+        `internal_signals`); this method adds a non-negative stress-directional contribution from the
+        recognized interoceptive pressure facts and clamps each dimension. Empty or unrecognized
+        afferent reproduces the inner target byte-for-byte.
+        """
+
+        target = self.target_path.construct_feeling(
+            neuromodulator_state, internal_signals, config, tick_id, prior_feeling
+        )
+        pressures = self._read_pressures(internal_signals)
+        if not pressures:
+            return target
+        cpu = pressures.get("cpu", 0.0)
+        memory = pressures.get("memory", 0.0)
+        latency = pressures.get("latency", 0.0)
+        error = pressures.get("error", 0.0)
+        low = config.legal_min
+        high = config.legal_max
+        return InteroceptiveFeelingVector(
+            valence=target.valence,
+            arousal=_clamp(
+                round(target.arousal + self.cpu_to_arousal * cpu, 4),
+                low.arousal,
+                high.arousal,
+            ),
+            tension=_clamp(
+                round(
+                    target.tension
+                    + self.cpu_to_tension * cpu
+                    + self.memory_to_tension * memory
+                    + self.latency_to_tension * latency
+                    + self.error_to_tension * error,
+                    4,
+                ),
+                low.tension,
+                high.tension,
+            ),
+            comfort=target.comfort,
+            fatigue=_clamp(
+                round(
+                    target.fatigue
+                    + self.memory_to_fatigue * memory
+                    + self.latency_to_fatigue * latency,
+                    4,
+                ),
+                low.fatigue,
+                high.fatigue,
+            ),
+            pain_like=_clamp(
+                round(target.pain_like + self.error_to_pain_like * error, 4),
+                low.pain_like,
+                high.pain_like,
+            ),
+            social_safety=target.social_safety,
+        )
+
+    def _read_pressures(self, internal_signals: tuple[Stimulus, ...]) -> dict[str, float]:
+        """Read bounded interoceptive pressure facts from the stimuli metadata (max per channel).
+
+        Reads only the reserved metadata keys the `50` producer sets (`pressure_channel`,
+        `pressure_value`); a signal whose channel is not a string, or whose value is not a numeric
+        in `[0,1]` (booleans excluded), contributes nothing. Never parses the content string and
+        never raises for an unrecognized fact (no fabricated condition).
+        """
+
+        pressures: dict[str, float] = {}
+        for signal in internal_signals:
+            metadata = signal.metadata or {}
+            channel = metadata.get(_PRESSURE_CHANNEL_METADATA_KEY)
+            value = metadata.get(_PRESSURE_VALUE_METADATA_KEY)
+            if not isinstance(channel, str):
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            numeric = float(value)
+            if numeric < 0.0 or numeric > 1.0:
+                continue
+            pressures[channel] = max(pressures.get(channel, 0.0), numeric)
+        return pressures

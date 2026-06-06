@@ -42,6 +42,8 @@ from helios_v2.experience_writeback import (
 from helios_v2.feeling import (
     InteroceptiveFeelingConfig,
     InteroceptiveFeelingEngine,
+    FeelingConstructionPath,
+    InteroceptiveSignalModulatedFeelingConstructionPath,
     NeuromodulatorDerivedFeelingConstructionPath,
     PersistentFeelingConstructionPath,
 )
@@ -192,6 +194,7 @@ from .bridges import (
     ThoughtDirectedRetrievalRequestBridge,
     EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
+    StoreBackedRecalledMemoryProvider,
     MemoryGroundedRetrievalAmbiguitySource,
     MemoryRecordBridge,
     NeuromodulatorAwareThoughtGateSignalBridge,
@@ -1061,26 +1064,45 @@ def assemble_runtime(
         ),
         active_channel_reporter=FirstVersionActiveChannelReporter(),
     )
-    # `05` feeling de-shim (R38) + dual-timescale persistence (R44): when enabled, the feeling
-    # vector is derived from the real `04` state (R38 instantaneous target) and then evolved across
-    # ticks by an owner-owned dual-timescale leaky-integrator carrying the prior-tick feeling (R44,
-    # the `05` mirror of R43). When off, the constant first-version construction path is unchanged
-    # (stateless). The channel->dimension mapping is owned by the `05` owner, not composition.
+    # `05` feeling de-shim (R38) + dual-timescale persistence (R44) + interoceptive shaping (R51):
+    # when the semantic feeling path is enabled, the instantaneous target is derived from the real
+    # `04` state (R38); when an interoceptive sampler is also wired (R50 producer), the R51 path
+    # nests between persistence and the neuromodulator target so the real compute/runtime-pressure
+    # afferent additively shapes the felt body-state (real machine condition -> feeling -> `07`).
+    # The R44 dual-timescale leaky-integrator then carries the combined target across ticks. When
+    # off, the constant first-version construction path is unchanged (stateless). The
+    # channel->dimension and pressure->dimension mappings are both owned by the `05` owner, not
+    # composition.
+    if semantic_memory_enabled:
+        feeling_target_path: FeelingConstructionPath = NeuromodulatorDerivedFeelingConstructionPath()
+        if interoceptive_sampler is not None:
+            feeling_target_path = InteroceptiveSignalModulatedFeelingConstructionPath(
+                target_path=feeling_target_path
+            )
+        feeling_construction_path: FeelingConstructionPath = PersistentFeelingConstructionPath(
+            target_path=feeling_target_path
+        )
+    else:
+        feeling_construction_path = FirstVersionFeelingConstructionPath()
     feeling = InteroceptiveFeelingEngine(
         config=resolved_config.feeling,
-        construction_path=(
-            PersistentFeelingConstructionPath(
-                target_path=NeuromodulatorDerivedFeelingConstructionPath()
-            )
-            if semantic_memory_enabled
-            else FirstVersionFeelingConstructionPath()
-        ),
+        construction_path=feeling_construction_path,
         dominant_dimension_reporter=FirstVersionDominantDimensionReporter(),
     )
     # `06` memory de-shim (R45): under the semantic-memory assembly, `06` forms affect-tagged
     # memory from the real `05` feeling state and decides consolidation worth through an
     # owner-owned salience gate (replacing the constant first-version formation/selector). When
     # off, the deterministic first-version path is unchanged.
+    # `06` workspace-multiplicity source (R52): under the semantic-memory assembly, inject a
+    # store-backed recalled-memory provider so `06` surfaces recalled prior affect-memories as
+    # additional replay candidates, giving the `07` workspace a genuine multiplicity to arbitrate
+    # (exercising R46/R47/R48 end to end). The owner owns the replay-priority mapping; this
+    # provider supplies raw recalled facts only. Off when non-semantic (single-candidate path).
+    recalled_memory_provider = (
+        StoreBackedRecalledMemoryProvider(embed_text=_embed_text, store=experience_store)
+        if semantic_memory_enabled
+        else None
+    )
     memory = MemoryAffectReplayEngine(
         config=resolved_config.memory,
         formation_path=(
@@ -1093,6 +1115,7 @@ def assemble_runtime(
             if semantic_memory_enabled
             else FirstVersionReplayCandidateSelector()
         ),
+        recalled_memory_provider=recalled_memory_provider,
     )
     # `07` workspace de-shim (R46): under the semantic-memory assembly, `07` runs a real
     # competition (scoring each candidate from the real `06` priority_hint + the real `05`

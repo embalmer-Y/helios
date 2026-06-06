@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R50。测试基线：650 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R52。测试基线：678 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -37,7 +37,8 @@
 认知主链端到端运行，但大多数前中段认知 owner（`03-07`、`09-10`、`12`）是 `baseline_real`，其
 **输入仍是 composition 注入的确定性 shim**：契约、校验、测试都是真实的，但流入它们的值是固定的首版
 常量，而非真实信号。给这些 owner 去 shim 是阶段 `P3` 的核心工作。当今真正由真实信号驱动的 owner 是
-`02`、`08`、`11`（LLM）、`18`，以及基础设施 owner。
+`02`、`08`、`11`（LLM）、`18`，以及基础设施 owner。**在语义+内感受装配下,`03-08` 已去 shim,且自 R51 起
+存在第一条端到端、可被评估层只读重建的 FG-2 因果链：真实 compute/runtime 压力 → `05` 体感 → `07` 工作空间竞争。**
 
 ---
 
@@ -81,29 +82,29 @@
 - 完成度：`baseline_real`（语义记忆装配下体感已由神经调质推导,并自 R44 起经双时间尺度持久化跨 tick 演化、跨重启续存）。
 - 职责：从神经调质状态 + 内部信号产出主观身体感受向量（valence/arousal/tension/comfort/fatigue/pain/social-safety）；仅软调制输出。不拥有调质状态或记忆。
 - 在循环中的作用："我的身体状态感觉如何"层，喂给可报告意识与连续性。
-- 完成度细节：`38`（P3 第四刀去 shim）在语义记忆装配下把常量构造 shim 换成 owner 私有的 `NeuromodulatorDerivedFeelingConstructionPath`（channel→维度映射归 `05` 自己；每维 `clamp(baseline + sum(coupling_k * level_k))` 的**瞬时 target**）。`44`（P2/P3 铰链,`04` 的镜像）在此之上加**双时间尺度持久化**：语义装配下构造路径换成 owner 持有的 `PersistentFeelingConstructionPath`（包裹 R38 target path）,每维与 R43 同形 `next = clamp(prior + alpha_phasic*(target-prior) + alpha_tonic*(baseline-prior))`（挂 `feeling_persistence` 类别,P5 可学,系数与 R43 一致）。瞬时 target 仍归注入的 R38 路径;跨 tick carry 是新的 `05` owner 语义。`FeelingConstructionPath`/`update_state` 加可选 `prior_feeling`/`prior_state`（默认 None 字节级复刻无状态）;`InteroceptiveFeelingRuntimeStage` 像 04/09/18 持有上一 tick 状态并提供 `seed_prior_state`。冷启动 prior=baseline feeling。`05` feeling 经检查点（快照升 v3 加 `feeling`）跨重启续存。默认/recency/离线装配保持常量体感。Caveat：真实 `05` 体感尚未可度量地塑造 `06`/行为，真实内感受 `internal_signals` 尚未整合。
-- 下一步：（1）✅ 双时间尺度体感持久化 + 跨重启续存——**R44 已交付**；（2）整合真实身体/内感受信号——**R50 已交付生产者**：`helios_v2.interoception` owner 现把真实 compute/runtime 压力作为 `interoceptive` 刺激喂进 `02`,`05` stage 已收到非空 `internal_signals`;**剩余**：让 `05` 构造路径真正消费 `internal_signals` 来塑造体感（不止 `04` 推导的 target）——下一刀（FG-2）；（3）`P5` 学习有界 coupling/alpha 系数；（4）把真实体感喂给 `06` 记忆情感标注、可报告意识与行为,使体感在下游产生因果（FG-2）；（5）给 `03` 其余维去 shim,使所有上游驱动皆为真实。
+- 完成度细节：`38`（P3 第四刀去 shim）在语义记忆装配下把常量构造 shim 换成 owner 私有的 `NeuromodulatorDerivedFeelingConstructionPath`（channel→维度映射归 `05` 自己；每维 `clamp(baseline + sum(coupling_k * level_k))` 的**瞬时 target**）。`44`（P2/P3 铰链,`04` 的镜像）在此之上加**双时间尺度持久化**：语义装配下构造路径换成 owner 持有的 `PersistentFeelingConstructionPath`（包裹 R38 target path）,每维与 R43 同形 `next = clamp(prior + alpha_phasic*(target-prior) + alpha_tonic*(baseline-prior))`（挂 `feeling_persistence` 类别,P5 可学,系数与 R43 一致）。`51`（FG-2 收口）在 target 与 persistence 之间再嵌入 owner 私有的 `InteroceptiveSignalModulatedFeelingConstructionPath`：当装配同时启用语义路径与 `50` 内感受 sampler 时,`05` 真正消费 R50 送达的 `internal_signals`——从刺激 metadata 读有界 `pressure_channel`/`pressure_value`（不解析 content;每通道取 max;不认识/越界/非数值的事实零贡献、不抛错）,给 target 叠加**有界、非负、朝压力方向**的逐维贡献（cpu→arousal/tension、memory→fatigue/tension、latency→fatigue/tension、error→pain_like/tension）,再 clamp。贡献是叠加在神经调质 target 之上（绝不替换它）,空/不认识的 afferent 字节级复刻 inner target,故无内感受 sampler 的装配不变。装配嵌套为 `persistence(interoceptive(neuromodulator))`,故身体贡献与神经调质分量走同一 R44 双时标 carry（无第二套持久化）。瞬时 target 仍归注入的 R38 路径;跨 tick carry 是 `05` owner 语义。`FeelingConstructionPath`/`update_state` 加可选 `prior_feeling`/`prior_state`（默认 None 字节级复刻无状态）;`InteroceptiveFeelingRuntimeStage` 像 04/09/18 持有上一 tick 状态并提供 `seed_prior_state`。冷启动 prior=baseline feeling。`05` feeling 经检查点（快照升 v3 加 `feeling`）跨重启续存。默认/recency/离线装配保持常量体感。valence/comfort/social_safety 本刀不受内感受影响（首版窄、单调）;coupling 系数为首版常量（挂 `feeling_coupling_strength`,P5 可学）。
+- 下一步：（1）✅ 双时间尺度体感持久化 + 跨重启续存——**R44 已交付**；（2）✅ 整合真实身体/内感受信号——**R50 交付生产者 + R51 让 `05` 真正消费 `internal_signals` 塑造体感**：`helios_v2.interoception` 把真实 compute/runtime 压力作为 `interoceptive` 刺激喂进 `02`,`05` 现在据此叠加压力贡献,并经 R46 传导到 `07` 工作空间竞争——**真实"机器内部状况 → 体感 → 工作空间竞争"的第一条 FG-2 因果链已闭合,可被评估层只读重建**；**剩余**：真实 latency/error 通道数据源、跨 tick 疲劳累积、更丰富内感受通道、把 valence/comfort 也接入压力；（3）`P5` 学习有界 coupling/alpha 系数；（4）把演化的真实体感喂给 `06` 记忆情感标注与更多行为消费点,扩展 FG-2 因果面；（5）给 `03` 其余维去 shim,使所有上游驱动皆为真实。
 
 ### 2.6 `06` 记忆情感与重放 — `helios_v2.memory`
 - 完成度：`baseline_real`（语义记忆装配下形成已去 shim 且记忆已耐久；输入在 `05` 以上仍依赖 opt-in）。
 - 职责：情感标记的记忆形成与重放候选surfacing，含强制巩固约束。不拥有检索规划、工作空间晋升或身份回写。
 - 在循环中的作用：形成情景/情感记忆并向工作空间供给重放候选。
 - 完成度细节：`45`（P2 收尾 / P3 中段去 shim）一次收口 `06` 的两处 shim。**形成**：owner 自有的 `AffectGroundedMemoryFormationPath` 在语义记忆装配下取代常量 shim，从真实 `05` `InteroceptiveFeelingState` 形成 affect-tagged 记忆（item 的 `affect_tag` 是真实的当下体感向量，非常量），并由 owner 持有 episodic/autobiographical 家族映射（带 mismatch 证据 → autobiographical）。**显著性门控**：owner 自有的 `SalienceGatedReplayCandidateSelector` 从真实体感（arousal/tension/pain）与 mismatch 算出有界 affect-intensity，据此设每条 replay candidate 的 `forced_consolidation` + `priority_hint`（阈值/系数挂 `consolidation_policy`/`replay_priority_policy` 学习参数类别，P5 可学）——故平淡低情感 tick 不巩固任何记忆，高情感或高 mismatch tick 才巩固。**耐久**：经 owner-neutral 的 `MemoryRecordBridge` + `RuntimeHandle._persist_memory` carry（仿 `_persist_experience`），把恰好被标记 `forced_consolidation` 的 item 以 `record_kind="affect_memory"` 写时 embed 持久化进共享 `33` store，与 `15` 流共存。**召回**：复用 `34` 的语义召回面，affect-memory 经 `10` 可召回并跨重启续存。`06` 既不 import persistence 也不 import embedding owner；carry seam 不重算决策（只按 `06` 已设的 flag 过滤）。默认/纯 recency 装配保持常量 `06` shim。Caveat：记忆内容塑形仍最小（仅沿用 binding context 内容），去重/合并本刀未做。
-- 下一步（P2/P3）：（1）✅ 形成去 shim + 接耐久 store——**R45 已交付**；（2）去重与同记忆合并/巩固（挂 `consolidation_policy`，有界、owner 拥有），退休本刀的 no-dedup 约束；（3）真实 `05` 体感更深地驱动形成（不止 affect tag），并喂 06→07 真实候选；（4）R35 方案 B（持久化原始刺激）落地后，novelty 同语域比较。
+- 下一步（P2/P3）：（1）✅ 形成去 shim + 接耐久 store——**R45 已交付**；（2）✅ 召回过往情感记忆作为额外重放候选喂 `07`——**R52 已交付**（recalled-replay surfacing：`06` 经注入的 `RecalledMemoryProvider` 把语义召回的过往 affect-memory 重新成形为非 forced 重放候选,owner 持有 recall-relevance + 情感强度的优先级映射,首次给 `07` 真实多候选）；（3）去重与同记忆合并/巩固（挂 `consolidation_policy`，有界、owner 拥有），退休本刀的 no-dedup 约束；（4）真实 `05` 体感更深地驱动形成（不止 affect tag）；（5）R35 方案 B（持久化原始刺激）落地后，novelty 同语域比较。
 
 ### 2.7 `07` 工作空间竞争与工作态 — `helios_v2.workspace`
 - 完成度：`baseline_real`（语义记忆装配下竞争与注意力瓶颈已去 shim；首版权重/瓶颈常量、单一候选来源）。
 - 职责：候选集竞争与短时工作态保持；记忆衍生内容的晋升边界。不拥有意识承诺或检索。
 - 在循环中的作用：注意力瓶颈（FPN 式竞争），决定什么进入可报告意识。
 - 完成度细节：`46`（P3 中段去 shim,基于 R45 的真实 `priority_hint`）一次收口 `07` 的两处 shim。**竞争**：owner 自有的 `SalienceWeightedWorkspaceCompetitionPath` 把每个候选的竞争分算成真实有界函数 `score = clamp(0.6*priority_hint + 0.4*feeling_salience)`（feeling_salience 读真实 `05` 体感 arousal/tension/pain），取代常量 `0.95`;每条 replay 候选仍进 candidate set（保留 forced 标记与 feeling provenance,故 owner 既有不变量全部成立）。**注意力瓶颈**：owner 自有的 `BoundedAttentionRetentionPath` 只保留 top-K（首版 `max_retained=3`,挂 `working_state_update_policy`）进 working state,确定性 candidate-id tie-break,非空集永不产出空 working state,取代"保留全部"shim。**类脑语义（owner 确认）**："被巩固"（`06` 标 forced、长期持久化）与"此刻在注意焦点"（bounded working state）是两回事——一个 forced 候选可以在注意力竞争中落选、本 tick 不被 held,它仍在 candidate set（仍作为素材到 `08`）、仍被持久化,只是不在本 tick 焦点。权重/瓶颈是首版常量（挂学习参数类别,P5 可学）。opt-in 于与 R45 同一语义记忆开关（真实 `priority_hint` 只在 `06` 去 shim 后存在）;默认/非语义装配保持常量分 + 保留全部。无契约变更（`WorkspaceCandidateSet`/`WorkingStateSnapshot` 不变）;`07` 不 import 任何其他 owner;既有不变量仍 fail-fast。
-- 下一步（P3 / P5）：（1）✅ 真实竞争 + 注意力瓶颈——**R46 已交付**；（2）P5 学习竞争权重与瓶颈 K；（3）真实 `08` 承诺路径更锐利地消费 bounded working state（top-1 可报告内容,`07` 之后的下一刀）；（4）多来源竞争（`06` 之外的候选源变真后）。
+- 下一步（P3 / P5）：（1）✅ 真实竞争 + 注意力瓶颈——**R46 已交付**；（2）✅ 多来源竞争（`06` 之外的候选源变真）——**R52 已交付**：`06` 现召回过往情感记忆作为额外候选,故 `07` 现在对真实多候选竞争（R46/47/48 端到端被激活）;（3）P5 学习竞争权重与瓶颈 K；（4）当前 tick 内并发多内容竞争（多刺激/多 binding context,待 `02`/`03` 投影去 shim,R54 territory）。
 
 ### 2.8 `08` 可报告意识内容 — `helios_v2.consciousness`
 - 完成度：`baseline_real`（语义记忆装配下承诺路径已去 shim：真实点火承诺；上游 06/07 现也已去 shim）。
 - 职责：从工作空间输出承诺全局可报告意识内容（或显式不承诺），含非 reach-through 的上游内容素材边界。不拥有思考生成或门控。
 - 在循环中的作用："我本周期意识到什么"的承诺，供门控与 prompt 装配消费。
 - 完成度细节：`47`（P3 中段去 shim,基于 R46 的真实 `workspace_score_hint`）去 shim 了 `08` 的承诺焦点选择。**问题**：首版 count-based 的 `_RetainedWorkingStateSelectionPolicy` 只要 working state 保留 >1 候选就判 `no_commit/semantic_conflict_unresolved`——而 R46 的有界 top-K 工作态按设计就保留 >1,故 `08` 几乎永不意识到任何东西。**修复**：owner 自有的 `IgnitionFocalSelectionPolicy`（经既有 `focal_selection_policy` 注入口,归 `helios_v2.consciousness`）把单个最高 `workspace_score_hint` 的保留候选点火为焦点可报告内容（全局工作空间 winner-take-all,确定性 tie-break by `source_workspace_candidate_id`）,其余降为支持上下文（按分降序,受 `max_supporting_context_items` 上限约束）。保留：`insufficient_commitment_signal`（零保留）与 `context_not_reportable`（焦点摘要为空）;`semantic_conflict_unresolved` 仍在词表中留给后续真实冲突切片,但不再因单纯多数触发。无契约/引擎/渲染器变更（点火产出正是既有校验与确定性渲染器已接受的 focal+supporting 形状）。opt-in 于与 R45/R46 同一开关;默认/非语义装配保持 count-based 策略。**端到端现状**：当前链每 tick 只形成一个候选,故"多数→点火赢家而非 no-commit"这一行为头条今天是 owner 级验证,待多候选来源落地后端到端可见。
-- 下一步：（1）✅ 真实点火承诺——**R47 已交付**；（2）真实语义冲突检测（内容矛盾才判 `semantic_conflict_unresolved`）;（3）经已搭好的 owner 受控能力口接 LLM 语义渲染器;（4）P5 学习点火阈值/tie-break。
+- 下一步：（1）✅ 真实点火承诺——**R47 已交付**；（2）✅ 端到端多候选点火（"多数→点火赢家"行为头条端到端可见）——**R52 已交付**（`06` 召回过往情感记忆后 `07` 有真实多候选,`08` 在多候选中点火单一焦点赢家,其余降为支持上下文）；（3）真实语义冲突检测（内容矛盾才判 `semantic_conflict_unresolved`,待并发可矛盾内容）;（4）经已搭好的 owner 受控能力口接 LLM 语义渲染器;（5）P5 学习点火阈值/tie-break。
 
 ### 2.9 `09` 思考门控与延续压力 — `helios_v2.thought_gating`
 - 完成度：`baseline_real`（语义记忆装配下两个输入已真实：arousal（R37）+ global_activation（R48）；其余输入仍 shim）。
@@ -230,8 +231,8 @@
 ### 3.8 内感受信号源 — `helios_v2.interoception`
 - 完成度：`infra_done`（opt-in；生产者已交付,`05` 消费待下一刀）。
 - 职责：外周传入式生产者（类比内感受感受器报告身体内部状态）。把运行时真实内部状况（compute/runtime 压力：CPU/内存/延迟/错误率）报告为有界 `interoceptive` `RawSignal` 喂进 `02`。`RuntimePressureSample` 契约（四个 `[0,1]` 通道）、注入式 `RuntimePressureSampler` 协议、首版 `StdlibRuntimePressureSampler`（懒 `psutil` 取真实 CPU/内存,缺失降级到 stdlib load-average 或定义的中性默认,绝不为"仅不可用"的事实抛错）、`RuntimeInteroceptiveSource`（实现既有 `SensorySource`,每通道一条有界确定性信号）。不拥有任何 feeling/salience/认知策略,不 import feeling/appraisal/neuromodulation owner。
-- 作用：收口 `gap_interoceptive_signal_source` 的**生产者半边**——`02→05` 的身体信号传入路径（代码早已存在但恒空）现真实承载信号；opt-in `assemble_runtime(interoceptive_sampler=...)` 下 `05` stage 收到非空且校验通过的 `internal_signals`。
-- 下一步：（1）让 `05` 构造路径真正消费 `internal_signals` 塑造体感（FG-2,下一刀）；（2）把同一压力读数喂给 `09` 门控的 `workload_pressure`（当前常量）作为第二消费者；（3）更丰富的内感受通道（模拟身体状态模型：心跳/呼吸类比、跨 tick 疲劳累积）；（4）从 `21` 可观测喂真实 tick 延迟/错误率到 latency/error 通道。
+- 作用：收口 `gap_interoceptive_signal_source` 的**生产者半边**——`02→05` 的身体信号传入路径（代码早已存在但恒空）现真实承载信号；opt-in `assemble_runtime(interoceptive_sampler=...)` 下 `05` stage 收到非空且校验通过的 `internal_signals`。**消费者半边自 R51 起也已闭合**：`05` 的 `InteroceptiveSignalModulatedFeelingConstructionPath` 现据这些信号叠加压力贡献塑造体感。
+- 下一步：（1）✅ 让 `05` 构造路径真正消费 `internal_signals` 塑造体感（FG-2）——**R51 已交付**；（2）把同一压力读数喂给 `09` 门控的 `workload_pressure`（当前常量）作为第二消费者；（3）更丰富的内感受通道（模拟身体状态模型：心跳/呼吸类比、跨 tick 疲劳累积）；（4）从 `21` 可观测喂真实 tick 延迟/错误率到 latency/error 通道（当前为首版可注入默认）。
 
 ---
 
@@ -258,7 +259,7 @@
 2. 当前最重的剩余运行期距离是 `03-07`/`09-10`/`12` 的去 shim（阶段 `P3`）与外部执行收口（`13`/`16`，wave_C）。
 3. `wave_A_behavioral_truth`（评估证伪）随 R32 基线收口。`P2`（耐久记忆）随 R33 开篇，随 R34 获得语义召回，随 R42 获得跨重启的连续性状态续存（`09` 延续压力 + `18`/`24` 长程连续性）。
 4. 下一批最高杠杆动作是：真实 `03` novelty-from-memory（P3 第一刀，基于 R34 构建），以及 P2 其余部分（`04`/`05`/`14` 双时间尺度/持久化 carry 后纳入检查点；`06` 接入耐久底座）。
-5. 当今真正由真实信号驱动的 owner 是 `02`、`08`、`11`、`18`，加全部基础设施 owner；其余皆为诚实的 baseline，等待各自的去 shim wave。
+5. 当今真正由真实信号驱动的 owner 是 `02`、`08`、`11`、`18`，加全部基础设施 owner；其余皆为诚实的 baseline，等待各自的去 shim wave。语义+内感受装配下 `03-08` 已去 shim,且 R51 闭合了第一条端到端 FG-2 因果链（真实压力 → `05` 体感 → `07` 竞争）。
 
 ## 6. 更新规则
 

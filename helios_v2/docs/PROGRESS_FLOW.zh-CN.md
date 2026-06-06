@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R50（新增 `helios_v2.interoception` 内感受生产者：真实 compute/runtime 压力 → `02` → `05`,收口 BODY 生产者半边,opt-in）。测试基线：650 passed。版本：R50。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R52（`06` 召回过往情感记忆作为额外重放候选喂 `07`：工作空间首次对真实多候选竞争,R46/47/48 端到端被激活,opt-in 语义装配）。测试基线：678 passed。版本：R52。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -40,14 +40,14 @@ flowchart TD
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
     EXT([外界刺激: CLI已绑定 / QQ / 语音 后续]):::base
-    BODY["内部身体信号 - 内感受来源: R50 已交付生产者(helios_v2.interoception, compute/runtime压力, opt-in); 05消费待下一刀"]:::base
+    BODY["内部身体信号 - 内感受来源: R50 交付生产者(helios_v2.interoception, compute/runtime压力, opt-in); R51起05真正消费塑造体感"]:::base
     S02[02 感觉接入 - 相对完整]:::deep
     S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
     S04["04 神经调质系统 - appraisal推导+双时间尺度(语义)/跨tick演化"]:::base
-    S05["05 内感受体感层 - 神经调质推导+双时间尺度(语义)/跨tick演化"]:::base
-    S06["06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回(语义装配)"]:::base
-    S07["07 工作空间竞争 - 真实竞争+有界注意力瓶颈(语义装配)"]:::base
-    S08["08 可报告意识内容 - 真实点火承诺(语义装配);上游06/07已去shim"]:::base
+    S05["05 内感受体感层 - 神经调质推导+双时间尺度(语义)/跨tick演化; R51起消费真实内感受压力塑造体感"]:::base
+    S06["06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回+召回过往情感记忆作多候选(R52,语义装配)"]:::base
+    S07["07 工作空间竞争 - 真实竞争(读真实05体感)+有界注意力瓶颈+真实多候选(R52,语义装配)"]:::base
+    S08["08 可报告意识内容 - 真实点火承诺(语义装配);R52起对真实多候选点火赢家;上游06/07已去shim"]:::base
     S09["09 思考门控与延续压力 - NE arousal + 工作空间激活已耦合(语义)/其余输入仍shim"]:::base
     S10["10 定向检索 - recall-intent接真实11 handoff(语义)/候选来源已真实"]:::base
     S16P[16 具身prompt契约 - 基线]:::base
@@ -264,6 +264,17 @@ flowchart TD
   真正消费它塑造体感是下一刀（FG-2）。owner 不拥有 feeling/salience/认知策略,不 import feeling/appraisal/neuromodulation owner;
   仅不可用事实降级到定义默认,彻底的 sampler 异常仍上抛（不伪造健康身体）。opt-in `assemble_runtime(interoceptive_sampler=...)`;
   默认/channel-bound/语义装配关闭时字节级不变;无新强制/网络依赖（psutil 懒加载且可降级）。635→650 测试全绿、离线。
+- P3 FG-2 收口（R51）：`05` 体感现真正消费 R50 送达的内感受 `internal_signals`,收口 `gap_interoceptive_signal_source` 的**消费者半边**,
+  并形成**第一条端到端、可被评估层只读重建的 FG-2 因果链**。`05` owner 新增 `InteroceptiveSignalModulatedFeelingConstructionPath`,
+  包裹 R38 神经调质 target,从刺激 metadata 读有界 `pressure_channel`/`pressure_value`（不解析 content;每通道取 max;不认识/越界/非数值
+  零贡献、不抛错）,叠加**有界、非负、朝压力方向**的逐维贡献（cpu→arousal/tension、memory→fatigue/tension、latency→fatigue/tension、
+  error→pain_like/tension）,再 clamp。贡献叠加在神经调质 target 之上（绝不替换）,空/不认识 afferent 字节级复刻 inner target。
+  装配嵌套为 `persistence(interoceptive(neuromodulator))`,身体贡献与神经调质分量走同一 R44 双时标 carry（无第二套持久化）。因 `05` 体感
+  早已经 R46 喂 `07` 工作空间竞争（读 arousal/tension/pain）,高压力样本现可度量地改变 `05` 体感与 `07` 候选分,**真实"机器内部状况 →
+  体感 → 工作空间竞争"链路成立**。映射归 `helios_v2.feeling`;`05` 不 import interoception/appraisal/neuromodulation/workspace owner。
+  valence/comfort/social_safety 本刀不受影响（首版窄、单调）;系数为首版常量（挂 `feeling_coupling_strength`,P5 可学）。opt-in 于语义+内感受装配;
+  默认/recency/channel-bound/无 sampler 的语义装配字节级不变。650→664 测试全绿、离线。
+- P3 多候选激活（R52）：`06` 现召回过往情感记忆作为额外重放候选喂 `07`,给工作空间**第一次真实的多候选竞争**,使 R46 竞争/R47 点火/R48 门控激活端到端被激活（此前链每 tick 只形成一个候选,三者只在 owner 级被验证）。`06` owner 新增 recalled-replay 路径:把注入的 `RecalledMemoryFact` 重新成形为非 forced 的 `MemoryReplayCandidate`（保留原 `memory_id`、stored family、原始持久化 `affect_tag`,锚定当前 feeling state + binding context,故 `MemoryFormationState` 既有不变量全成立）,优先级由 owner 持有的 recall-relevance + 召回情感强度有界混合（挂 `replay_priority_policy`,P5 可学）。召回源经窄协议 `RecalledMemoryProvider` 注入（`06` 不 import persistence/embedding）;composition 的 `StoreBackedRecalledMemoryProvider` embed 当前 binding-context 内容、按余弦排 `affect_memory` 类记录（复用 R34 `search_similar`）,并从持久化记录重建召回情感向量。为支持忠实召回,R45 的 `MemoryRecordBridge` 现额外把情感向量写进 affect-memory 记录的不透明 `metadata`（additive 字符串编码;无持久化契约变更;旧记录无此键则不参与工作空间召回）。端到端:语义装配下一旦有过往可巩固情感记忆,后续 tick `07` 对 >1 候选竞争、`08` 点火单一最高分焦点（其余降为支持上下文）、`09` `global_activation_level` 等于最大保留分;足够强的召回记忆可赢得工作空间。召回候选 additive 且永不 forced（故 R45 持久化 carry 不重存）;当前 tick 形成记忆与门控不变。冷库/空 binding context/无相似记忆 → 零召回候选（单候选行为不变）;召回时 embedding/store 失败 hard stop（无静默单候选回退）。opt-in 于语义装配;默认/recency/非语义/离线字节级不变;旧 store 文件可读回。664→678 测试全绿、离线。
 - 前运动预备 vs 执行（16 标签）：`16` 外化表达/外化执行节点产出的是**非授权草案**,功能上对标前运动区/SMA 的运动
   预备与内部预演,**不是执行**。真正的 go/no-go 在 `13` planner,真正的传输在 `30`/`31` channel。草案带显式的
   `forbidden_capabilities` / `final_authorities` / `execution_boundary_summary`；"草稿"绝不可读作"执行"

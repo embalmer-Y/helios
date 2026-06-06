@@ -440,3 +440,212 @@ def test_persistent_feeling_engine_carries_prior_state_across_calls() -> None:
     s1 = engine.update_state(_build_neuromodulator_state(), (), tick_id=1, prior_state=None)
     s2 = engine.update_state(_build_neuromodulator_state(), (), tick_id=2, prior_state=s1)
     assert s2.feeling.valence > s1.feeling.valence  # rises further on tick 2 toward the target
+
+
+# --- Requirement 51: interoceptive-signal-shaped feeling ---
+
+from helios_v2.feeling import (
+    InteroceptiveSignalModulatedFeelingConstructionPath,
+    NeuromodulatorDerivedFeelingConstructionPath,
+)
+
+
+def _pressure_signal(channel: str, value: float) -> Stimulus:
+    """Build a normalized interoceptive stimulus as the R50 producer + sensory would yield."""
+
+    return Stimulus(
+        stimulus_id=f"stimulus:interoception:interoceptive:{channel}",
+        source_name="interoception",
+        modality="interoceptive",
+        content=f"{channel}_pressure={value:.4f}",
+        channel="interoception",
+        metadata={"pressure_channel": channel, "pressure_value": round(value, 4)},
+        provenance_signal_id=f"interoceptive:{channel}",
+    )
+
+
+def _r51_path() -> InteroceptiveSignalModulatedFeelingConstructionPath:
+    return InteroceptiveSignalModulatedFeelingConstructionPath(
+        target_path=NeuromodulatorDerivedFeelingConstructionPath()
+    )
+
+
+def _r51_feeling(levels: NeuromodulatorLevels, signals: tuple[Stimulus, ...]) -> InteroceptiveFeelingVector:
+    return _r51_path().construct_feeling(_state_with(levels), signals, _build_config(), tick_id=1)
+
+
+def test_r51_empty_internal_signals_reproduces_neuromodulator_target_byte_for_byte() -> None:
+    levels = _levels(dopamine=0.6, cortisol=0.3, norepinephrine=0.5)
+    target = _derived_feeling(levels)
+    with_empty = _r51_feeling(levels, ())
+    assert with_empty == target
+
+
+def test_r51_high_cpu_pressure_raises_arousal_and_tension() -> None:
+    levels = _levels(norepinephrine=0.2)
+    rest = _r51_feeling(levels, (_pressure_signal("cpu", 0.0),))
+    loaded = _r51_feeling(levels, (_pressure_signal("cpu", 0.9),))
+    assert loaded.arousal > rest.arousal
+    assert loaded.tension >= rest.tension
+
+
+def test_r51_high_memory_pressure_raises_fatigue_and_tension() -> None:
+    levels = _levels()
+    rest = _r51_feeling(levels, (_pressure_signal("memory", 0.0),))
+    loaded = _r51_feeling(levels, (_pressure_signal("memory", 0.9),))
+    assert loaded.fatigue > rest.fatigue
+    assert loaded.tension > rest.tension
+
+
+def test_r51_high_latency_pressure_raises_fatigue() -> None:
+    levels = _levels()
+    rest = _r51_feeling(levels, (_pressure_signal("latency", 0.0),))
+    loaded = _r51_feeling(levels, (_pressure_signal("latency", 0.9),))
+    assert loaded.fatigue > rest.fatigue
+
+
+def test_r51_high_error_pressure_raises_pain_and_tension() -> None:
+    levels = _levels()
+    rest = _r51_feeling(levels, (_pressure_signal("error", 0.0),))
+    loaded = _r51_feeling(levels, (_pressure_signal("error", 0.9),))
+    assert loaded.pain_like > rest.pain_like
+    assert loaded.tension > rest.tension
+
+
+def test_r51_pressure_never_lowers_a_dimension_vs_target() -> None:
+    levels = _levels(dopamine=0.5, cortisol=0.4, norepinephrine=0.5, opioid_tone=0.3, oxytocin=0.4)
+    target = _derived_feeling(levels)
+    loaded = _r51_feeling(
+        levels,
+        (
+            _pressure_signal("cpu", 0.8),
+            _pressure_signal("memory", 0.7),
+            _pressure_signal("latency", 0.6),
+            _pressure_signal("error", 0.5),
+        ),
+    )
+    # stress-directional, additive, non-negative: no mapped dimension drops below the target.
+    assert loaded.arousal >= target.arousal
+    assert loaded.tension >= target.tension
+    assert loaded.fatigue >= target.fatigue
+    assert loaded.pain_like >= target.pain_like
+    # untouched dimensions are exactly the target this slice.
+    assert loaded.valence == target.valence
+    assert loaded.comfort == target.comfort
+    assert loaded.social_safety == target.social_safety
+
+
+def test_r51_unrecognized_body_signal_contributes_nothing_and_does_not_raise() -> None:
+    levels = _levels(norepinephrine=0.5)
+    target = _derived_feeling(levels)
+    # A body signal with no pressure metadata (e.g. a future producer) is ignored, not an error.
+    other_body = Stimulus(
+        stimulus_id="stimulus:body:misc",
+        source_name="body",
+        modality="body",
+        content="some_other_body_signal",
+        channel="body",
+        metadata={"unrelated": "x"},
+        provenance_signal_id="misc",
+    )
+    result = _r51_path().construct_feeling(_state_with(levels), (other_body,), _build_config(), tick_id=1)
+    assert result == target
+
+
+def test_r51_out_of_range_or_non_numeric_pressure_value_is_skipped() -> None:
+    levels = _levels()
+    target = _derived_feeling(levels)
+    bad_high = Stimulus(
+        stimulus_id="stimulus:interoception:interoceptive:cpu",
+        source_name="interoception",
+        modality="interoceptive",
+        content="cpu_pressure=bad",
+        channel="interoception",
+        metadata={"pressure_channel": "cpu", "pressure_value": 1.5},
+        provenance_signal_id="interoceptive:cpu",
+    )
+    bad_bool = Stimulus(
+        stimulus_id="stimulus:interoception:interoceptive:memory",
+        source_name="interoception",
+        modality="interoceptive",
+        content="memory_pressure=bad",
+        channel="interoception",
+        metadata={"pressure_channel": "memory", "pressure_value": True},
+        provenance_signal_id="interoceptive:memory",
+    )
+    result = _r51_path().construct_feeling(
+        _state_with(levels), (bad_high, bad_bool), _build_config(), tick_id=1
+    )
+    assert result == target
+
+
+def test_r51_is_deterministic_and_bounded_for_extreme_inputs() -> None:
+    extreme_levels = _levels(
+        dopamine=1.0,
+        norepinephrine=1.0,
+        serotonin=1.0,
+        acetylcholine=1.0,
+        cortisol=1.0,
+        oxytocin=1.0,
+        opioid_tone=1.0,
+        excitation=1.0,
+        inhibition=1.0,
+    )
+    signals = (
+        _pressure_signal("cpu", 1.0),
+        _pressure_signal("memory", 1.0),
+        _pressure_signal("latency", 1.0),
+        _pressure_signal("error", 1.0),
+    )
+    first = _r51_feeling(extreme_levels, signals)
+    second = _r51_feeling(extreme_levels, signals)
+    assert first == second
+    for dimension in first.__dataclass_fields__:
+        assert 0.0 <= getattr(first, dimension) <= 1.0
+
+
+def test_r51_takes_max_per_channel_across_duplicate_signals() -> None:
+    levels = _levels()
+    single_low = _r51_feeling(levels, (_pressure_signal("error", 0.2),))
+    with_higher_dup = _r51_feeling(
+        levels, (_pressure_signal("error", 0.2), _pressure_signal("error", 0.8))
+    )
+    assert with_higher_dup.pain_like > single_low.pain_like
+
+
+def test_r51_engine_integration_body_raises_stress_dimensions() -> None:
+    engine = InteroceptiveFeelingEngine(
+        config=_build_config(),
+        construction_path=_r51_path(),
+        dominant_dimension_reporter=CountingReporter(),
+    )
+    levels = _levels(norepinephrine=0.3, cortisol=0.2)
+    rest = engine.update_state(_state_with(levels), (_pressure_signal("cpu", 0.0),), tick_id=1)
+    loaded = engine.update_state(
+        _state_with(levels),
+        (
+            _pressure_signal("cpu", 0.9),
+            _pressure_signal("memory", 0.8),
+            _pressure_signal("error", 0.7),
+        ),
+        tick_id=1,
+    )
+    assert loaded.feeling.tension > rest.feeling.tension
+    assert loaded.feeling.fatigue > rest.feeling.fatigue
+    assert loaded.feeling.pain_like > rest.feeling.pain_like
+
+
+def test_r51_composes_with_persistence_carry() -> None:
+    # Nested as persistence(interoceptive(neuromodulator)) — the assembly's real wiring.
+    config = _build_config()
+    path = PersistentFeelingConstructionPath(
+        target_path=_r51_path(), alpha_phasic=0.6, alpha_tonic=0.1
+    )
+    levels = _levels(norepinephrine=0.3)
+    high_signals = (_pressure_signal("cpu", 0.9), _pressure_signal("error", 0.9))
+    rest_signals = (_pressure_signal("cpu", 0.0), _pressure_signal("error", 0.0))
+    # One integrator step from cold start: the high-pressure body yields higher stress carry.
+    high_t1 = path.construct_feeling(_state_with(levels), high_signals, config, tick_id=1, prior_feeling=None)
+    rest_t1 = path.construct_feeling(_state_with(levels), rest_signals, config, tick_id=1, prior_feeling=None)
+    assert high_t1.tension > rest_t1.tension
+    assert high_t1.pain_like > rest_t1.pain_like

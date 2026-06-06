@@ -26,6 +26,7 @@ from .engine import (
     DominantDimensionReporter,
     FeelingConstructionPath,
     InteroceptiveFeelingEngine,
+    InteroceptiveSignalModulatedFeelingConstructionPath,
     NeuromodulatorDerivedFeelingConstructionPath,
     PersistentFeelingConstructionPath,
 )
@@ -33,6 +34,7 @@ from .engine import (
 __all__ = [
     "DominantDimensionReporter",
     "FeelingConstructionPath",
+    "InteroceptiveSignalModulatedFeelingConstructionPath",
     "NeuromodulatorDerivedFeelingConstructionPath",
     "PersistentFeelingConstructionPath",
     "FeelingLearnedParameterCategory",

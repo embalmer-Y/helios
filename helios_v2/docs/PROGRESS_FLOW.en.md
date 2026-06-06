@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R50 (new `helios_v2.interoception` producer: real compute/runtime pressure -> `02` -> `05`, closing the BODY producer half, opt-in). Test baseline: 650 passed. HEAD-era: R50. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R52 (`06` recalls prior affect-memories as additional replay candidates feeding `07`: the workspace competes over genuine multiplicity for the first time, R46/47/48 exercised end to end, opt-in semantic assembly). Test baseline: 678 passed. HEAD-era: R52. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -48,14 +48,14 @@ flowchart TD
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
-    BODY["Internal body signal - interoceptive source: R50 producer delivered (helios_v2.interoception, compute/runtime pressure, opt-in); 05 consumption next slice"]:::base
+    BODY["Internal body signal - interoceptive source: R50 producer delivered (helios_v2.interoception, compute/runtime pressure, opt-in); R51 05 consumes it to shape feeling"]:::base
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
-    S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
-    S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall (semantic)"]:::base
-    S07["07 Workspace Competition - real competition + bounded attention bottleneck (semantic)"]:::base
-    S08["08 Reportable Conscious Content - real ignition commitment (semantic); upstream 06/07 de-shimmed"]:::base
+    S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick; R51 consumes real interoceptive pressure to shape feeling"]:::base
+    S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall + recalled affect-memory as multi-candidate (R52, semantic)"]:::base
+    S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
+    S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
     S09["09 Thought Gating - NE arousal + workspace activation coupled (semantic)/other inputs shim"]:::base
     S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
@@ -383,6 +383,52 @@ flowchart TD
   (`assemble_runtime(interoceptive_sampler=...)`); default/channel-bound/semantic assemblies are
   byte-for-byte unchanged when off; no new mandatory/network dependency (psutil lazy + degrades).
   635 -> 650 tests green and network-free.
+- P3 FG-2 closure (R51): `05` feeling now actually consumes R50's interoceptive `internal_signals`,
+  closing the **consumer** half of `gap_interoceptive_signal_source` and forming the **first
+  end-to-end, evaluation-reconstructable FG-2 causal chain**. The `05` owner adds an
+  `InteroceptiveSignalModulatedFeelingConstructionPath` wrapping the R38 neuromodulator target; it
+  reads bounded `pressure_channel`/`pressure_value` facts from stimulus metadata (no content
+  parsing; max per channel; unrecognized/out-of-range/non-numeric facts contribute nothing and never
+  raise) and adds a bounded, non-negative, stress-directional per-dimension contribution
+  (cpu->arousal/tension, memory->fatigue/tension, latency->fatigue/tension, error->pain_like/tension),
+  clamped. The contribution is additive over the neuromodulator target (never replaces it); empty/
+  unrecognized afferent reproduces the inner target byte-for-byte. Composition nests it as
+  `persistence(interoceptive(neuromodulator))`, so the body contribution rides the same R44
+  dual-timescale carry (no second persistence). Because `05` feeling already feeds `07` workspace
+  competition (R46 reads arousal/tension/pain), a high-pressure sample now measurably changes both
+  the `05` feeling-state and the `07` candidate score, so the real "machine condition -> feeling ->
+  workspace competition" chain holds. The mapping lives in `helios_v2.feeling`; `05` imports no
+  interoception/appraisal/neuromodulation/workspace owner. valence/comfort/social_safety untouched
+  this slice (narrow, monotone first version); coefficients first-version constants under
+  `feeling_coupling_strength` (P5-learnable). Opt-in on the semantic + interoceptive assembly;
+  default/recency/channel-bound/semantic-without-sampler assemblies byte-for-byte unchanged.
+  650 -> 664 tests green and network-free.
+- P3 multiplicity activation (R52): `06` now recalls prior affect-memories as additional replay
+  candidates feeding `07`, giving the workspace its **first genuine multiplicity to arbitrate** and
+  exercising R46 competition / R47 ignition / R48 gate activation end to end (before R52 the chain
+  formed one candidate per tick, so all three were owner-level tested only). The `06` owner gains a
+  recalled-replay path: it re-forms each injected `RecalledMemoryFact` into a non-forced
+  `MemoryReplayCandidate` (preserving the original `memory_id`, stored family, and original persisted
+  `affect_tag`, anchored to the current feeling state + binding context so the `MemoryFormationState`
+  invariants hold), with the priority from an owner-owned bounded blend of recall relevance + recalled
+  affect intensity (under `replay_priority_policy`, P5-learnable). The recalled source is injected
+  behind a narrow `RecalledMemoryProvider` protocol (the `06` owner imports neither persistence nor
+  embedding); composition's `StoreBackedRecalledMemoryProvider` embeds the current binding-context
+  content and ranks `affect_memory`-kind records by cosine similarity (reusing the R34 `search_similar`),
+  reconstructing each recalled affect vector from the durable record. To enable faithful recall, the
+  R45 `MemoryRecordBridge` now additionally writes the formed memory's affect vector into the
+  affect-memory record's opaque `metadata` (additive string-encoded extension; no persistence contract
+  change; legacy records without it are simply not workspace-recall-eligible). End-to-end under the
+  semantic assembly, once a prior consolidation-worthy affect-memory exists, a later tick's `07`
+  competes over >1 candidate, `08` ignites the single highest-scoring retained candidate as focal
+  content (rest demoted to supporting context), and `09` `global_activation_level` equals the max
+  retained score; a sufficiently strong recalled memory can win the workspace. Recalled candidates are
+  additive and never `forced_consolidation` (so the R45 persistence carry does not re-store them); the
+  current-tick formed memory and its gate are unchanged. A cold store / empty binding context / no
+  similar memory yields zero recalled candidates (single-candidate behavior unchanged); an
+  embedding/store failure during recall is a hard stop (no silent single-candidate fallback). Opt-in on
+  the semantic assembly; default/recency/non-semantic/offline assemblies byte-for-byte unchanged;
+  existing store files read back. 664 -> 678 tests green and network-free.
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real

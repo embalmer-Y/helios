@@ -60,9 +60,12 @@ from helios_v2.memory import (
     MemoryAffectReplayConfig,
     MemoryBindingContext,
     MemoryContentPacket,
+    MemoryFamily,
     MemoryFormationPath,
     MemoryReplayCandidate,
     PredictionMismatchEvidence,
+    RecalledMemoryFact,
+    RecalledMemoryProvider,
     ReplayCandidateSelector,
 )
 from helios_v2.neuromodulation import (
@@ -935,7 +938,12 @@ class MemoryRecordBridge:
             linkage = {"source_feeling_state_id": item.source_feeling_state_id}
             if item.binding_context_id:
                 linkage["binding_context_id"] = item.binding_context_id
-            metadata = {"memory_family": item.family}
+            metadata = {
+                "memory_family": item.family,
+                # R52: persist the formed memory's affect vector so a later tick can recall it
+                # with its original felt charge and replay it into the workspace competition.
+                "affect_vector": _encode_affect_vector(item.affect_tag),
+            }
             records.append(
                 PersistedExperienceRecord(
                     record_id=f"affect-memory:{item.memory_id}",
@@ -974,6 +982,147 @@ def _memory_content_summary(item) -> str:
     if content.salient_tokens:
         return " ".join(content.salient_tokens)
     return f"affect-memory:{item.memory_id}"
+
+
+# R52: the affect-memory metadata key carrying the formed memory's affect vector, so a recalled
+# memory can be replayed into the workspace with its original felt charge. String-encoded because
+# `PersistedExperienceRecord.metadata` is a `Mapping[str, str]`.
+_AFFECT_VECTOR_METADATA_KEY = "affect_vector"
+_AFFECT_VECTOR_DIMENSIONS: tuple[str, ...] = (
+    "valence",
+    "arousal",
+    "tension",
+    "comfort",
+    "fatigue",
+    "pain_like",
+    "social_safety",
+)
+
+
+def _encode_affect_vector(affect: InteroceptiveFeelingVector) -> str:
+    """Owner: composition. Encode an affect vector as a comma-joined string of 7 rounded floats.
+
+    The order is the fixed `_AFFECT_VECTOR_DIMENSIONS` order. It is a transport projection; the
+    store never reads it for meaning.
+    """
+
+    return ",".join(f"{round(getattr(affect, dimension), 4)}" for dimension in _AFFECT_VECTOR_DIMENSIONS)
+
+
+def _decode_affect_vector(encoded: str | None) -> InteroceptiveFeelingVector | None:
+    """Owner: composition. Decode an affect vector encoded by `_encode_affect_vector`.
+
+    Returns `None` for an absent (legacy record) or malformed value (wrong component count,
+    non-numeric, or out-of-range), so such records are simply not workspace-recall-eligible
+    rather than crashing recall. A successful decode reconstructs the original
+    `InteroceptiveFeelingVector` (within rounding).
+    """
+
+    if not encoded:
+        return None
+    parts = encoded.split(",")
+    if len(parts) != len(_AFFECT_VECTOR_DIMENSIONS):
+        return None
+    try:
+        values = [float(part) for part in parts]
+    except ValueError:
+        return None
+    if any(value < 0.0 or value > 1.0 for value in values):
+        return None
+    return InteroceptiveFeelingVector(**dict(zip(_AFFECT_VECTOR_DIMENSIONS, values)))
+
+
+@dataclass
+class StoreBackedRecalledMemoryProvider(RecalledMemoryProvider):
+    """Owner: composition (semantic-memory assembly only).
+
+    Purpose:
+        Semantically recall prior affect-memories from the durable store and return them as raw
+        `RecalledMemoryFact`s for the `06` owner to replay into the workspace competition. It
+        embeds the current binding-context content through the injected embedding callable (the
+        same callable/profile the store was written with) and ranks stored `affect_memory`-kind
+        records by cosine similarity (reusing the `34` store similarity surface), reconstructing
+        each recalled memory's original affect vector from its durably persisted metadata.
+
+    Failure semantics:
+        An embedding failure or store read failure propagates as a hard stop; this provider never
+        fabricates a recall. Empty binding-context content, a cold/all-non-embedded store, no
+        `affect_memory` hit, or a hit without a decodable persisted affect vector all yield no
+        fact for that hit (an empty tuple overall when nothing qualifies).
+
+    Notes:
+        Owner-neutral glue. It returns raw facts only (no priority, no item/candidate); the `06`
+        owner owns the replay-priority mapping and the re-forming. It reaches the embedding owner
+        only through the injected `embed_text` callable (no embedding-owner import) and the
+        persistence owner only through the `ExperienceStore` public API. Recall is bounded by
+        `limit`/`max_scan`.
+    """
+
+    embed_text: Callable[[str], tuple[float, ...]]
+    store: ExperienceStore
+    limit: int = 3
+    max_scan: int = 256
+
+    def recall(
+        self,
+        binding_context: MemoryBindingContext,
+        feeling_state: InteroceptiveFeelingState,
+    ) -> tuple[RecalledMemoryFact, ...]:
+        """Owner: composition. Recall bounded prior affect-memory facts for the current context."""
+
+        del feeling_state
+        query_text = _binding_context_query_text(binding_context)
+        if not query_text.strip():
+            return ()
+        query_vector = self.embed_text(query_text)
+        result = self.store.search_similar(query_vector, limit=self.limit, max_scan=self.max_scan)
+        facts: list[RecalledMemoryFact] = []
+        for hit in result.hits:
+            record = hit.record
+            if record.record_kind != "affect_memory":
+                continue
+            affect = _decode_affect_vector(record.metadata.get(_AFFECT_VECTOR_METADATA_KEY))
+            if affect is None:
+                continue
+            family = _recalled_family_from_record(record)
+            facts.append(
+                RecalledMemoryFact(
+                    memory_id=record.source_outcome_id,
+                    family=family,
+                    summary=record.summary,
+                    recall_similarity=_clamp(hit.similarity, 0.0, 1.0),
+                    affect=affect,
+                )
+            )
+        return tuple(facts)
+
+
+def _binding_context_query_text(binding_context: MemoryBindingContext) -> str:
+    """Owner: composition. Project a binding context's content into a bounded query string."""
+
+    content = binding_context.content
+    if content.summary_ref:
+        return content.summary_ref
+    if content.context_ref:
+        return content.context_ref
+    if content.salient_tokens:
+        return " ".join(content.salient_tokens)
+    return ""
+
+
+def _recalled_family_from_record(record: PersistedExperienceRecord) -> MemoryFamily:
+    """Owner: composition. Recover the stored memory family from an affect-memory record.
+
+    R45 persists the family in both `metadata["memory_family"]` and `continuity_kind`. This reads
+    the metadata value (falling back to `continuity_kind`) and maps it onto the fixed
+    `MemoryFamily` taxonomy, defaulting to `episodic` for any unrecognized legacy value so recall
+    never crashes on an out-of-taxonomy string.
+    """
+
+    raw = record.metadata.get("memory_family") or record.continuity_kind
+    if raw in ("episodic", "semantic", "autobiographical"):
+        return raw  # type: ignore[return-value]
+    return "episodic"
 
 
 @dataclass

@@ -611,3 +611,150 @@ def test_salience_gated_selector_integrates_with_engine() -> None:
     )
     assert state.memory_items[0].affect_tag == feeling
     assert state.replay_candidates[0].forced_consolidation is True
+
+
+# --- Requirement 52: workspace multiplicity from recalled affect-memory replay ---
+
+from helios_v2.memory import (
+    AffectGroundedMemoryFormationPath,
+    RecalledMemoryFact,
+    RecalledMemoryProvider,
+    SalienceGatedReplayCandidateSelector,
+)
+
+
+@dataclass
+class _FixedRecalledMemoryProvider(RecalledMemoryProvider):
+    """Test double returning a fixed set of recalled facts (network-free)."""
+
+    facts: tuple[RecalledMemoryFact, ...] = ()
+    calls: int = 0
+
+    def recall(self, binding_context, feeling_state):
+        self.calls += 1
+        return self.facts
+
+
+def _recalled_fact(
+    memory_id: str,
+    *,
+    similarity: float,
+    affect_value: float = 0.5,
+    family: str = "episodic",
+) -> RecalledMemoryFact:
+    return RecalledMemoryFact(
+        memory_id=memory_id,
+        family=family,  # type: ignore[arg-type]
+        summary=f"recalled summary for {memory_id}",
+        recall_similarity=similarity,
+        affect=_build_feeling(affect_value),
+    )
+
+
+def _semantic_engine(provider: RecalledMemoryProvider | None) -> MemoryAffectReplayEngine:
+    return MemoryAffectReplayEngine(
+        config=_build_config(),
+        formation_path=AffectGroundedMemoryFormationPath(),
+        replay_selector=SalienceGatedReplayCandidateSelector(),
+        recalled_memory_provider=provider,
+    )
+
+
+def test_r52_recalled_memories_are_surfaced_as_additional_candidates() -> None:
+    provider = _FixedRecalledMemoryProvider(
+        facts=(
+            _recalled_fact("memory:past:1", similarity=0.8, affect_value=0.6),
+            _recalled_fact("memory:past:2", similarity=0.4, affect_value=0.3),
+        )
+    )
+    engine = _semantic_engine(provider)
+    state = engine.record_state(
+        _build_feeling_state(), _build_binding_context(), tick_id=9
+    )
+    # One current-tick formed memory + two recalled => three candidates.
+    assert len(state.memory_items) == 3
+    assert len(state.replay_candidates) == 3
+    recalled_ids = {"memory:past:1", "memory:past:2"}
+    surfaced = {c.memory_id for c in state.replay_candidates} & recalled_ids
+    assert surfaced == recalled_ids
+    assert provider.calls == 1
+
+
+def test_r52_recalled_items_preserve_id_family_and_affect_and_pass_invariants() -> None:
+    provider = _FixedRecalledMemoryProvider(
+        facts=(_recalled_fact("memory:past:auto", similarity=0.7, affect_value=0.42, family="autobiographical"),)
+    )
+    engine = _semantic_engine(provider)
+    state = engine.record_state(_build_feeling_state(), _build_binding_context(), tick_id=9)
+    recalled = next(item for item in state.memory_items if item.memory_id == "memory:past:auto")
+    # Original id + stored family + original felt affect preserved; anchored to current tick.
+    assert recalled.family == "autobiographical"
+    assert recalled.affect_tag == _build_feeling(0.42)
+    assert recalled.source_feeling_state_id == _build_feeling_state().state_id
+    assert recalled.binding_context_id == _build_binding_context().context_id
+
+
+def test_r52_recalled_candidates_are_not_forced_consolidation() -> None:
+    provider = _FixedRecalledMemoryProvider(
+        facts=(_recalled_fact("memory:past:1", similarity=0.9, affect_value=0.9),)
+    )
+    engine = _semantic_engine(provider)
+    state = engine.record_state(_build_feeling_state(), _build_binding_context(), tick_id=9)
+    recalled = next(c for c in state.replay_candidates if c.memory_id == "memory:past:1")
+    assert recalled.forced_consolidation is False
+    assert recalled.priority_hint is not None
+
+
+def test_r52_recalled_priority_is_monotonic_in_similarity_and_affect() -> None:
+    engine = _semantic_engine(_FixedRecalledMemoryProvider())
+    low = engine._recalled_priority(_recalled_fact("m", similarity=0.2, affect_value=0.2))
+    high_sim = engine._recalled_priority(_recalled_fact("m", similarity=0.9, affect_value=0.2))
+    high_affect = engine._recalled_priority(_recalled_fact("m", similarity=0.2, affect_value=0.9))
+    assert high_sim > low
+    assert high_affect > low
+    assert 0.0 <= low <= 1.0 and 0.0 <= high_sim <= 1.0 and 0.0 <= high_affect <= 1.0
+
+
+def test_r52_recalled_priority_is_deterministic() -> None:
+    engine = _semantic_engine(_FixedRecalledMemoryProvider())
+    fact = _recalled_fact("m", similarity=0.55, affect_value=0.66)
+    assert engine._recalled_priority(fact) == engine._recalled_priority(fact)
+
+
+def test_r52_recalled_fact_colliding_with_current_item_is_skipped() -> None:
+    # The current-tick formed memory id is "memory:runtime:{tick}" (R45). A recalled fact with the
+    # same id must not shadow it (no duplicate item).
+    provider = _FixedRecalledMemoryProvider(
+        facts=(_recalled_fact("memory:runtime:9", similarity=0.9, affect_value=0.5),)
+    )
+    engine = _semantic_engine(provider)
+    state = engine.record_state(_build_feeling_state(), _build_binding_context(), tick_id=9)
+    assert len(state.memory_items) == 1  # only the current-tick item; collision skipped
+    memory_ids = [item.memory_id for item in state.memory_items]
+    assert memory_ids == ["memory:runtime:9"]
+
+
+def test_r52_no_provider_reproduces_single_candidate_state() -> None:
+    engine = _semantic_engine(None)
+    state = engine.record_state(_build_feeling_state(), _build_binding_context(), tick_id=9)
+    assert len(state.memory_items) == 1
+    assert len(state.replay_candidates) == 1
+
+
+def test_r52_empty_recall_reproduces_single_candidate_state() -> None:
+    engine = _semantic_engine(_FixedRecalledMemoryProvider(facts=()))
+    state = engine.record_state(_build_feeling_state(), _build_binding_context(), tick_id=9)
+    assert len(state.memory_items) == 1
+    assert len(state.replay_candidates) == 1
+
+
+def test_r52_no_binding_context_surfaces_nothing() -> None:
+    # No binding context => the current formation forms nothing AND recall is not attempted.
+    provider = _FixedRecalledMemoryProvider(
+        facts=(_recalled_fact("memory:past:1", similarity=0.9),)
+    )
+    engine = _semantic_engine(provider)
+    state = engine.record_state(_build_feeling_state(), None, tick_id=9)
+    assert len(state.memory_items) == 0
+    assert len(state.replay_candidates) == 0
+    assert provider.calls == 0

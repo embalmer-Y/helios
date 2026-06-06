@@ -24,12 +24,15 @@ from .contracts import (
     MemoryAffectReplayConfig,
     MemoryAffectReplayError,
     MemoryBindingContext,
+    MemoryContentPacket,
     MemoryFamily,
     MemoryFormationState,
     MemoryReplayCandidate,
     PredictionMismatchEvidence,
     PublishMemoryFormationStateOp,
     PublishReplayCandidatesOp,
+    RecalledMemoryFact,
+    RecalledMemoryProvider,
     RecordMemoryOp,
     ReplayReason,
     validate_prediction_mismatch_evidence,
@@ -168,6 +171,15 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
     config: MemoryAffectReplayConfig
     formation_path: MemoryFormationPath
     replay_selector: ReplayCandidateSelector
+    recalled_memory_provider: RecalledMemoryProvider | None = None
+    # First-version recalled-replay priority weights (R52), under the owner config's declared
+    # `replay_priority_policy` learned-parameter category (P5-learnable later). The replayed
+    # priority is a bounded convex blend of recall relevance and recalled affect intensity.
+    recalled_relevance_weight: float = 0.6
+    recalled_affect_weight: float = 0.4
+    recalled_arousal_weight: float = 0.5
+    recalled_tension_weight: float = 0.3
+    recalled_pain_weight: float = 0.2
 
     def record_state(
         self,
@@ -211,6 +223,15 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
             self.config,
         )
         _validate_replay_candidates(tuple(replay_candidates), tuple(memory_items), feeling_state)
+        # R52: surface recalled prior affect-memories as additional, non-forced replay candidates
+        # so the `07` workspace has a genuine multiplicity to arbitrate. This is strictly additive:
+        # the current-tick formed memory and its salience-gated candidate above are unchanged.
+        memory_items, replay_candidates = self._surface_recalled_memories(
+            tuple(memory_items),
+            tuple(replay_candidates),
+            feeling_state,
+            binding_context,
+        )
         return MemoryFormationState(
             state_id=f"memory-formation-state:{feeling_state.state_id}:{tick_id if tick_id is not None else 'na'}",
             source_feeling_state_id=feeling_state.state_id,
@@ -218,6 +239,102 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
             replay_candidates=tuple(replay_candidates),
             tick_id=tick_id,
         )
+
+    def _surface_recalled_memories(
+        self,
+        memory_items: tuple[AffectTaggedMemoryItem, ...],
+        replay_candidates: tuple[MemoryReplayCandidate, ...],
+        feeling_state: InteroceptiveFeelingState,
+        binding_context: MemoryBindingContext | None,
+    ) -> tuple[tuple[AffectTaggedMemoryItem, ...], tuple[MemoryReplayCandidate, ...]]:
+        """Owner: memory affect and replay layer (R52).
+
+        Re-form recalled prior affect-memories into additive, non-forced replay candidates.
+
+        Returns the combined (current + recalled) memory items and replay candidates. When there
+        is no provider or no binding context, or the provider returns nothing, returns the inputs
+        unchanged (byte-for-byte the pre-R52 single-candidate state). A recalled fact whose
+        `memory_id` collides with an already-present item is skipped (the current-tick memory is
+        never shadowed). The combined set still satisfies every existing owner invariant: each
+        recalled item carries the current binding-context id and feeling-state id, and each
+        recalled candidate references a published recalled item.
+        """
+
+        if self.recalled_memory_provider is None or binding_context is None:
+            return memory_items, replay_candidates
+        recalled_facts = self.recalled_memory_provider.recall(binding_context, feeling_state)
+        if not recalled_facts:
+            return memory_items, replay_candidates
+        taken_memory_ids = {item.memory_id for item in memory_items}
+        extra_items: list[AffectTaggedMemoryItem] = []
+        extra_candidates: list[MemoryReplayCandidate] = []
+        for fact in recalled_facts:
+            if fact.memory_id in taken_memory_ids:
+                continue
+            taken_memory_ids.add(fact.memory_id)
+            extra_items.append(
+                AffectTaggedMemoryItem(
+                    memory_id=fact.memory_id,
+                    family=fact.family,
+                    source_feeling_state_id=feeling_state.state_id,
+                    affect_tag=fact.affect,
+                    content=MemoryContentPacket(
+                        content_kind="recalled_affect_memory",
+                        summary_ref=fact.summary,
+                        context_ref=None,
+                        salient_tokens=(),
+                    ),
+                    binding_context_id=binding_context.context_id,
+                    tick_id=feeling_state.tick_id,
+                )
+            )
+            extra_candidates.append(
+                MemoryReplayCandidate(
+                    candidate_id=f"recalled-candidate:runtime:{feeling_state.tick_id}:{fact.memory_id}",
+                    memory_id=fact.memory_id,
+                    family=fact.family,
+                    source_feeling_state_id=feeling_state.state_id,
+                    replay_reasons=self._recalled_reasons(fact),
+                    forced_consolidation=False,
+                    priority_hint=self._recalled_priority(fact),
+                )
+            )
+        if not extra_items:
+            return memory_items, replay_candidates
+        return memory_items + tuple(extra_items), replay_candidates + tuple(extra_candidates)
+
+    def _recalled_priority(self, fact: RecalledMemoryFact) -> float:
+        """Owner: memory affect and replay layer (R52). Map a recalled fact to a bounded priority.
+
+        A bounded convex blend of recall relevance and recalled affect intensity, so a recalled
+        memory that is both relevant to the current context and emotionally charged competes
+        strongly for the workspace. Deterministic and clamped to `[0, 1]`.
+        """
+
+        affect = fact.affect
+        affect_intensity = _clamp_unit(
+            self.recalled_arousal_weight * affect.arousal
+            + self.recalled_tension_weight * affect.tension
+            + self.recalled_pain_weight * affect.pain_like
+        )
+        return _clamp_unit(
+            self.recalled_relevance_weight * fact.recall_similarity
+            + self.recalled_affect_weight * affect_intensity
+        )
+
+    def _recalled_reasons(self, fact: RecalledMemoryFact) -> tuple[ReplayReason, ...]:
+        """Owner: memory affect and replay layer (R52). Derive replay reasons for a recalled memory.
+
+        Always reports at least one reason (the contract requires it): high affect intensity.
+        Adds unresolved tension/discomfort when the recalled affect's tension or pain dominates.
+        Reasons stay within the fixed `ReplayReason` taxonomy.
+        """
+
+        affect = fact.affect
+        reasons: list[ReplayReason] = ["high_affect_intensity"]
+        if affect.tension >= affect.arousal or affect.pain_like > 0.0:
+            reasons.append("unresolved_tension_or_discomfort")
+        return tuple(reasons)
 
     def build_record_op(
         self,

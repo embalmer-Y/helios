@@ -2166,3 +2166,174 @@ def test_default_assembly_has_no_interoceptive_signals() -> None:
     assert all(s.modality != "interoceptive" for s in sensory.batch.stimuli)
     feeling = result.stage_results["interoceptive_feeling_layer"]
     assert feeling.update_op.internal_signal_count == 0
+
+
+# --- Requirement 51: interoceptive-signal-shaped feeling (real machine -> feeling -> 07) ---
+
+
+@dataclass
+class _ConfigurableInteroceptiveSampler:
+    """Deterministic injected sampler returning a fixed pressure sample (network-free)."""
+
+    cpu: float = 0.0
+    memory: float = 0.0
+    latency: float = 0.0
+    error: float = 0.0
+
+    def sample(self):
+        from helios_v2.interoception import RuntimePressureSample
+
+        return RuntimePressureSample(
+            cpu_pressure=self.cpu,
+            memory_pressure=self.memory,
+            latency_pressure=self.latency,
+            error_pressure=self.error,
+        )
+
+
+def _max_candidate_score(result) -> float:
+    candidates = _workspace_result(result).candidate_set.candidates
+    return max((c.workspace_score_hint or 0.0) for c in candidates)
+
+
+def test_r51_interoceptive_pressure_shapes_feeling_and_workspace_under_semantic_assembly() -> None:
+    # The first end-to-end FG-2 causal chain: real machine condition -> 05 feeling -> 07 competition.
+    # A high-pressure body sample yields a measurably different 05 feeling and a different 07
+    # candidate score than an at-rest sample, on the same semantic assembly and same first tick.
+    high_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    high = _assemble(
+        experience_store=high_store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(
+            cpu=0.9, memory=0.9, latency=0.9, error=0.9
+        ),
+    )
+    high.startup()
+    high_result = high.tick()
+
+    rest_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    rest = _assemble(
+        experience_store=rest_store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(
+            cpu=0.0, memory=0.0, latency=0.0, error=0.0
+        ),
+    )
+    rest.startup()
+    rest_result = rest.tick()
+
+    high_feeling = _feeling(high_result)
+    rest_feeling = _feeling(rest_result)
+    # Body pressure raises the mapped stress dimensions of the felt body-state.
+    assert high_feeling.tension > rest_feeling.tension
+    assert high_feeling.fatigue > rest_feeling.fatigue
+    assert high_feeling.pain_like > rest_feeling.pain_like
+    assert high_feeling.arousal > rest_feeling.arousal
+
+    # The changed feeling propagates into the 07 workspace competition score (R46 reads
+    # arousal/tension/pain as feeling_salience), so the real machine condition reaches cognition.
+    assert _max_candidate_score(high_result) > _max_candidate_score(rest_result)
+
+
+def test_r51_semantic_assembly_without_interoception_is_unchanged() -> None:
+    # No interoceptive sampler -> 05 feeling derives from 04 only; the R51 path is never built.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    result = handle.tick()
+    feeling = _feeling(result)
+    # Sanity: 05 received no interoceptive afferent, so its feeling carries no body contribution.
+    assert result.stage_results["interoceptive_feeling_layer"].update_op.internal_signal_count == 0
+    # And it is still the real (non-constant) neuromodulator-derived feeling.
+    assert feeling != InteroceptiveFeelingVector(
+        valence=0.4, arousal=0.7, tension=0.5, comfort=0.2, fatigue=0.3, pain_like=0.1, social_safety=0.4
+    )
+
+
+# --- Requirement 52: workspace multiplicity from recalled affect-memory replay ---
+
+
+def _workspace_candidate_count(result) -> int:
+    return len(_workspace_result(result).candidate_set.candidates)
+
+
+def test_r52_affect_memory_record_carries_decodable_affect_vector() -> None:
+    # The R52 affect-vector metadata extension is persisted and round-trips.
+    from helios_v2.composition.bridges import _decode_affect_vector
+
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    handle.run_ticks(4)
+
+    affect = _affect_memory_records(store)
+    assert affect, "expected at least one consolidation-worthy affect-memory record"
+    for record in affect:
+        encoded = dict(record.metadata).get("affect_vector")
+        assert encoded is not None
+        decoded = _decode_affect_vector(encoded)
+        assert decoded is not None
+        # Seven bounded dimensions reconstructed.
+        for dimension in (
+            "valence",
+            "arousal",
+            "tension",
+            "comfort",
+            "fatigue",
+            "pain_like",
+            "social_safety",
+        ):
+            assert 0.0 <= getattr(decoded, dimension) <= 1.0
+
+
+def test_r52_workspace_competes_over_multiplicity_after_recall() -> None:
+    # Once prior affect-memories exist, a later tick's 06 surfaces recalled candidates so the 07
+    # workspace competes over more than one candidate (R46/47/48 exercised end to end).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    # Build up a prior existence of consolidation-worthy affect-memories.
+    handle.run_ticks(5)
+    assert _affect_memory_records(store), "precondition: prior affect-memory persisted"
+
+    result = handle.tick()
+    assert _workspace_candidate_count(result) > 1
+
+
+def test_r52_ignition_commits_single_focal_among_multiplicity() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    handle.run_ticks(5)
+
+    result = handle.tick()
+    assert _workspace_candidate_count(result) > 1
+    # 08 ignites a single focal reportable content among the multiplicity (winner-take-all),
+    # and 09's global_activation_level equals the max retained candidate score.
+    conscious = result.stage_results["reportable_conscious_content"]
+    state = conscious.state
+    # A committed conscious state exposes exactly one focal content (the ignition winner).
+    assert state.commit_status == "committed"
+    assert state.focal_content is not None
+    gate = _gate_result(result)
+    activation = gate.contributing_signals["global_activation_level"]
+    assert activation == pytest.approx(round(_max_retained_workspace_score(result), 4))
+
+
+def test_r52_default_assembly_has_single_candidate() -> None:
+    # Without the semantic opt-in, no recalled provider is wired; 07 sees a single candidate.
+    handle = _assemble()
+    handle.startup()
+    handle.run_ticks(3)
+    result = handle.tick()
+    assert _workspace_candidate_count(result) == 1
+
+
+def test_r52_recency_only_assembly_has_single_candidate() -> None:
+    # Persistence without embedding (recency-only) is not semantic; no recalled provider.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store)
+    handle.startup()
+    handle.run_ticks(3)
+    result = handle.tick()
+    assert _workspace_candidate_count(result) == 1

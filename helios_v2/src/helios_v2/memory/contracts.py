@@ -214,6 +214,43 @@ class MemoryReplayCandidate:
 
 
 @dataclass(frozen=True)
+class RecalledMemoryFact:
+    """Owner: memory affect and replay layer (R52).
+
+    Purpose:
+        One bounded raw fact about a recalled prior affect-memory, supplied to the `06` owner by
+        an injected `RecalledMemoryProvider`. It is the input from which the owner re-forms a
+        replayed `AffectTaggedMemoryItem` and a non-forced replay candidate; it carries no
+        priority and no item/candidate identity (the owner computes those).
+
+    Failure semantics:
+        Construction raises `MemoryAffectReplayError` on an empty `memory_id`/`summary`, a family
+        outside the taxonomy, or a `recall_similarity` outside `[0, 1]`.
+
+    Notes:
+        `affect` is the recalled memory's ORIGINAL felt affect (reconstructed from durable
+        storage by the provider), not the current tick's feeling. `recall_similarity` is the
+        cosine relevance of the recalled memory to the current context. The owner never reads
+        these as a salience mapping by themselves; it owns how they map into a replay priority.
+    """
+
+    memory_id: str
+    family: MemoryFamily
+    summary: str
+    recall_similarity: float
+    affect: InteroceptiveFeelingVector
+
+    def __post_init__(self) -> None:
+        if not self.memory_id:
+            raise MemoryAffectReplayError("RecalledMemoryFact must declare a non-empty memory_id")
+        if not self.summary:
+            raise MemoryAffectReplayError("RecalledMemoryFact must declare a non-empty summary")
+        if self.family not in ("episodic", "semantic", "autobiographical"):
+            raise MemoryAffectReplayError("RecalledMemoryFact family must use the fixed MemoryFamily taxonomy")
+        _validate_unit_interval("RecalledMemoryFact.recall_similarity", self.recall_similarity)
+
+
+@dataclass(frozen=True)
 class MemoryFormationState:
     """Owner: memory affect and replay layer.
 
@@ -320,6 +357,53 @@ def validate_prediction_mismatch_evidence(
             "Prediction mismatch evidence must use the explicit PredictionMismatchEvidence contract"
         )
     return evidence
+
+
+@runtime_checkable
+class RecalledMemoryProvider(Protocol):
+    """Owner: memory affect and replay layer (R52).
+
+    Purpose:
+        The injected boundary behind which prior affect-memories are recalled for replay into the
+        workspace. The `06` owner uses it to surface recalled memories as additional replay
+        candidates alongside the current-tick formed memory, giving the `07` workspace a genuine
+        multiplicity to arbitrate.
+
+    Notes:
+        Implementations return raw `RecalledMemoryFact`s only (no priority, no item/candidate
+        construction); the `06` owner owns the replay-priority mapping and the re-forming. The
+        `06` owner reaches durable storage and embeddings only through this protocol, so it
+        imports neither the persistence nor the embedding owner. A cold store or no similar
+        memory yields an empty tuple; an outright storage/embedding failure must propagate (no
+        fabricated recall).
+    """
+
+    def recall(
+        self,
+        binding_context: MemoryBindingContext,
+        feeling_state: InteroceptiveFeelingState,
+    ) -> tuple[RecalledMemoryFact, ...]:
+        """Owner: memory affect and replay layer.
+
+        Purpose:
+            Return bounded recalled prior-affect-memory facts relevant to the current context.
+
+        Inputs:
+            The current tick's `MemoryBindingContext` (the surfacing/query context) and the
+            current `InteroceptiveFeelingState`.
+
+        Returns:
+            A bounded tuple of `RecalledMemoryFact` (possibly empty). Raw facts only.
+
+        Raises:
+            May propagate an outright storage/embedding failure as a hard stop; a cold store or
+            absence of a similar memory must instead return an empty tuple.
+
+        Notes:
+            Must be bounded and deterministic for a fixed store state and query.
+        """
+
+        ...
 
 
 @runtime_checkable
