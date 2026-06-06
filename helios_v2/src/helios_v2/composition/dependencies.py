@@ -24,6 +24,7 @@ from helios_v2.channel import ChannelSubsystemAPI
 from helios_v2.embedding import EmbeddingGatewayAPI
 from helios_v2.llm import LlmGatewayAPI
 from helios_v2.persistence import ExperienceStore, PersistenceError
+from helios_v2.continuity_checkpoint import CheckpointError, ContinuityCheckpointStore
 from helios_v2.runtime import RuntimeDependencySpec
 from helios_v2.runtime.contracts import RuntimeDependencyProvider, RuntimeDependencyStatus
 
@@ -57,6 +58,14 @@ EXPERIENCE_STORE_READY = "experience_store_ready"
 # missing key. The default and recency-only persistent runtimes do not add it and are
 # unaffected. There is no degraded recency fallback when semantic memory is enabled.
 EMBEDDING_PROFILE_READY = "embedding_profile_ready"
+
+# Stable capability name for durable runtime-continuity checkpoint readiness. A runtime
+# assembled with checkpointing enabled (`42`) adds this critical dependency; readiness is the
+# checkpoint backend's ability to initialize (create/open its durable file), checked at startup
+# so an un-initializable or unwritable checkpoint store fails fast rather than running without a
+# resumable continuity checkpoint. The default (non-checkpointing) runtime does not add this
+# spec and is unaffected.
+CONTINUITY_CHECKPOINT_READY = "continuity_checkpoint_ready"
 
 
 def default_critical_dependency_specs() -> list[RuntimeDependencySpec]:
@@ -187,6 +196,31 @@ def embedding_profile_critical_dependency_spec() -> RuntimeDependencySpec:
         name=EMBEDDING_PROFILE_READY,
         required=True,
         description="Bound embedding profile static readiness (profile registered and api key set).",
+    )
+
+
+def continuity_checkpoint_critical_dependency_spec() -> RuntimeDependencySpec:
+    """Owner: composition.
+
+    Purpose:
+        Return the critical-dependency spec for durable runtime-continuity checkpoint readiness.
+
+    Inputs:
+        None.
+
+    Returns:
+        A required spec for the `continuity_checkpoint_ready` capability.
+
+    Notes:
+        This spec is added to the default set only when the assembled runtime enables
+        checkpointing (`42`). The default (non-checkpointing) runtime does not add it and is
+        unaffected. There is no degraded non-checkpointing path once checkpointing is enabled.
+    """
+
+    return RuntimeDependencySpec(
+        name=CONTINUITY_CHECKPOINT_READY,
+        required=True,
+        description="Durable runtime-continuity checkpoint readiness (backend initializes and is writable).",
     )
 
 
@@ -471,5 +505,65 @@ class EmbeddingReadinessDependencyProvider:
                 name=name,
                 available=False,
                 detail=f"bound embedding profiles not statically ready: {', '.join(unready) or 'none-bound'}",
+            )
+        return self.baseline_provider.get_dependency_status(name)
+
+
+@dataclass
+class ContinuityCheckpointReadinessDependencyProvider:
+    """Owner: composition.
+
+    Purpose:
+        Report critical-dependency availability for a runtime assembled with checkpointing
+        enabled. It delegates the `CONTINUITY_CHECKPOINT_READY` capability to the `42` checkpoint
+        store's ability to initialize its durable backend, and delegates every other capability
+        to a wrapped baseline provider.
+
+    Failure semantics:
+        Reports `CONTINUITY_CHECKPOINT_READY` unavailable when the checkpoint backend cannot
+        initialize (for example an unwritable path), so the existing startup gate fails fast.
+        There is no degraded non-checkpointing path.
+
+    Notes:
+        Owner-neutral assembly glue. It holds no cognitive policy; it only routes a capability
+        name to the store's `initialize`. `initialize` is idempotent, so probing readiness here
+        does not double-create the backend.
+    """
+
+    store: ContinuityCheckpointStore
+    baseline_provider: RuntimeDependencyProvider = field(default_factory=FirstVersionDependencyProvider)
+
+    def get_dependency_status(self, name: str) -> RuntimeDependencyStatus:
+        """Owner: composition.
+
+        Purpose:
+            Return the availability status for one declared critical dependency.
+
+        Inputs:
+            `name` - the declared critical-dependency name to check.
+
+        Returns:
+            A `RuntimeDependencyStatus`. For `CONTINUITY_CHECKPOINT_READY` the status reflects
+            whether the durable checkpoint backend initializes successfully; other names defer to
+            the wrapped baseline provider.
+
+        Raises:
+            None. A backend initialization failure is captured into an unavailable status, not
+            raised, so the startup gate (not this provider) performs the fail-fast.
+        """
+
+        if name == CONTINUITY_CHECKPOINT_READY:
+            try:
+                self.store.initialize()
+            except CheckpointError as error:
+                return RuntimeDependencyStatus(
+                    name=name,
+                    available=False,
+                    detail=f"continuity checkpoint backend not ready: {error}",
+                )
+            return RuntimeDependencyStatus(
+                name=name,
+                available=True,
+                detail="continuity checkpoint backend initialized and writable",
             )
         return self.baseline_provider.get_dependency_status(name)

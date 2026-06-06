@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R41 (dimension-grounded aggregate salience; P3 03-owner closeout, all 03 outputs real). Test baseline: 536 passed. HEAD-era: R41. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R42 (durable runtime-continuity checkpoint; P2 third slice, cross-tick continuity survives restart). Test baseline: 560 passed. HEAD-era: R42. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -31,6 +31,13 @@ completeness, and next development/optimization step), see the companion `OWNER_
 - Gap, no owner yet (red, dashed): a first-class concept that is consistently referenced but
   has never been assigned an owner.
 
+> Perspective note: this map's colors reflect "is it driven by real signals", which is a different
+> lens from `index.md`'s "owner-boundary maturity". `08` is exactly where the two differ — by the
+> owner-boundary lens it is `relatively_complete` in `index.md` (its owner semantics are rel.
+> complete, and an upstream gap does not downgrade its own maturity), but by this map's
+> real-signal lens its upstream 06/07 and commitment path are still first-version shim, so it is
+> colored baseline. Both documents are correct; this is not a conflict.
+
 ## 3. Flow
 
 ```mermaid
@@ -48,7 +55,7 @@ flowchart TD
     S05["05 Interoceptive Feeling - neuromodulator-derived (semantic)/stateless"]:::base
     S06[06 Memory Affect and Replay - baseline/shim in]:::base
     S07[07 Workspace Competition - baseline/shim in]:::base
-    S08[08 Reportable Conscious Content - rel. complete]:::deep
+    S08["08 Reportable Conscious Content - owner semantics rel. complete, but upstream/commitment path still first-version shim"]:::base
     S09["09 Thought Gating - NE arousal coupled (semantic)/other inputs shim"]:::base
     S10[10 Directed Retrieval - baseline/shim in]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
@@ -84,6 +91,7 @@ flowchart TD
     TH24[24 Continuity Threads - done, now active]:::infra
     PER[33 Durable Experience Store - infra done, opt-in]:::infra
     EMB[34 Embedding Gateway - infra done, opt-in]:::infra
+    CKPT[42 Continuity Checkpoint - infra done, opt-in]:::infra
     K01 -. startup gate + dispatch .-> S02
     OBS -. per-tick timeline .-> EV23
     EV23 --> S17
@@ -92,15 +100,22 @@ flowchart TD
     S15 -. durable append (opt-in persistence) .-> PER
     PER -. recency or semantic re-entry across restart (opt-in) .-> S10
     EMB -. embed-at-write + embed-at-query (opt-in semantic) .-> PER
+    S09 -. continuation pressure (save after tick) .-> CKPT
+    S18 -. deferred records + threads (save after tick) .-> CKPT
+    CKPT -. restore-at-startup seeds prior cross-tick state (opt-in) .-> S09
+    CKPT -. restore-at-startup seeds prior cross-tick state (opt-in) .-> S18
 ```
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 536 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 560 tests pass, network-free, plus real
   LLM smoke.
-- Deep & real owners: 02 sensory, 08 conscious content, 11 internal thought (real LLM-driven
+- Deep & real owners: 02 sensory, 11 internal thought (real LLM-driven
   cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
-  25, 33, 34).
+  25, 33, 34, 42).
+  (Note: 08 reportable conscious content is owner-semantically rel. complete, but its upstream
+  06/07 and commitment path are still first-version shim, so it is colored baseline under the same
+  rule as 03-07 and no longer counted deep & real.)
 - P3 began (R35): the `03` appraisal owner's novelty dimension is now a real signal under the
   semantic-memory assembly (novelty = 1 - max cosine similarity of the stimulus to stored
   experience, via the 34 embedding substrate + 33 store), the first cognitive consumer of the
@@ -212,10 +227,28 @@ flowchart TD
   unchanged.
 - Remaining structural gaps: real external network transport (dashed EXT <-> CH; network
   drivers QQ/voice/vision and a default channel-bound runtime are future), and the rest of P2
-  (latest-state checkpoint/restore, persisting 06/04/05/14 once de-shimmed). The P2->P3 hinge
-  is in place: real `03` novelty-from-memory can now build on the R34 embedding substrate.
+  (R42 now checkpoints/restores the genuinely cross-tick `09`/`18`/`24` continuity; `06`/`04`/
+  `05`/`14` are not yet durable — `04`/`05`/`14` only become checkpointable once their
+  dual-timescale/persisted carry lands, and `06` memory items still need the durable base). The
+  P2->P3 hinge is in place: real `03` novelty-from-memory builds on the R34 embedding substrate.
 - The experience-writeback loop (15 -> 06) is implemented in-process, and with R33 the 15
   stream is now also durably persisted and re-entrant across restarts.
+- P2 third slice (R42): a durable runtime-continuity checkpoint owner (42,
+  `helios_v2.continuity_checkpoint`) keeps ONE latest-state snapshot of the genuinely cross-tick
+  continuity state — the `09` continuation-pressure state and the `18`/`24` long-horizon
+  continuity (deferred records + threads), reusing those owners' own contracts verbatim — in a
+  single-row SQLite file (or an in-memory double). On an opt-in
+  `assemble_runtime(continuity_checkpoint=...)` the runtime saves the latest snapshot after each
+  tick (owner-neutral carry, mirroring `_persist_experience`, reading only published stage-result
+  values) and restores it at startup (after the fail-fast gate), seeding the `09` and `18` stages'
+  prior cross-tick state through explicit owner-neutral stage seed seams, so after a process
+  restart against the same file the system resumes its prior continuation pressure and continuity
+  threads instead of starting inert (advancing FG-5.1). Independent of 33/34 (a different state).
+  Reconstruction runs the owners' own validation; a cold store keeps the inert defaults; a
+  corrupt snapshot fails fast on load; `continuity_checkpoint_ready` fails fast on an
+  un-initializable backend; no degraded path once enabled. `04`/`05`/`14`/`06` state stays out of
+  scope (not cross-tick in-process today; the snapshot is versioned for additive extension).
+  Default/33/34/channel-bound assemblies byte-for-byte unchanged when off.
 - Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
   signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
   produces them today — the sensory sources emit only text, so `internal_signals` is always empty

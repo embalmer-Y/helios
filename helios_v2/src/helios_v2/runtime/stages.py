@@ -1038,6 +1038,28 @@ class ThoughtGatingRuntimeStage(RuntimeStage):
 
         return "thought_gating_and_continuation_pressure"
 
+    def seed_prior_continuation_state(self, state: ContinuationPressureState) -> None:
+        """Owner: thought gating (composition-time restore seam).
+
+        Purpose:
+            Seed the stage's prior continuation-pressure state before the first tick, so a
+            restarted runtime resumes from a restored `09` continuation state instead of the
+            inert default.
+
+        Inputs:
+            `state` - the owner-validated `ContinuationPressureState` to resume from.
+
+        Returns:
+            None.
+
+        Notes:
+            This is a one-shot composition-time seed point, not a per-tick mutator. The
+            cross-tick field remains owned by this stage; composition only restores it. Each
+            tick still overwrites it with the gate's freshly produced continuation state.
+        """
+
+        self._prior_continuation_state = state
+
     def run(self, frame: RuntimeFrame) -> ThoughtGatingStageResult:
         """Execute thought gating against the declared upstream conscious stage result."""
 
@@ -1686,6 +1708,34 @@ class AutonomyRuntimeStage(RuntimeStage):
         """Stable runtime stage name for autonomy execution."""
 
         return "subjective_autonomy_and_proactive_evolution"
+
+    def seed_prior_continuity(
+        self,
+        deferred_records: tuple[DeferredContinuityRecord, ...],
+        continuity_threads: tuple[ContinuityThread, ...],
+    ) -> None:
+        """Owner: autonomy (composition-time restore seam).
+
+        Purpose:
+            Seed the stage's prior deferred-continuity records and long-horizon continuity
+            threads before the first tick, so a restarted runtime resumes its `18`/`24`
+            long-horizon continuity instead of starting with empty tuples.
+
+        Inputs:
+            `deferred_records` - the owner-validated prior deferred-continuity records.
+            `continuity_threads` - the owner-validated prior continuity threads.
+
+        Returns:
+            None.
+
+        Notes:
+            One-shot composition-time seed point, not a per-tick mutator. The cross-tick fields
+            remain owned by this stage; composition only restores them. Each tick still
+            overwrites them from the autonomy result it produces.
+        """
+
+        self._prior_deferred_records = deferred_records
+        self._prior_continuity_threads = continuity_threads
 
     def run(self, frame: RuntimeFrame) -> AutonomyStageResult:
         """Execute autonomy against the declared upstream owner outputs."""

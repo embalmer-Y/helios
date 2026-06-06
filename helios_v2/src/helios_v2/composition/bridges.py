@@ -74,6 +74,7 @@ from helios_v2.neuromodulation import (
 )
 from helios_v2.observability import ExecutionTimelineView
 from helios_v2.persistence import ExperienceStore, PersistedExperienceRecord, cosine_similarity
+from helios_v2.continuity_checkpoint import RuntimeContinuitySnapshot
 from helios_v2.outward_expression_externalization import OutwardExpressionExternalizationRequest
 from helios_v2.planner_bridge import PlannerBridgeRequest
 from helios_v2.prompt_contract import EmbodiedPromptRequest
@@ -874,6 +875,58 @@ class ExperienceRecordBridge:
                 )
             )
         return tuple(records)
+
+
+@dataclass
+class ContinuityCheckpointBridge:
+    """Owner: composition.
+
+    Purpose:
+        Project the genuinely cross-tick continuity state of one completed tick into a
+        `RuntimeContinuitySnapshot` for the `42` checkpoint store, and reconstruct the `09`/`18`
+        owner states from a loaded snapshot so a restarted runtime can resume them.
+
+    Notes:
+        Owner-neutral glue. `build_snapshot` reads only owner-published stage-result values (the
+        `09` continuation state and the `18`/`24` long-horizon continuity) and copies them
+        verbatim; it computes no continuity decision. The reused owner contracts carry their own
+        validation, so reconstruction (here, simply unpacking the snapshot's reused-contract
+        fields) preserves owner ownership of state shape. It is used only by the explicit opt-in
+        checkpoint assembly.
+    """
+
+    def build_snapshot(
+        self,
+        thought_gating_stage_result,
+        autonomy_stage_result,
+        tick_id,
+    ) -> RuntimeContinuitySnapshot:
+        """Owner: composition.
+
+        Purpose:
+            Build the latest-state continuity snapshot for one completed tick.
+
+        Inputs:
+            `thought_gating_stage_result` - the tick's `ThoughtGatingStageResult` (its
+                `continuation_state` is the `09` cross-tick state).
+            `autonomy_stage_result` - the tick's `AutonomyStageResult` (its
+                `result.deferred_records` and `result.long_horizon_state.threads` are the
+                `18`/`24` cross-tick state).
+            `tick_id` - the completed tick id.
+
+        Returns:
+            A `RuntimeContinuitySnapshot` carrying the published cross-tick state verbatim.
+
+        Notes:
+            Copies owner-published values only; preserves no private state and computes nothing.
+        """
+
+        return RuntimeContinuitySnapshot(
+            tick_id=tick_id,
+            continuation_state=thought_gating_stage_result.continuation_state,
+            deferred_records=autonomy_stage_result.result.deferred_records,
+            continuity_threads=autonomy_stage_result.result.long_horizon_state.threads,
+        )
 
 
 @dataclass

@@ -124,6 +124,7 @@ from helios_v2.appraisal import (
 )
 from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
 from helios_v2.embedding import EmbeddingGatewayAPI, EmbeddingRequest
+from helios_v2.continuity_checkpoint import ContinuityCheckpointStore
 from helios_v2.persistence import (
     ExperienceStore,
     SemanticStoreBackedDirectedMemoryCandidateProvider,
@@ -142,6 +143,7 @@ from .bridges import (
     AppraisalDerivedNeuromodulatorUpdatePath,
     ChannelBackedPlannerBridgeRequestBridge,
     ChannelSubsystemStateProvider,
+    ContinuityCheckpointBridge,
     ExperienceRecordBridge,
     FirstVersionActiveChannelReporter,
     FirstVersionAggregateEstimator,
@@ -178,11 +180,13 @@ from .bridges import (
 )
 from .dependencies import (
     ChannelReadinessDependencyProvider,
+    ContinuityCheckpointReadinessDependencyProvider,
     EmbeddingReadinessDependencyProvider,
     ExperienceStoreReadinessDependencyProvider,
     FirstVersionDependencyProvider,
     LlmReadinessDependencyProvider,
     channel_critical_dependency_spec,
+    continuity_checkpoint_critical_dependency_spec,
     default_critical_dependency_specs,
     embedding_profile_critical_dependency_spec,
     experience_store_critical_dependency_spec,
@@ -547,14 +551,50 @@ class RuntimeHandle:
     experience_store: ExperienceStore | None = None
     experience_record_bridge: ExperienceRecordBridge | None = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
+    continuity_checkpoint: "ContinuityCheckpointStore | None" = None
+    continuity_checkpoint_bridge: "ContinuityCheckpointBridge | None" = None
+    thought_gating_stage: "ThoughtGatingRuntimeStage | None" = None
+    autonomy_stage: "AutonomyRuntimeStage | None" = None
     _reconstructor: ExecutionTimelineReconstructor = field(
         default_factory=ExecutionTimelineReconstructor
     )
 
     def startup(self) -> None:
-        """Run the fail-fast dependency gate before any tick executes."""
+        """Run the fail-fast dependency gate, then restore continuity from the checkpoint.
+
+        The dependency gate runs first, so an un-initializable checkpoint backend fails fast
+        through the gate (a `RuntimeStartupError`) before any restore is attempted. Once the
+        gate passes, the latest snapshot (if any) seeds the `09` and `18` stages' prior
+        cross-tick state so the first post-restart tick resumes from it. A cold store leaves
+        the inert defaults untouched.
+        """
 
         self.kernel.startup()
+        self._restore_continuity()
+
+    def _restore_continuity(self) -> None:
+        """Seed the `09`/`18` stages' prior cross-tick state from the latest checkpoint.
+
+        Owner-neutral restore: it loads the latest `RuntimeContinuitySnapshot` and seeds the
+        stages through their explicit owner-neutral seed seams. Reconstruction runs the owners'
+        own validation (in the facade decode); a corrupt snapshot fails fast on load. Runs only
+        when checkpointing is enabled; otherwise a no-op.
+        """
+
+        if (
+            self.continuity_checkpoint is None
+            or self.thought_gating_stage is None
+            or self.autonomy_stage is None
+        ):
+            return
+        snapshot = self.continuity_checkpoint.load_latest()
+        if snapshot is None:
+            return
+        self.thought_gating_stage.seed_prior_continuation_state(snapshot.continuation_state)
+        self.autonomy_stage.seed_prior_continuity(
+            snapshot.deferred_records,
+            snapshot.continuity_threads,
+        )
 
     def tick(self) -> RuntimeTickResult:
         """Execute one runtime tick and carry its completed timeline forward when instrumented."""
@@ -563,6 +603,7 @@ class RuntimeHandle:
         self._carry_timeline(result.tick_id)
         self._carry_consequence_claim(result)
         self._persist_experience(result)
+        self._checkpoint_continuity(result)
         return result
 
     def _carry_timeline(self, tick_id: int) -> None:
@@ -629,6 +670,36 @@ class RuntimeHandle:
             )
         self.experience_store.append_records(records)
 
+    def _checkpoint_continuity(self, result: RuntimeTickResult) -> None:
+        """Durably save the just-completed tick's cross-tick continuity state when enabled.
+
+        This is owner-neutral carry: it reads the `09` thought-gating and `18` autonomy stage
+        results from the completed tick, projects their published cross-tick continuity state
+        (continuation pressure; deferred records + continuity threads) into a latest-state
+        `RuntimeContinuitySnapshot` through the owner-neutral checkpoint bridge, and saves it,
+        replacing any prior snapshot. It runs only when checkpointing is enabled (a store and
+        bridge are present); otherwise it is a no-op and the default assembly is unchanged. A
+        save failure propagates as a hard stop (no silent non-persistent fallback). It computes
+        and re-derives nothing.
+        """
+
+        if self.continuity_checkpoint is None or self.continuity_checkpoint_bridge is None:
+            return
+        thought_gating_result = result.stage_results.get(
+            "thought_gating_and_continuation_pressure"
+        )
+        autonomy_result = result.stage_results.get(
+            "subjective_autonomy_and_proactive_evolution"
+        )
+        if thought_gating_result is None or autonomy_result is None:
+            return
+        snapshot = self.continuity_checkpoint_bridge.build_snapshot(
+            thought_gating_result,
+            autonomy_result,
+            result.tick_id,
+        )
+        self.continuity_checkpoint.save_latest(snapshot)
+
     def run_ticks(self, n: int) -> tuple[RuntimeTickResult, ...]:
         """Owner: composition.
 
@@ -663,6 +734,7 @@ def assemble_runtime(
     experience_store: ExperienceStore | None = None,
     embedding_gateway: EmbeddingGatewayAPI | None = None,
     embedding_profile_name: str = "experience-embedding",
+    continuity_checkpoint: ContinuityCheckpointStore | None = None,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -816,6 +888,19 @@ def assemble_runtime(
             resolved_provider = EmbeddingReadinessDependencyProvider(
                 gateway=embedding_gateway,
                 bound_profile_names=(embedding_profile_name,),
+                baseline_provider=resolved_provider,
+            )
+
+    # Checkpoint-enabled assembly (`42`): register the durable continuity-checkpoint readiness
+    # gate so an un-initializable/unwritable checkpoint store fails fast at startup rather than
+    # running without a resumable continuity checkpoint. Owner-neutral; default-off. Independent
+    # of persistence (`33`): it persists a different state (latest cross-tick continuity).
+    if continuity_checkpoint is not None:
+        if dependency_specs is None:
+            resolved_specs = list(resolved_specs) + [continuity_checkpoint_critical_dependency_spec()]
+        if dependency_provider is None:
+            resolved_provider = ContinuityCheckpointReadinessDependencyProvider(
+                store=continuity_checkpoint,
                 baseline_provider=resolved_provider,
             )
 
@@ -1074,6 +1159,25 @@ def assemble_runtime(
     for stage in stages:
         kernel.register_stage(stage)
 
+    # Checkpoint wiring (`42`): build the owner-neutral bridge and capture the `09`/`18` stage
+    # refs so the handle can save the latest snapshot after each tick and restore it at startup
+    # (after the fail-fast gate passes). Default-off: no bridge/refs when checkpointing is off.
+    continuity_checkpoint_bridge: ContinuityCheckpointBridge | None = None
+    thought_gating_stage_ref: ThoughtGatingRuntimeStage | None = None
+    autonomy_stage_ref: AutonomyRuntimeStage | None = None
+    if continuity_checkpoint is not None:
+        continuity_checkpoint_bridge = ContinuityCheckpointBridge()
+        thought_gating_stage_ref = next(
+            stage
+            for stage in stages
+            if stage.stage_name == "thought_gating_and_continuation_pressure"
+        )
+        autonomy_stage_ref = next(
+            stage
+            for stage in stages
+            if stage.stage_name == "subjective_autonomy_and_proactive_evolution"
+        )
+
     return RuntimeHandle(
         kernel=kernel,
         ingress=ingress,
@@ -1085,6 +1189,10 @@ def assemble_runtime(
             ExperienceRecordBridge() if experience_store is not None else None
         ),
         embed_record=_embed_text if embedding_gateway is not None else None,
+        continuity_checkpoint=continuity_checkpoint,
+        continuity_checkpoint_bridge=continuity_checkpoint_bridge,
+        thought_gating_stage=thought_gating_stage_ref,
+        autonomy_stage=autonomy_stage_ref,
     )
 
 

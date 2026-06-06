@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R41。测试基线：536 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R42。测试基线：560 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -97,17 +97,17 @@
 - 下一步（P3）：上游候选变真后做真实竞争打分（可学习/注意力式 scorer）；保持 owner 纯净同时增大下游影响。
 
 ### 2.8 `08` 可报告意识内容 — `helios_v2.consciousness`
-- 完成度：`deep_real`。
+- 完成度：`baseline_real`（owner 语义相对完整,但上游 06/07 与承诺路径 `FirstVersionConsciousCommitmentPath` 仍是首版 shim,故与 03-07 同一口径,进度图标黄）。
 - 职责：从工作空间输出承诺全局可报告意识内容（或显式不承诺），含非 reach-through 的上游内容素材边界。不拥有思考生成或门控。
 - 在循环中的作用："我本周期意识到什么"的承诺，供门控与 prompt 装配消费。
-- 下一步：把承诺内容更强地绑到下游行为/诊断后果；深化而非去 shim。
+- 下一步：上游 06/07 去 shim 后做真实承诺路径；把承诺内容更强地绑到下游行为/诊断后果。
 
 ### 2.9 `09` 思考门控与延续压力 — `helios_v2.thought_gating`
 - 完成度：`baseline_real`（多数输入仍 shim；语义记忆装配下 arousal 输入已真实）。
 - 职责：思考窗口触发决策与多 tick 延续压力 carry 的唯一 owner；紧凑门控可观测。不坍缩进检索或思考生成。
 - 在循环中的作用：决定一个 tick 是否触发思考路径，并把延续压力向前 carry。
 - 完成度细节：`37`（P3 第三刀去 shim）使 `09` 门控决策成为 `04` 神经调质水平的首个真实消费者。owner 新增 `ArousalAwareThoughtGatePath` 与 `ThoughtGateSignalSnapshot` 上一个附加可选原始事实字段 `neuromodulatory_arousal`；语义记忆装配下 composition 把真实 `04` 去甲肾上腺素水平转发进来（仅原始事实——arousal→门控的映射归属本 owner,不在 composition）。该 path 向门控分数加一个非负有界项 `arousal_gain * arousal`（首版 `0.15`,属 `gate_policy` 类别）；单调、确定性、无状态,且结构上绝非硬门控（权重 `0.15 < fire 阈值 0.55`,且加项非负）。其余门控信号输入（`global_activation_level`、`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）仍为首版常量；当 `neuromodulatory_arousal` 为 `None` 时该 path 字节级复刻首版行为（默认/recency/离线不变）。
-- 下一步：（1）把其余门控信号输入从各自真实 owner 去 shim（例如 `global_activation_level` 来自去 shim 的 `07` workspace），各自一刀；（2）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道（它可以合法地压制 fire,有自己的安全语义）；（3）`P5` 在 `gate_policy` 类别下学习 `arousal_gain` 与门控阈值；（4）深化多 tick carry；（5）跨重启持久化/恢复延续压力（P2 检查点切片）。
+- 下一步：（1）把其余门控信号输入从各自真实 owner 去 shim（例如 `global_activation_level` 来自去 shim 的 `07` workspace），各自一刀；（2）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道（它可以合法地压制 fire,有自己的安全语义）；（3）`P5` 在 `gate_policy` 类别下学习 `arousal_gain` 与门控阈值；（4）深化多 tick carry；（5）跨重启持久化/恢复延续压力——**R42 已落地**：`09` 延续压力现经 `42` 检查点跨重启续存（opt-in）。
 
 ### 2.10 `10` 定向检索进思考窗口 — `helios_v2.directed_retrieval`
 - 完成度：`baseline_real`（规划仍 shim；启用持久化/语义记忆时候选来源已真实）。
@@ -167,7 +167,7 @@
 - 完成度：`deep_real`（`relatively_complete`；自 R29 起接真实认知；含 `24` 长程连续性线程层）。
 - 职责：主动驱动整合、有界 disposition 选择、延迟连续性发布、长程连续性线程（复现强化、冲突仲裁、owner 拥有的 `LongHorizonContinuityState`）。可语义地请求主动外化，但绝不执行 channel 路径。
 - 在循环中的作用：把真实认知整合成主动 disposition（行动 → externalize，无行动 → reflect/defer），并跨 tick 形成/强化连续性线程。
-- 下一步（wave_B）：超越有界 carry 的更丰富长程动机演化；更锐利的连续性 key 方案；跨重启持久化/恢复长程状态（P2 检查点切片）。
+- 下一步（wave_B）：超越有界 carry 的更丰富长程动机演化；更锐利的连续性 key 方案；跨重启持久化/恢复长程状态——**R42 已落地**：`18`/`24` 延迟记录与连续性线程现经 `42` 检查点跨重启续存（opt-in）。
 
 ### 2.20 `17` 评估保真与诊断 provenance — `helios_v2.evaluation`
 - 完成度：`baseline_real`（只读；自 R32 起对账执行真相；消费 `23` 时间线）。
@@ -217,6 +217,12 @@
 - 作用：把文本变成向量，使 store 能按语义相似度排序经验；query/记录 embedding 由 composition 注入进 store（store 不依赖此 owner）。
 - 下一步（P3 铰链）：喂 `03` novelty-from-memory（距最近存储记忆的距离）；pre-semantic 记录的重 embed/回填；规模上来后 ANN 索引。
 
+### 3.7 `42` 耐久运行时连续性检查点 — `helios_v2.continuity_checkpoint`
+- 完成度：`infra_done`（opt-in）。
+- 职责：`RuntimeContinuitySnapshot` 契约（真正跨 tick 连续性状态的 owner-neutral 可序列化投影——`09` 延续压力 + `18`/`24` 长程连续性,直接复用这些 owner 的契约）、`CheckpointStoreBackend` 协议（单行 SQLite 文件后端 + 内存 double）、`ContinuityCheckpointStore` facade（`save_latest` 替换 / `load_latest` 或显式缺席）。保存最新态单快照（非追加日志）；自身绝不计算或重解释任何连续性决策。
+- 作用：给系统跨重启续存"我刚才想到哪了/我反复回到的倾向"（FG-5.1）。opt-in `assemble_runtime(continuity_checkpoint=...)` 下每 tick 后保存,启动时（fail-fast 门通过后）恢复并经 stage 种入口种入 `09`/`18` 的上次跨 tick 状态。独立于 `33`/`34`。
+- 下一步（P2）：随 `04`/`05` 双时间尺度动力学与 `14` 身份状态获得持久化 carry,把它们增量纳入快照（已版本化）；`06` 记忆条目接耐久底座后纳入巩固。
+
 ---
 
 ## 4. 文档 owner
@@ -240,8 +246,8 @@
 
 1. 系统在架构上真实、首版级别 owner 完整。它尚未达到终局完成态。
 2. 当前最重的剩余运行期距离是 `03-07`/`09-10`/`12` 的去 shim（阶段 `P3`）与外部执行收口（`13`/`16`，wave_C）。
-3. `wave_A_behavioral_truth`（评估证伪）随 R32 基线收口。`P2`（耐久记忆）随 R33 开篇，并随 R34 获得语义召回。
-4. 下一批最高杠杆动作是：真实 `03` novelty-from-memory（P3 第一刀，基于 R34 构建），以及 P2 其余部分（状态检查点/恢复；`06` 接入耐久底座）。
+3. `wave_A_behavioral_truth`（评估证伪）随 R32 基线收口。`P2`（耐久记忆）随 R33 开篇，随 R34 获得语义召回，随 R42 获得跨重启的连续性状态续存（`09` 延续压力 + `18`/`24` 长程连续性）。
+4. 下一批最高杠杆动作是：真实 `03` novelty-from-memory（P3 第一刀，基于 R34 构建），以及 P2 其余部分（`04`/`05`/`14` 双时间尺度/持久化 carry 后纳入检查点；`06` 接入耐久底座）。
 5. 当今真正由真实信号驱动的 owner 是 `02`、`08`、`11`、`18`，加全部基础设施 owner；其余皆为诚实的 baseline，等待各自的去 shim wave。
 
 ## 6. 更新规则

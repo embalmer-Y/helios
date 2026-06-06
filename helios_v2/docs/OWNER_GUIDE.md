@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R41. Test baseline: 536 passed (network-free).
+> Status: living owner reference. Last synced: R42. Test baseline: 560 passed (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -102,17 +102,17 @@ two transport stages for 21).
 - Next step (P3): real competition scoring (a learnable/attention-style scorer) once upstream candidates are real; preserve owner purity while increasing downstream impact.
 
 ### 2.8 `08` Reportable Conscious Content — `helios_v2.consciousness`
-- Completeness: `deep_real`.
+- Completeness: `baseline_real` (owner semantics rel. complete, but upstream 06/07 and the commitment path `FirstVersionConsciousCommitmentPath` are still first-version shim, so it is colored baseline under the same rule as 03-07).
 - Responsibility: commit globally reportable conscious content (or explicit no-commit) from workspace outputs, with a non-reach-through upstream content-material boundary. Does not own thought generation or gating.
 - Role in the loop: the "what am I consciously aware of this cycle" commitment that gating and prompt assembly consume.
-- Next step: tie committed content more strongly to downstream behavioral/diagnostic consequence; deepening, not de-shimming.
+- Next step: a real commitment path once upstream 06/07 are de-shimmed; tie committed content more strongly to downstream behavioral/diagnostic consequence.
 
 ### 2.9 `09` Thought Gating and Continuation Pressure — `helios_v2.thought_gating`
 - Completeness: `baseline_real` (most inputs shim; arousal input now real under the semantic-memory assembly).
 - Responsibility: the sole owner of thought-window firing decisions and multi-tick continuation-pressure carry; compact gate observability. Does not collapse into retrieval or thought generation.
 - Role in the loop: decides whether a tick fires a thought path, and carries continuation pressure forward.
 - Completeness detail: with `37` (P3 third de-shim) the `09` gate decision is the first real consumer of an `04` neuromodulator level. The owner gained an `ArousalAwareThoughtGatePath` and one additive optional raw-fact field `neuromodulatory_arousal` on `ThoughtGateSignalSnapshot`; under the semantic-memory assembly composition forwards the real `04` norepinephrine level into it (raw fact only — the arousal-to-gate mapping is owned here, not in composition). The path adds one non-negative bounded term `arousal_gain * arousal` (first-version `0.15`, under the `gate_policy` category) to the gate score; it is monotonic, deterministic, stateless, and structurally never a hard gate (weight `0.15 < fire_threshold 0.55`, additive non-negative). The other gate-signal inputs (`global_activation_level`, `workload_pressure`, `temporal_signal`, `drive_urgency_signal`, `dmn_available`) remain first-version constants; when `neuromodulatory_arousal` is `None` the path reproduces the first-version behavior byte-for-byte (default/recency/offline unchanged).
-- Next step: (1) de-shim the other gate-signal inputs from their real owners (for example `global_activation_level` from a de-shimmed `07` workspace), each as its own slice; (2) couple the cortisol/inhibition hard-gate-eligibility channels (which may legitimately suppress a fire, with their own safety semantics) once `03` threat is real; (3) P5 learning of `arousal_gain` and the gate thresholds under the `gate_policy` category; (4) deepen multi-tick carry; (5) persist/restore continuation pressure across restart (a P2 checkpoint slice).
+- Next step: (1) de-shim the other gate-signal inputs from their real owners (for example `global_activation_level` from a de-shimmed `07` workspace), each as its own slice; (2) couple the cortisol/inhibition hard-gate-eligibility channels (which may legitimately suppress a fire, with their own safety semantics) once `03` threat is real; (3) P5 learning of `arousal_gain` and the gate thresholds under the `gate_policy` category; (4) deepen multi-tick carry; (5) persist/restore continuation pressure across restart — **landed in R42**: `09` continuation pressure now survives a restart through the `42` checkpoint (opt-in).
 
 ### 2.10 `10` Directed Retrieval Into Thought Window — `helios_v2.directed_retrieval`
 - Completeness: `baseline_real` (planning shim; candidate source now real when persistence/semantic memory is enabled).
@@ -160,7 +160,7 @@ two transport stages for 21).
 - Completeness: `baseline_real`.
 - Responsibility: the sole owner of self-revision governance, identity-state mutation, proactive governance pressure, and formal revision-result publication. Does not own thought generation, personality projection, or audit persistence.
 - Role in the loop: governs whether a self-revision proposal is accepted and applies governed identity change.
-- Next step (wave_B / P6): deeper long-horizon governed self-evolution (developmental, not only audited patches); persist/restore identity state across restart (P2 checkpoint slice); eventually the governed self-revision path of P6.
+- Next step (wave_B / P6): deeper long-horizon governed self-evolution (developmental, not only audited patches); persist/restore identity state across restart (P2 checkpoint slice — `14` identity state is not yet cross-tick in-process, so it joins the `42` checkpoint once it carries state); eventually the governed self-revision path of P6.
 
 ### 2.18 `15` Experience Writeback and Autobiographical Consolidation — `helios_v2.experience_writeback`
 - Completeness: `baseline_real` (its continuity stream is now durably persisted via `33`).
@@ -172,7 +172,7 @@ two transport stages for 21).
 - Completeness: `deep_real` (`relatively_complete`; cognition-derived since R29; includes the `24` long-horizon continuity-thread layer).
 - Responsibility: proactive-drive integration, bounded disposition selection, deferred-continuity publication, and long-horizon continuity threads (recurrence reinforcement, conflict arbitration, owner-owned `LongHorizonContinuityState`). May request proactive externalization semantically but never executes a channel path.
 - Role in the loop: integrates real cognition into a proactive disposition (act → externalize, no-action → reflect/defer) and forms/reinforces continuity threads across ticks.
-- Next step (wave_B): richer long-horizon motive evolution beyond bounded carry; sharper continuity-key scheme; persist/restore the long-horizon state across restart (P2 checkpoint slice).
+- Next step (wave_B): richer long-horizon motive evolution beyond bounded carry; sharper continuity-key scheme; persist/restore the long-horizon state across restart — **landed in R42**: `18`/`24` deferred records and continuity threads now survive a restart through the `42` checkpoint (opt-in).
 
 ### 2.20 `17` Evaluation Fidelity and Diagnostic Provenance — `helios_v2.evaluation`
 - Completeness: `baseline_real` (read-only; corroborates execution truth since R32; consumes the `23` timeline).
@@ -214,13 +214,19 @@ Not cognitive owners. They provide substrate the cognitive chain depends on.
 - Completeness: `infra_done` (opt-in).
 - Responsibility: the `PersistedExperienceRecord`/`PriorExistenceSnapshot` contracts, the injected backend protocol (SQLite file + in-memory double), the `ExperienceStore` facade (append / recent-N / count / snapshot / similarity search), and the recency + semantic candidate providers. Durable append of the `15` continuity stream; deterministic recency or cosine-similarity re-entry into `10`. Never embeds text itself; never an authoritative inter-owner transport.
 - Role: gives the system memory that survives a restart (FG-5.1); persisted experience re-enters the thought window.
-- Next step (P2): latest-state checkpoint/restore for `18`/`09`/`14`; connect `06` memory items to the store; later, consolidation/forgetting policies and the durable substrate for P5 learning.
+- Next step (P2): latest-state checkpoint/restore for `18`/`09`/`14` — **`09`/`18` landed in R42** (the `42` continuity checkpoint), `14` joins once it carries cross-tick state; connect `06` memory items to the store; later, consolidation/forgetting policies and the durable substrate for P5 learning.
 
 ### 3.6 `34` Embedding Inference Gateway — `helios_v2.embedding`
 - Completeness: `infra_done` (opt-in).
 - Responsibility: backend-neutral embedding request/result contracts, named-profile registry, injected provider protocol + lazy OpenAI-compatible provider, fail-fast gateway, network-free static readiness, opt-in live probe. Owns no cognition; never interprets a vector.
 - Role: turns text into a vector so the store can rank experience by semantic similarity; query/record embedding is injected into the store by composition (the store does not depend on this owner).
 - Next step (P3 hinge): feed `03` novelty-from-memory (distance to nearest stored memory); re-embedding/backfill of pre-semantic records; an ANN index at scale.
+
+### 3.7 `42` Durable Runtime-Continuity Checkpoint — `helios_v2.continuity_checkpoint`
+- Completeness: `infra_done` (opt-in).
+- Responsibility: the `RuntimeContinuitySnapshot` contract (an owner-neutral serializable projection of the genuinely cross-tick continuity state — `09` continuation pressure plus the `18`/`24` long-horizon continuity, reusing those owners' own contracts verbatim), the `CheckpointStoreBackend` protocol (single-row SQLite file backend + in-memory double), and the `ContinuityCheckpointStore` facade (`save_latest` replace / `load_latest` or explicit absence). Keeps one latest-state snapshot (not an append log); computes and re-interprets no continuity decision.
+- Role: gives the system cross-restart continuity of "where my thinking was / the tendencies I keep returning to" (FG-5.1). On an opt-in `assemble_runtime(continuity_checkpoint=...)` it saves after each tick and restores at startup (after the fail-fast gate), seeding the `09`/`18` stages' prior cross-tick state through explicit owner-neutral stage seed seams. Independent of `33`/`34`.
+- Next step (P2): fold `04`/`05` (once they carry dual-timescale state) and `14` identity into the versioned snapshot additively; fold `06` once it joins the durable base.
 
 ---
 
@@ -246,8 +252,8 @@ live here.
 
 1. The system is architecturally real and owner-complete at a first-version level. It is not yet final-goal-complete.
 2. The current heaviest remaining runtime distance is the de-shimming of `03-07`/`09-10`/`12` (phase `P3`) and outward execution closure (`13`/`16`, wave_C).
-3. `wave_A_behavioral_truth` (evaluation falsifiability) closed at baseline with R32. `P2` (durable memory) opened with R33 and gained semantic recall with R34.
-4. The next highest-leverage moves are: real `03` novelty-from-memory (P3 first slice, builds on R34), and the rest of P2 (state checkpoint/restore; `06` on the durable base).
+3. `wave_A_behavioral_truth` (evaluation falsifiability) closed at baseline with R32. `P2` (durable memory) opened with R33, gained semantic recall with R34, and gained cross-restart continuity-state resumption with R42 (`09` continuation pressure + `18`/`24` long-horizon continuity).
+4. The next highest-leverage moves are: real `03` novelty-from-memory (P3 first slice, builds on R34), and the rest of P2 (`04`/`05`/`14` into the checkpoint once they carry dual-timescale/persisted state; `06` on the durable base).
 5. The owners genuinely driven by real signals today are `02`, `08`, `11`, `18`, plus all infrastructure owners; everything else is honest baseline awaiting its de-shim wave.
 
 ## 6. Update rule

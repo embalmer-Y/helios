@@ -9,6 +9,11 @@ data/
 # 守护进程
 heliosd.pid
 
+# 持久化/检查点本地文件（durable experience store R33/R34、continuity checkpoint R42）
+*.sqlite3
+*.sqlite
+*.db
+
 # 备份
 *.bak
 *.bak[0-9]
