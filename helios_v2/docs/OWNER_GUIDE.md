@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R46. Test baseline: 618 passed (network-free).
+> Status: living owner reference. Last synced: R47. Test baseline: 626 passed (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -104,10 +104,11 @@ two transport stages for 21).
 - Next step (P3 / P5): (1) ✅ real competition + attention bottleneck — **delivered in R46**; (2) P5 learning of the competition weights and the retention bound; (3) a sharper real `08` commitment path consuming the bounded working state (top-1 reportable content), the next mid-chain de-shim; (4) multi-source competition once sources beyond `06` are real.
 
 ### 2.8 `08` Reportable Conscious Content — `helios_v2.consciousness`
-- Completeness: `baseline_real` (owner semantics rel. complete, but upstream 06/07 and the commitment path `FirstVersionConsciousCommitmentPath` are still first-version shim, so it is colored baseline under the same rule as 03-07).
+- Completeness: `baseline_real` (commitment path de-shimmed under the semantic-memory assembly: real ignition commitment; upstream 06/07 are now de-shimmed too).
 - Responsibility: commit globally reportable conscious content (or explicit no-commit) from workspace outputs, with a non-reach-through upstream content-material boundary. Does not own thought generation or gating.
 - Role in the loop: the "what am I consciously aware of this cycle" commitment that gating and prompt assembly consume.
-- Next step: a real commitment path once upstream 06/07 are de-shimmed; tie committed content more strongly to downstream behavioral/diagnostic consequence.
+- Completeness detail: `47` (P3 mid-chain, building on R46's real `workspace_score_hint`) de-shims the commitment focal-selection. Problem: the count-based `_RetainedWorkingStateSelectionPolicy` declared `no_commit/semantic_conflict_unresolved` whenever >1 candidate was retained — and R46's bounded top-K working state retains >1 by design, so `08` would rarely become aware of anything. Fix: an owner-owned `IgnitionFocalSelectionPolicy` (injected through the existing `focal_selection_policy` seam, in `helios_v2.consciousness`) ignites the single highest-`workspace_score_hint` retained candidate as focal reportable content (global-workspace winner-take-all, deterministic tie-break) and demotes the rest to supporting context (descending score, bounded by `max_supporting_context_items`). Preserved: `insufficient_commitment_signal` (zero retained) and `context_not_reportable` (empty focal summary); `semantic_conflict_unresolved` stays in the taxonomy for a future genuine-conflict slice but is no longer emitted for mere multiplicity. No contract/engine/renderer change. Opt-in on the same semantic-memory opt-in as R45/R46; default/non-semantic assemblies keep the count-based policy. End-to-end the chain currently forms one candidate per tick, so the headline win (multiplicity → ignite winner) is owner-level tested today and becomes end-to-end visible once a multi-candidate source lands.
+- Next step: (1) ✅ real ignition commitment — **delivered in R47**; (2) genuine semantic-conflict detection (content contradiction, not mere multiplicity); (3) an LLM-backed semantic renderer through the already-scaffolded owner-controlled capability seam; (4) P5 learning of the ignition threshold/tie-break.
 
 ### 2.9 `09` Thought Gating and Continuation Pressure — `helios_v2.thought_gating`
 - Completeness: `baseline_real` (most inputs shim; arousal input now real under the semantic-memory assembly).

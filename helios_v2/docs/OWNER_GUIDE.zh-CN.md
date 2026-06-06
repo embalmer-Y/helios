@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R46。测试基线：618 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R47。测试基线：626 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -99,10 +99,11 @@
 - 下一步（P3 / P5）：（1）✅ 真实竞争 + 注意力瓶颈——**R46 已交付**；（2）P5 学习竞争权重与瓶颈 K；（3）真实 `08` 承诺路径更锐利地消费 bounded working state（top-1 可报告内容,`07` 之后的下一刀）；（4）多来源竞争（`06` 之外的候选源变真后）。
 
 ### 2.8 `08` 可报告意识内容 — `helios_v2.consciousness`
-- 完成度：`baseline_real`（owner 语义相对完整,但上游 06/07 与承诺路径 `FirstVersionConsciousCommitmentPath` 仍是首版 shim,故与 03-07 同一口径,进度图标黄）。
+- 完成度：`baseline_real`（语义记忆装配下承诺路径已去 shim：真实点火承诺；上游 06/07 现也已去 shim）。
 - 职责：从工作空间输出承诺全局可报告意识内容（或显式不承诺），含非 reach-through 的上游内容素材边界。不拥有思考生成或门控。
 - 在循环中的作用："我本周期意识到什么"的承诺，供门控与 prompt 装配消费。
-- 下一步：上游 06/07 去 shim 后做真实承诺路径；把承诺内容更强地绑到下游行为/诊断后果。
+- 完成度细节：`47`（P3 中段去 shim,基于 R46 的真实 `workspace_score_hint`）去 shim 了 `08` 的承诺焦点选择。**问题**：首版 count-based 的 `_RetainedWorkingStateSelectionPolicy` 只要 working state 保留 >1 候选就判 `no_commit/semantic_conflict_unresolved`——而 R46 的有界 top-K 工作态按设计就保留 >1,故 `08` 几乎永不意识到任何东西。**修复**：owner 自有的 `IgnitionFocalSelectionPolicy`（经既有 `focal_selection_policy` 注入口,归 `helios_v2.consciousness`）把单个最高 `workspace_score_hint` 的保留候选点火为焦点可报告内容（全局工作空间 winner-take-all,确定性 tie-break by `source_workspace_candidate_id`）,其余降为支持上下文（按分降序,受 `max_supporting_context_items` 上限约束）。保留：`insufficient_commitment_signal`（零保留）与 `context_not_reportable`（焦点摘要为空）;`semantic_conflict_unresolved` 仍在词表中留给后续真实冲突切片,但不再因单纯多数触发。无契约/引擎/渲染器变更（点火产出正是既有校验与确定性渲染器已接受的 focal+supporting 形状）。opt-in 于与 R45/R46 同一开关;默认/非语义装配保持 count-based 策略。**端到端现状**：当前链每 tick 只形成一个候选,故"多数→点火赢家而非 no-commit"这一行为头条今天是 owner 级验证,待多候选来源落地后端到端可见。
+- 下一步：（1）✅ 真实点火承诺——**R47 已交付**；（2）真实语义冲突检测（内容矛盾才判 `semantic_conflict_unresolved`）;（3）经已搭好的 owner 受控能力口接 LLM 语义渲染器;（4）P5 学习点火阈值/tie-break。
 
 ### 2.9 `09` 思考门控与延续压力 — `helios_v2.thought_gating`
 - 完成度：`baseline_real`（多数输入仍 shim；语义记忆装配下 arousal 输入已真实）。

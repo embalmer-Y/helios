@@ -1315,3 +1315,132 @@ def test_engine_rejects_path_outputs_that_exceed_supporting_context_cap() -> Non
 
     with pytest.raises(ConsciousnessError, match="must not exceed two items"):
         engine.commit_content(_build_candidate_set(), _build_working_state(), _build_material_set(), tick_id=7)
+
+
+# --- R47: ignition focal selection (global-workspace winner-take-all) ---
+
+from helios_v2.consciousness import IgnitionFocalSelectionPolicy  # noqa: E402
+
+
+def _two_retained_working_state() -> WorkingStateSnapshot:
+    return WorkingStateSnapshot(
+        state_id="working-state:001",
+        source_candidate_set_id="workspace-set:001",
+        retained_candidate_ids=("workspace-candidate:001", "workspace-candidate:002"),
+        tick_id=7,
+    )
+
+
+def _ignition_engine() -> ConsciousnessEngine:
+    return ConsciousnessEngine(
+        config=_build_config(),
+        commitment_path=FirstVersionConsciousCommitmentPath(
+            focal_selection_policy=IgnitionFocalSelectionPolicy()
+        ),
+    )
+
+
+def test_ignition_commits_highest_scoring_candidate_on_multi_retained_state() -> None:
+    # The R46 bottleneck retains >1 candidate. Ignition must COMMIT the top-scored one, not
+    # declare semantic_conflict_unresolved (the count-based shim behavior).
+    engine = _ignition_engine()
+    state = engine.commit_content(
+        _build_candidate_set(),
+        _two_retained_working_state(),
+        _build_material_set(),
+        tick_id=7,
+    )
+
+    assert state.commit_status == "committed"
+    assert state.no_commit_reason is None
+    assert state.focal_content is not None
+    # candidate:001 has workspace_score_hint 0.95 > candidate:002's 0.6, so it ignites.
+    assert state.focal_content.source_workspace_candidate_id == "workspace-candidate:001"
+    # The loser becomes supporting context (bounded by max_supporting_context_items=2).
+    assert len(state.supporting_context) == 1
+    assert state.supporting_context[0].source_workspace_candidate_id == "workspace-candidate:002"
+
+
+def test_ignition_tie_break_is_deterministic_by_candidate_id() -> None:
+    policy = IgnitionFocalSelectionPolicy()
+    candidate_set = _build_candidate_set()
+    working_state = _two_retained_working_state()
+    # Equal scores on both materials: smaller source_workspace_candidate_id ignites.
+    material_map = {
+        "workspace-candidate:001": _build_material(
+            "workspace-candidate:001", "memory-candidate:001", "memory:001", True, 0.7, 0.8
+        ),
+        "workspace-candidate:002": _build_material(
+            "workspace-candidate:002", "memory-candidate:002", "memory:002", False, 0.7, 0.5
+        ),
+    }
+    outcome = policy.decide(candidate_set, working_state, material_map)
+    assert outcome.commit_status == "committed"
+    assert outcome.focal_material.source_workspace_candidate_id == "workspace-candidate:001"
+
+
+def test_ignition_zero_retained_is_insufficient_commitment_signal() -> None:
+    policy = IgnitionFocalSelectionPolicy()
+    working_state = WorkingStateSnapshot(
+        state_id="working-state:001",
+        source_candidate_set_id="workspace-set:001",
+        retained_candidate_ids=(),
+        tick_id=7,
+    )
+    outcome = policy.decide(_build_candidate_set(), working_state, {})
+    assert outcome.commit_status == "no_commit"
+    assert outcome.no_commit_reason == "insufficient_commitment_signal"
+
+
+def test_ignition_empty_focal_summary_is_context_not_reportable() -> None:
+    policy = IgnitionFocalSelectionPolicy()
+    working_state = _build_working_state()  # retains only candidate:001
+    blank_material = ConsciousContentMaterial(
+        material_id="material:workspace-candidate:001",
+        source_workspace_candidate_id="workspace-candidate:001",
+        source_memory_candidate_id="memory-candidate:001",
+        source_memory_id="memory:001",
+        source_feeling_state_id="feeling-state:001",
+        content_kind="situational-summary",
+        material_summary="   ",  # empty after normalization
+        summary_ref="summary:x",
+        context_ref="context:x",
+        salient_tokens=("x",),
+        affect_tag=_build_feeling(),
+        forced_consolidation=True,
+        workspace_score_hint=0.95,
+        priority_hint=0.8,
+    )
+    outcome = policy.decide(
+        _build_candidate_set(), working_state, {"workspace-candidate:001": blank_material}
+    )
+    assert outcome.commit_status == "no_commit"
+    assert outcome.no_commit_reason == "context_not_reportable"
+
+
+def test_ignition_is_deterministic() -> None:
+    engine_a = _ignition_engine()
+    engine_b = _ignition_engine()
+    args = (_build_candidate_set(), _two_retained_working_state(), _build_material_set())
+    state_a = engine_a.commit_content(*args, tick_id=7)
+    state_b = engine_b.commit_content(*args, tick_id=7)
+    assert state_a.commit_status == state_b.commit_status
+    assert state_a.focal_content.source_workspace_candidate_id == (
+        state_b.focal_content.source_workspace_candidate_id
+    )
+
+
+def test_count_based_default_still_no_commits_on_multi_retained_state() -> None:
+    # Regression guard: the default (non-ignition) path keeps the count-based conflict behavior.
+    engine = ConsciousnessEngine(
+        config=_build_config(),
+        commitment_path=FirstVersionConsciousCommitmentPath(),
+    )
+    state = engine.commit_content(
+        _build_candidate_set(),
+        _two_retained_working_state(),
+        _build_material_set(),
+        tick_id=7,
+    )
+    assert state.commit_status == "no_commit"
+    assert state.no_commit_reason == "semantic_conflict_unresolved"

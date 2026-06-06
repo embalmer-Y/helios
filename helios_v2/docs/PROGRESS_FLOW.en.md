@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R46 (`07` workspace competition de-shim: real salience-weighted scoring + a bounded attention bottleneck; consolidated ≠ held in attention). Test baseline: 618 passed. HEAD-era: R46. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R47 (`08` commitment de-shim: global-workspace ignition winner-take-all; retained multiplicity no longer treated as conflict). Test baseline: 626 passed. HEAD-era: R47. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -55,7 +55,7 @@ flowchart TD
     S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
     S06[06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall (semantic)]:::base
     S07[07 Workspace Competition - real competition + bounded attention bottleneck (semantic)]:::base
-    S08["08 Reportable Conscious Content - owner semantics rel. complete, but upstream/commitment path still first-version shim"]:::base
+    S08["08 Reportable Conscious Content - real ignition commitment (semantic); upstream 06/07 de-shimmed"]:::base
     S09["09 Thought Gating - NE arousal coupled (semantic)/other inputs shim"]:::base
     S10[10 Directed Retrieval - baseline/shim in]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
@@ -320,6 +320,23 @@ flowchart TD
   default/non-semantic assemblies keep the constant-score / retain-everything shim. No contract change;
   `07` imports no other owner. 618 tests green and network-free. Deferred: P5 weight/K learning, a
   sharper `08` commitment, multi-source competition.
+- P3 mid-chain (R47): the `08` reportable conscious-content commitment is de-shimmed into
+  global-workspace ignition. Problem: the count-based first-version policy declared
+  `no_commit/semantic_conflict_unresolved` whenever the working state retained >1 candidate, and
+  R46's bounded top-K working state retains >1 by design, so `08` would rarely become aware of
+  anything. Fix: an owner-owned `IgnitionFocalSelectionPolicy` (injected through the existing
+  `focal_selection_policy` seam, in `helios_v2.consciousness`) ignites the single
+  highest-`workspace_score_hint` retained candidate as focal (winner-take-all, deterministic
+  tie-break) and demotes the rest to supporting context (descending score, bounded by
+  `max_supporting_context_items`). Preserved: `insufficient_commitment_signal` (zero retained) and
+  `context_not_reportable` (empty focal summary); `semantic_conflict_unresolved` stays in the
+  taxonomy for a future genuine-conflict slice but is no longer emitted for mere multiplicity. No
+  contract/engine/renderer change. Opt-in on the same semantic-memory switch as R45/R46;
+  default/non-semantic assemblies keep the count-based policy. End-to-end the chain forms one
+  candidate per tick today, so the headline win (multiplicity → ignite winner) is owner-level tested
+  now and becomes end-to-end visible once a multi-candidate source lands. 626 tests green and
+  network-free. Deferred: genuine semantic-conflict detection, an LLM semantic renderer, P5
+  ignition-threshold learning.
 - Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
   signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
   produces them today — the sensory sources emit only text, so `internal_signals` is always empty

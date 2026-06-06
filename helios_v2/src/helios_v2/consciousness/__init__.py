@@ -27,7 +27,7 @@ from .contracts import (
     ReportableConsciousContent,
     SupportingContextItem,
 )
-from .engine import ConsciousnessEngine, FirstVersionConsciousCommitmentPath
+from .engine import ConsciousnessEngine, FirstVersionConsciousCommitmentPath, IgnitionFocalSelectionPolicy
 
 __all__ = [
     "CommitConsciousContentOp",
@@ -41,6 +41,7 @@ __all__ = [
     "ConsciousnessError",
     "ConsciousnessLearnedParameterCategory",
     "FirstVersionConsciousCommitmentPath",
+    "IgnitionFocalSelectionPolicy",
     "NoCommitReason",
     "PublishConsciousStateOp",
     "PublishReportableConsciousContentOp",

@@ -1828,3 +1828,44 @@ def test_default_assembly_keeps_constant_workspace_score_and_retains_all() -> No
     assert all(c.workspace_score_hint == 0.95 for c in ws.candidate_set.candidates)
     # The shim retains every candidate (no bottleneck).
     assert len(ws.working_state.retained_candidate_ids) == len(ws.candidate_set.candidates)
+
+
+# --- Requirement 47: conscious ignition commitment (global-workspace winner-take-all) ---
+
+
+def _conscious_state(result):
+    return result.stage_results["reportable_conscious_content"].state
+
+
+def test_semantic_assembly_ignites_focal_conscious_content() -> None:
+    # Under the semantic assembly, 08 uses the ignition policy: it commits focal reportable
+    # content from the bounded working state rather than freezing on retained multiplicity.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    for result in handle.run_ticks(3):
+        state = _conscious_state(result)
+        ws = result.stage_results["workspace_competition_and_working_state"].working_state
+        # Every tick with a non-empty attention focus ignites a focal item; the winner is a
+        # retained working-state candidate (the global-workspace ignition).
+        if ws.retained_candidate_ids:
+            assert state.commit_status == "committed"
+            assert state.focal_content is not None
+            assert state.focal_content.source_workspace_candidate_id in ws.retained_candidate_ids
+            # Ignition never reports retained content as semantic conflict.
+            assert state.no_commit_reason != "semantic_conflict_unresolved"
+
+
+def test_default_assembly_uses_count_based_commitment_policy() -> None:
+    # Regression guard: the default (non-semantic) assembly keeps the count-based first-version
+    # commitment policy. The default chain produces a single-candidate working state, so the
+    # count-based policy commits it (one retained → commit), matching prior behavior.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    state = _conscious_state(result)
+    ws = result.stage_results["workspace_competition_and_working_state"].working_state
+    # Single retained candidate under the count-based default → committed (unchanged behavior).
+    assert len(ws.retained_candidate_ids) == 1
+    assert state.commit_status == "committed"

@@ -858,6 +858,77 @@ class _RetainedWorkingStateSelectionPolicy(_FocalSelectionPolicy):
 
 
 @dataclass
+class IgnitionFocalSelectionPolicy(_FocalSelectionPolicy):
+    """Owner: reportable conscious-content layer.
+
+    Purpose:
+        Global-workspace winner-take-all focal selection. When one or more candidates are
+        retained in the working state, ignite the single highest-`workspace_score_hint`
+        candidate as the focal reportable content and demote the remaining retained candidates
+        to supporting context, instead of declaring `semantic_conflict_unresolved` whenever more
+        than one candidate is retained. This is the de-shimmed commitment policy for the
+        semantic-memory assembly, where the R46 `workspace_score_hint` is a real competition score.
+
+    Failure semantics:
+        Pure deterministic function. Zero retained candidates yields
+        `no_commit/insufficient_commitment_signal`; an ignited focal whose normalized summary is
+        empty yields `no_commit/context_not_reportable` (both preserved from the first-version
+        policy). It never emits `semantic_conflict_unresolved` for mere retained multiplicity.
+
+    Notes:
+        Owned by `08`, injected through the existing `focal_selection_policy` seam. It produces
+        exactly the focal+supporting shape the engine validation and the semantic renderer
+        already accept (the renderer caps supporting items at `max_supporting_context_items`, so
+        ranking the losers by descending score keeps the most salient ones under the cap). A
+        material with no `workspace_score_hint` is ranked as score `0.0`. Ties break
+        deterministically by `source_workspace_candidate_id`.
+    """
+
+    def decide(
+        self,
+        candidate_set: WorkspaceCandidateSet,
+        working_state: WorkingStateSnapshot,
+        material_map: dict[str, ConsciousContentMaterial],
+    ) -> _FocalSelectionOutcome:
+        retained_materials = tuple(
+            material_map[retained_candidate_id]
+            for retained_candidate_id in working_state.retained_candidate_ids
+        )
+        if not retained_materials:
+            return _FocalSelectionOutcome(
+                commit_status="no_commit",
+                focal_material=None,
+                supporting_materials=(),
+                no_commit_reason="insufficient_commitment_signal",
+            )
+        # Winner-take-all ignition: the dominant candidate by the real R46 competition score.
+        ranked = sorted(
+            retained_materials,
+            key=lambda material: (
+                -(material.workspace_score_hint if material.workspace_score_hint is not None else 0.0),
+                material.source_workspace_candidate_id,
+            ),
+        )
+        focal_material = ranked[0]
+        if not _normalize_summary(focal_material.material_summary):
+            return _FocalSelectionOutcome(
+                commit_status="no_commit",
+                focal_material=None,
+                supporting_materials=(),
+                no_commit_reason="context_not_reportable",
+            )
+        # The losers of the ignition become supporting context, ordered by descending score so
+        # the renderer's bounded cap keeps the most salient ones.
+        supporting_materials = ranked[1:]
+        return _FocalSelectionOutcome(
+            commit_status="committed",
+            focal_material=focal_material,
+            supporting_materials=supporting_materials,
+            no_commit_reason=None,
+        )
+
+
+@dataclass
 class _MaterialSummarySemanticCommitmentRenderer(_SemanticCommitmentRenderer):
     """Private first-version semantic renderer built only from explicit current-cycle material.
 

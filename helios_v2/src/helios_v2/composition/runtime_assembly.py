@@ -26,6 +26,7 @@ from helios_v2.consciousness import (
     ConsciousnessConfig,
     ConsciousnessEngine,
     FirstVersionConsciousCommitmentPath,
+    IgnitionFocalSelectionPolicy,
 )
 from helios_v2.directed_retrieval import (
     DirectedRetrievalConfig,
@@ -1073,9 +1074,20 @@ def assemble_runtime(
             else FirstVersionWorkingStateRetentionPath()
         ),
     )
+    # `08` conscious-content de-shim (R47): under the semantic-memory assembly, `08` ignites the
+    # single highest-`workspace_score_hint` retained candidate as focal reportable content
+    # (global-workspace winner-take-all), instead of declaring `semantic_conflict_unresolved`
+    # whenever the R46 bounded top-K working state retains more than one candidate. When off,
+    # the count-based first-version selection policy is unchanged.
     consciousness = ConsciousnessEngine(
         config=resolved_config.consciousness,
-        commitment_path=FirstVersionConsciousCommitmentPath(),
+        commitment_path=(
+            FirstVersionConsciousCommitmentPath(
+                focal_selection_policy=IgnitionFocalSelectionPolicy()
+            )
+            if semantic_memory_enabled
+            else FirstVersionConsciousCommitmentPath()
+        ),
     )
     thought_gating = ThoughtGatingEngine(
         config=resolved_config.thought_gating,

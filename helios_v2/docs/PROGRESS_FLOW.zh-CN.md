@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R46（`07` 工作空间竞争去 shim：真实竞争打分 + 有界注意力瓶颈;consolidated≠held in attention）。测试基线：618 passed。版本：R46。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R47（`08` 承诺去 shim：全局工作空间点火 winner-take-all,多数不再判冲突）。测试基线：626 passed。版本：R47。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -47,7 +47,7 @@ flowchart TD
     S05["05 内感受体感层 - 神经调质推导+双时间尺度(语义)/跨tick演化"]:::base
     S06[06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回(语义装配)]:::base
     S07[07 工作空间竞争 - 真实竞争+有界注意力瓶颈(语义装配)]:::base
-    S08["08 可报告意识内容 - owner语义相对完整,但上游/承诺路径仍首版shim"]:::base
+    S08["08 可报告意识内容 - 真实点火承诺(语义装配);上游06/07已去shim"]:::base
     S09["09 思考门控与延续压力 - NE arousal已耦合(语义)/其余输入仍shim"]:::base
     S10[10 定向检索 - 基线/输入仍shim]:::base
     S16P[16 具身prompt契约 - 基线]:::base
@@ -232,6 +232,14 @@ flowchart TD
   "此刻在注意焦点"（bounded working state）：forced 候选可在注意竞争中落选、本 tick 不被 held,但仍在 candidate set（仍到 `08`）、
   仍被持久化。opt-in 于与 R45 同一开关;默认/非语义装配保持常量分 + 保留全部。无契约变更;`07` 不 import 其他 owner。618 测试全绿、离线。
   延后:P5 学权重/K、更锐利的 `08` 承诺、多来源竞争。
+- P3 中段（R47）：`08` 可报告意识承诺去 shim,成为全局工作空间点火。问题:首版 count-based 策略只要 working state
+  保留 >1 候选就判 `no_commit/semantic_conflict_unresolved`,而 R46 的有界 top-K 工作态按设计保留 >1,故 `08` 几乎永不
+  意识到任何东西。修复:owner 自有的 `IgnitionFocalSelectionPolicy`（经既有 `focal_selection_policy` 注入口,归
+  `helios_v2.consciousness`）把单个最高 `workspace_score_hint` 的保留候选点火为焦点（winner-take-all,确定性 tie-break）,
+  其余降为支持上下文（按分降序,受 `max_supporting_context_items` 上限）。保留 `insufficient_commitment_signal`（零保留）与
+  `context_not_reportable`（焦点摘要空）;`semantic_conflict_unresolved` 留给后续真实冲突切片,不再因单纯多数触发。无契约/引擎/
+  渲染器变更。opt-in 于与 R45/R46 同一开关;默认/非语义装配保持 count-based。端到端现状:链每 tick 只形成一个候选,故"多数→
+  点火赢家"头条今天 owner 级验证,待多候选来源落地后端到端可见。618→626 测试全绿、离线。延后:真实语义冲突检测、LLM 语义渲染器、P5 学点火阈值。
 - 内感受来源留白（BODY 节点,红）：`05` 已建成可消费真实身体/内感受信号（feeling 阶段从 `02` 批次按 body/interoceptive
   modality 筛选）,但当前没有任何东西生产它们——sensory 源只产生 text,故 `internal_signals` 恒为空,体感仅由 `04`
   神经调质状态推导。BODY 节点是只有接口、无 owner 生产者的占位。真实生产者属后续 owner：模拟身体状态模型,或把
