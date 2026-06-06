@@ -53,11 +53,11 @@ flowchart TD
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
     S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
-    S06[06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall (semantic)]:::base
-    S07[07 Workspace Competition - real competition + bounded attention bottleneck (semantic)]:::base
+    S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall (semantic)"]:::base
+    S07["07 Workspace Competition - real competition + bounded attention bottleneck (semantic)"]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); upstream 06/07 de-shimmed"]:::base
     S09["09 Thought Gating - NE arousal + workspace activation coupled (semantic)/other inputs shim"]:::base
-    S10[10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real]:::base
+    S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
     S16E["16 Outward Externalization Draft - non-authoritative premotor-prep draft (planner 13 + channel 30 hold execution)"]:::base
