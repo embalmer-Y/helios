@@ -29,9 +29,16 @@ from .contracts import (
     ReplayReason,
     validate_prediction_mismatch_evidence,
 )
-from .engine import MemoryAffectReplayEngine, MemoryFormationPath, ReplayCandidateSelector
+from .engine import (
+    AffectGroundedMemoryFormationPath,
+    MemoryAffectReplayEngine,
+    MemoryFormationPath,
+    ReplayCandidateSelector,
+    SalienceGatedReplayCandidateSelector,
+)
 
 __all__ = [
+    "AffectGroundedMemoryFormationPath",
     "AffectTaggedMemoryItem",
     "MemoryAffectReplayAPI",
     "MemoryAffectReplayConfig",
@@ -50,5 +57,6 @@ __all__ = [
     "RecordMemoryOp",
     "ReplayCandidateSelector",
     "ReplayReason",
+    "SalienceGatedReplayCandidateSelector",
     "validate_prediction_mismatch_evidence",
 ]

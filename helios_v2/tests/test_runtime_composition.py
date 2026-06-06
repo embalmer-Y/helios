@@ -1644,3 +1644,187 @@ def test_checkpoint_resumes_feeling_across_restart(tmp_path) -> None:
     seeded = handle_b.feeling_stage._prior_state
     assert seeded is not None
     assert seeded.feeling == saved.feeling
+
+
+# --- Requirement 45: affect-grounded memory formation + durable affect-memory store ---
+
+
+def _affect_memory_records(store):
+    return [r for r in store.read_recent(200) if r.record_kind == "affect_memory"]
+
+
+def _writeback_records(store):
+    return [r for r in store.read_recent(200) if r.record_kind == "experience_writeback"]
+
+
+def test_semantic_assembly_persists_consolidation_worthy_affect_memory() -> None:
+    # Under the semantic assembly, 06 forms affect-tagged memory and the salience gate marks
+    # consolidation-worthy ticks; those are durably persisted as embedded affect_memory records
+    # co-residing with the 15 experience-writeback stream.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    handle.run_ticks(4)
+
+    affect = _affect_memory_records(store)
+    assert affect, "expected at least one consolidation-worthy affect-memory record"
+    # Affect-memory records are embedded at write (recall-eligible on the shared surface).
+    assert all(r.embedding is not None for r in affect)
+    # They carry the discriminator and owner-provenance metadata.
+    assert all(r.outcome_class == "affect_memory" for r in affect)
+    assert all(dict(r.metadata).get("memory_family") in {"episodic", "autobiographical"} for r in affect)
+    # The 15 continuity stream co-persists independently.
+    assert _writeback_records(store)
+
+
+def test_affect_memory_record_carries_real_feeling_provenance() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    handle.run_ticks(4)
+
+    affect = _affect_memory_records(store)
+    assert affect
+    # The affect-memory record preserves the source feeling-state provenance linkage.
+    assert all("source_feeling_state_id" in dict(r.linkage) for r in affect)
+    # Its reason trace records why 06 judged the memory worth consolidating.
+    assert all(r.reason_trace for r in affect)
+
+
+def test_affect_memory_recall_eligible_through_directed_retrieval() -> None:
+    # Once persisted+embedded, affect-memory participates in the shared semantic recall surface.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+    handle.run_ticks(5)
+
+    assert _affect_memory_records(store)
+    result = handle.tick()
+    bundle = result.stage_results["directed_retrieval_into_thought_window"].bundle
+    all_hits = (
+        bundle.short_term_context
+        + bundle.mid_term_hits
+        + bundle.long_term_hits
+        + bundle.autobiographical_hits
+    )
+    # Recall is semantic over the shared store (R34 surface); affect-memory now rides it.
+    assert any(hit.source == "experience_store_semantic" for hit in all_hits)
+
+
+def test_affect_memory_survives_restart(tmp_path) -> None:
+    db_path = str(tmp_path / "experience_store.sqlite3")
+
+    store_a = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    handle_a = _assemble(experience_store=store_a, embedding_gateway=_embedding_gateway())
+    handle_a.startup()
+    handle_a.run_ticks(4)
+    affect_after_a = len(_affect_memory_records(store_a))
+    assert affect_after_a >= 1
+    del handle_a, store_a
+
+    # A fresh store object on the same file sees the prior session's affect-memory.
+    store_b = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    persisted = _affect_memory_records(store_b)
+    assert len(persisted) == affect_after_a
+    assert all(r.embedding is not None for r in persisted)
+
+
+def test_low_salience_first_tick_persists_no_affect_memory_but_writeback_co_persists() -> None:
+    # The very first tick's feeling has not yet built up momentum, so the salience gate is below
+    # threshold and no affect-memory is persisted; the 15 continuity record still persists.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    handle.tick()
+
+    assert _affect_memory_records(store) == []
+    assert _writeback_records(store)
+
+
+def test_affect_memory_embedding_failure_is_hard_stop() -> None:
+    # When affect-memory is enabled, an embedding failure at memory embed-at-write time is a hard
+    # stop with no non-persistent fallback (same discipline as the 15 stream).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(provider=RaisingCompositionEmbeddingProvider()),
+    )
+    handle.startup()
+    with pytest.raises(EmbeddingError):
+        handle.run_ticks(3)
+
+
+def test_default_assembly_persists_no_affect_memory() -> None:
+    # Without the semantic opt-in, 06 keeps the constant shim and no affect-memory carry runs.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store)  # recency-only, no embedding gateway
+    handle.startup()
+    handle.run_ticks(3)
+
+    assert _affect_memory_records(store) == []
+    assert handle.memory_record_bridge is None
+
+
+def test_pure_default_assembly_has_no_memory_bridge() -> None:
+    handle = _assemble()
+    assert handle.memory_record_bridge is None
+    handle.startup()
+    result = handle.tick()
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+
+
+# --- Requirement 46: workspace competition de-shim (real attention bottleneck) ---
+
+
+def _workspace_result(result):
+    return result.stage_results["workspace_competition_and_working_state"]
+
+
+def test_semantic_assembly_workspace_score_is_real_not_constant() -> None:
+    # Under the semantic assembly, 07 scores candidates from the real 06 priority_hint + real 05
+    # feeling salience, so the score is not the constant 0.95 shim and it evolves across ticks
+    # (the feeling carries cross-tick momentum from R44).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    results = handle.run_ticks(3)
+    scores = []
+    for result in results:
+        for candidate in _workspace_result(result).candidate_set.candidates:
+            scores.append(candidate.workspace_score_hint)
+    assert scores, "expected at least one workspace candidate"
+    # Not the constant shim, and the real score varies as the felt state evolves.
+    assert all(s != 0.95 for s in scores)
+    assert len(set(scores)) > 1
+
+
+def test_semantic_assembly_working_state_is_bounded() -> None:
+    # The working state is the bounded attention focus: retained ids are a subset of the
+    # candidate set and never exceed the owner's first-version retention bound (3).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.startup()
+
+    for result in handle.run_ticks(3):
+        ws = _workspace_result(result)
+        candidate_ids = {c.candidate_id for c in ws.candidate_set.candidates}
+        retained = ws.working_state.retained_candidate_ids
+        assert len(retained) <= 3
+        assert set(retained) <= candidate_ids
+        # A non-empty candidate set is never reduced to an empty working state.
+        if candidate_ids:
+            assert retained
+
+
+def test_default_assembly_keeps_constant_workspace_score_and_retains_all() -> None:
+    # Without the semantic opt-in, 07 keeps the constant-score / retain-everything shim.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    ws = _workspace_result(result)
+    assert all(c.workspace_score_hint == 0.95 for c in ws.candidate_set.candidates)
+    # The shim retains every candidate (no bottleneck).
+    assert len(ws.working_state.retained_candidate_ids) == len(ws.candidate_set.candidates)

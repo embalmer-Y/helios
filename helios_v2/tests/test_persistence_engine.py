@@ -279,3 +279,131 @@ def test_semantic_provider_cold_store_returns_empty() -> None:
         store=store, embed_query=lambda text: (1.0, 0.0)
     )
     assert provider.collect_candidates(_plan()) == ()
+
+
+# --- R45: record_kind discriminator + metadata, back-compat, family tier mapping ---
+
+import sqlite3  # noqa: E402
+
+from helios_v2.persistence.engine import _record_tier  # noqa: E402
+
+
+def _affect_memory_record(seq_hint: int, *, family: str = "episodic") -> PersistedExperienceRecord:
+    return PersistedExperienceRecord(
+        record_id=f"affect-memory:memory:runtime:{seq_hint}",
+        tick_id=seq_hint,
+        continuity_kind=family,
+        outcome_class="affect_memory",
+        source_outcome_kind="memory_item",
+        source_outcome_id=f"memory:runtime:{seq_hint}",
+        writeback_status="formed",
+        summary=f"affect memory {seq_hint}",
+        requested_effect_summary="",
+        applied_effect_summary="",
+        reason_trace=("high_affect_intensity",),
+        linkage={"source_feeling_state_id": f"interoceptive-feeling-state:nm:{seq_hint}"},
+        record_kind="affect_memory",
+        metadata={"memory_family": family},
+    )
+
+
+def test_record_defaults_preserve_experience_writeback_kind() -> None:
+    record = _record(1)
+    assert record.record_kind == "experience_writeback"
+    assert dict(record.metadata) == {}
+
+
+def test_record_kind_and_metadata_round_trip_through_with_helpers() -> None:
+    record = _affect_memory_record(1).with_sequence(5).with_embedding((0.1, 0.2))
+    assert record.record_kind == "affect_memory"
+    assert dict(record.metadata) == {"memory_family": "episodic"}
+    assert record.sequence == 5
+    assert record.embedding == pytest.approx((0.1, 0.2))
+
+
+def test_record_metadata_rejects_non_string_values() -> None:
+    with pytest.raises(PersistenceError, match="metadata must map"):
+        PersistedExperienceRecord(
+            record_id="r",
+            tick_id=1,
+            continuity_kind="episodic",
+            outcome_class="affect_memory",
+            source_outcome_kind="memory_item",
+            source_outcome_id="m",
+            writeback_status="formed",
+            summary="s",
+            requested_effect_summary="",
+            applied_effect_summary="",
+            reason_trace=("x",),
+            linkage={},
+            metadata={"k": 5},  # type: ignore[dict-item]
+        )
+
+
+def test_sqlite_round_trips_record_kind_and_metadata(tmp_path) -> None:
+    db_path = str(tmp_path / "experience_store.sqlite3")
+    store = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    store.append_records((_affect_memory_record(1, family="autobiographical"),))
+
+    reopened = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    record = reopened.read_recent(10)[0]
+    assert record.record_kind == "affect_memory"
+    assert dict(record.metadata) == {"memory_family": "autobiographical"}
+
+
+def test_legacy_row_without_new_columns_reads_back_as_experience_writeback(tmp_path) -> None:
+    # Simulate a pre-R45 file: a table without record_kind/metadata columns.
+    db_path = str(tmp_path / "legacy_store.sqlite3")
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE experience_records (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_id TEXT NOT NULL,
+            tick_id INTEGER,
+            continuity_kind TEXT NOT NULL,
+            outcome_class TEXT NOT NULL,
+            source_outcome_kind TEXT NOT NULL,
+            source_outcome_id TEXT NOT NULL,
+            writeback_status TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            requested_effect_summary TEXT NOT NULL,
+            applied_effect_summary TEXT NOT NULL,
+            reason_trace TEXT NOT NULL,
+            linkage TEXT NOT NULL,
+            embedding TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO experience_records (
+            record_id, tick_id, continuity_kind, outcome_class, source_outcome_kind,
+            source_outcome_id, writeback_status, summary, requested_effect_summary,
+            applied_effect_summary, reason_trace, linkage, embedding
+        ) VALUES ('experience:legacy', 1, 'external_action', 'world_changed', 'planner_bridge',
+                  'planner-bridge-result:1', 'written', 'legacy summary', 'req', 'app',
+                  '["planner accepted"]', '{}', NULL)
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    # Opening through the backend upgrades the schema in place and reads the legacy row
+    # back with the default record_kind and empty metadata.
+    store = ExperienceStore(backend=SqliteExperienceStoreBackend(db_path=db_path))
+    store.initialize()
+    record = store.read_recent(10)[0]
+    assert record.record_id == "experience:legacy"
+    assert record.record_kind == "experience_writeback"
+    assert dict(record.metadata) == {}
+
+    # And the upgraded file accepts a new affect-memory record alongside the legacy one.
+    store.append_records((_affect_memory_record(2),))
+    kinds = {r.record_kind for r in store.read_recent(10)}
+    assert kinds == {"experience_writeback", "affect_memory"}
+
+
+def test_record_tier_maps_memory_family() -> None:
+    assert _record_tier(_affect_memory_record(1, family="episodic"))[0] == "mid_term"
+    assert _record_tier(_affect_memory_record(2, family="autobiographical"))[0] == "autobiographical"

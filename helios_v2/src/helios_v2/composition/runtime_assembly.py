@@ -62,7 +62,12 @@ from helios_v2.llm import (
     LlmProfileRegistry,
     OpenAICompatibleProvider,
 )
-from helios_v2.memory import MemoryAffectReplayConfig, MemoryAffectReplayEngine
+from helios_v2.memory import (
+    AffectGroundedMemoryFormationPath,
+    MemoryAffectReplayConfig,
+    MemoryAffectReplayEngine,
+    SalienceGatedReplayCandidateSelector,
+)
 from helios_v2.neuromodulation import (
     DualTimescaleNeuromodulatorUpdatePath,
     NeuromodulatorConfig,
@@ -143,7 +148,12 @@ from helios_v2.thought_gating import (
     ThoughtGatingConfig,
     ThoughtGatingEngine,
 )
-from helios_v2.workspace import WorkspaceCompetitionConfig, WorkspaceCompetitionEngine
+from helios_v2.workspace import (
+    BoundedAttentionRetentionPath,
+    SalienceWeightedWorkspaceCompetitionPath,
+    WorkspaceCompetitionConfig,
+    WorkspaceCompetitionEngine,
+)
 
 from .bridges import (
     AppraisalDerivedNeuromodulatorUpdatePath,
@@ -179,6 +189,7 @@ from .bridges import (
     EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
     MemoryGroundedRetrievalAmbiguitySource,
+    MemoryRecordBridge,
     NeuromodulatorAwareThoughtGateSignalBridge,
     SubsystemBackedSensorySource,
     TimelineViewHolder,
@@ -556,6 +567,7 @@ class RuntimeHandle:
     channel_subsystem: "ChannelSubsystem | None" = None
     experience_store: ExperienceStore | None = None
     experience_record_bridge: ExperienceRecordBridge | None = None
+    memory_record_bridge: "MemoryRecordBridge | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
     continuity_checkpoint_bridge: "ContinuityCheckpointBridge | None" = None
@@ -619,6 +631,7 @@ class RuntimeHandle:
         self._carry_timeline(result.tick_id)
         self._carry_consequence_claim(result)
         self._persist_experience(result)
+        self._persist_memory(result)
         self._checkpoint_continuity(result)
         return result
 
@@ -684,6 +697,38 @@ class RuntimeHandle:
             records = tuple(
                 record.with_embedding(self.embed_record(record.summary)) for record in records
             )
+        self.experience_store.append_records(records)
+
+    def _persist_memory(self, result: RuntimeTickResult) -> None:
+        """Durably append the just-completed tick's consolidation-worthy `06` memory when enabled.
+
+        This is owner-neutral carry mirroring `_persist_experience`: it reads the `06` memory
+        affect-and-replay stage result from the completed tick, projects exactly the
+        consolidation-worthy memory items (those the `06` salience gate marked
+        `forced_consolidation`) into durable affect-memory records through the owner-neutral
+        memory record bridge, embeds each at write, and appends them to the same durable store.
+        It runs only when affect-memory persistence is enabled (a store, the memory bridge, and
+        the embed callable are all present); otherwise it is a no-op and the default assembly is
+        unchanged. A low-salience tick produces no records (a defined outcome, nothing appended).
+        An embedding or durability failure propagates as a hard stop (no non-persistent
+        fallback). It re-derives no decision; the `06` owner already decided what is worthy.
+        """
+
+        if (
+            self.experience_store is None
+            or self.memory_record_bridge is None
+            or self.embed_record is None
+        ):
+            return
+        memory_result = result.stage_results.get("memory_affect_and_replay")
+        if memory_result is None:
+            return
+        records = self.memory_record_bridge.build_records(memory_result, result.tick_id)
+        if not records:
+            return
+        records = tuple(
+            record.with_embedding(self.embed_record(record.summary)) for record in records
+        )
         self.experience_store.append_records(records)
 
     def _checkpoint_continuity(self, result: RuntimeTickResult) -> None:
@@ -993,15 +1038,40 @@ def assemble_runtime(
         ),
         dominant_dimension_reporter=FirstVersionDominantDimensionReporter(),
     )
+    # `06` memory de-shim (R45): under the semantic-memory assembly, `06` forms affect-tagged
+    # memory from the real `05` feeling state and decides consolidation worth through an
+    # owner-owned salience gate (replacing the constant first-version formation/selector). When
+    # off, the deterministic first-version path is unchanged.
     memory = MemoryAffectReplayEngine(
         config=resolved_config.memory,
-        formation_path=FirstVersionMemoryFormationPath(),
-        replay_selector=FirstVersionReplayCandidateSelector(),
+        formation_path=(
+            AffectGroundedMemoryFormationPath()
+            if semantic_memory_enabled
+            else FirstVersionMemoryFormationPath()
+        ),
+        replay_selector=(
+            SalienceGatedReplayCandidateSelector()
+            if semantic_memory_enabled
+            else FirstVersionReplayCandidateSelector()
+        ),
     )
+    # `07` workspace de-shim (R46): under the semantic-memory assembly, `07` runs a real
+    # competition (scoring each candidate from the real `06` priority_hint + the real `05`
+    # feeling salience) and a bounded attention bottleneck (retaining only the top-K scoring
+    # subset into the working state), replacing the constant-score / retain-everything shim.
+    # When off, the deterministic first-version paths are unchanged.
     workspace = WorkspaceCompetitionEngine(
         config=resolved_config.workspace,
-        competition_path=FirstVersionWorkspaceCompetitionPath(),
-        retention_path=FirstVersionWorkingStateRetentionPath(),
+        competition_path=(
+            SalienceWeightedWorkspaceCompetitionPath()
+            if semantic_memory_enabled
+            else FirstVersionWorkspaceCompetitionPath()
+        ),
+        retention_path=(
+            BoundedAttentionRetentionPath()
+            if semantic_memory_enabled
+            else FirstVersionWorkingStateRetentionPath()
+        ),
     )
     consciousness = ConsciousnessEngine(
         config=resolved_config.consciousness,
@@ -1219,6 +1289,9 @@ def assemble_runtime(
         experience_store=experience_store,
         experience_record_bridge=(
             ExperienceRecordBridge() if experience_store is not None else None
+        ),
+        memory_record_bridge=(
+            MemoryRecordBridge() if semantic_memory_enabled else None
         ),
         embed_record=_embed_text if embedding_gateway is not None else None,
         continuity_checkpoint=continuity_checkpoint,

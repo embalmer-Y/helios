@@ -316,3 +316,133 @@ class WorkspaceCompetitionEngine(WorkspaceCompetitionAPI):
             candidate_set_id=working_state.source_candidate_set_id,
             retained_candidate_count=len(working_state.retained_candidate_ids),
         )
+
+
+def _clamp_unit(value: float) -> float:
+    """Owner: workspace competition and working-state layer. Clamp to [0,1], rounded for determinism."""
+
+    return round(min(1.0, max(0.0, value)), 4)
+
+
+@dataclass
+class SalienceWeightedWorkspaceCompetitionPath(WorkspaceCompetitionPath):
+    """Owner: workspace competition and working-state layer.
+
+    Purpose:
+        Score each workspace candidate as a real bounded function of the candidate's real
+        `priority_hint` (from the `06` R45 salience gate) and the real `05` feeling salience,
+        replacing the constant first-version `workspace_score_hint`. This makes the workspace a
+        real competition: candidates carrying more salient memory and arising under a more
+        aroused/tense felt state win higher scores.
+
+    Failure semantics:
+        Pure deterministic function of its inputs. The score is clamped into the
+        `WorkspaceCandidate` `[0, 1]` range. Owner invariants (every replay candidate stays in
+        the published set; forced flag and feeling provenance preserved verbatim) are kept, so
+        the engine's existing validation passes.
+
+    Notes:
+        Owned by `07`. The competition weights are explicit bounded first-version constants under
+        the config's declared `competition_policy` learned-parameter category; a later `P5` slice
+        learns them without changing the competition shape. The feeling-salience reading reuses
+        the same arousal/tension/pain affect family the `06` gate reads, but it is an owner-private
+        competition input here, not a shared contract. Stateless and deterministic.
+    """
+
+    priority_weight: float = 0.6
+    arousal_weight: float = 0.5
+    tension_weight: float = 0.3
+    pain_weight: float = 0.2
+    feeling_weight: float = 0.4
+
+    def build_candidate_set(
+        self,
+        replay_candidates: tuple[MemoryReplayCandidate, ...],
+        feeling_state: InteroceptiveFeelingState,
+        config: WorkspaceCompetitionConfig,
+        tick_id: int | None,
+    ) -> WorkspaceCandidateSet:
+        del config
+        feeling = feeling_state.feeling
+        feeling_salience = _clamp_unit(
+            self.arousal_weight * feeling.arousal
+            + self.tension_weight * feeling.tension
+            + self.pain_weight * feeling.pain_like
+        )
+        candidates: list[WorkspaceCandidate] = []
+        for index, replay_candidate in enumerate(replay_candidates):
+            priority = replay_candidate.priority_hint if replay_candidate.priority_hint is not None else 0.0
+            score = _clamp_unit(
+                self.priority_weight * priority + self.feeling_weight * feeling_salience
+            )
+            candidates.append(
+                WorkspaceCandidate(
+                    candidate_id=f"workspace-candidate:runtime:{tick_id}:{index}",
+                    source_memory_candidate_id=replay_candidate.candidate_id,
+                    source_feeling_state_id=feeling_state.state_id,
+                    priority_hint=replay_candidate.priority_hint,
+                    forced_consolidation=replay_candidate.forced_consolidation,
+                    workspace_score_hint=score,
+                )
+            )
+        return WorkspaceCandidateSet(
+            set_id=f"workspace-set:runtime:{tick_id}",
+            source_feeling_state_id=feeling_state.state_id,
+            candidates=tuple(candidates),
+            tick_id=tick_id,
+        )
+
+
+@dataclass
+class BoundedAttentionRetentionPath(WorkingStateRetentionPath):
+    """Owner: workspace competition and working-state layer.
+
+    Purpose:
+        Select a bounded top-scoring subset of the candidate set into the working state — the
+        real attention bottleneck — replacing the first-version path that retained every
+        candidate. When the candidate count exceeds the bound, lower-scoring candidates lose the
+        competition for the held working-state focus (they remain in the candidate set, which
+        still reaches `08` as material; the working state is the bounded held subset).
+
+    Failure semantics:
+        Pure deterministic function. Selection is by descending `workspace_score_hint` with a
+        deterministic candidate-id tie-break. A non-empty candidate set never yields an empty
+        working state (at least the single top-scoring candidate is held), so the bottleneck
+        narrows attention without erasing it. Retained ids are always a subset of the published
+        candidate set, satisfying the engine's existing `_validate_working_state`.
+
+    Notes:
+        Owned by `07`. The retained-count bound is an explicit bounded first-version constant
+        under the config's declared `working_state_update_policy` learned-parameter category; a
+        later `P5` slice learns it without changing the retention shape. A `06`-forced-consolidation
+        candidate is governed for candidate-set membership (it is consolidated/persisted by `06`),
+        not for working-state retention: it may lose the attention competition and not be held this
+        tick. "Consolidated" (worth remembering long-term) is deliberately distinct from "held in
+        attention" (focused on right now), mirroring the brain's separation of consolidation from
+        working-memory attention.
+    """
+
+    max_retained: int = 3
+
+    def retain_working_state(
+        self,
+        candidate_set: WorkspaceCandidateSet,
+        config: WorkspaceCompetitionConfig,
+        tick_id: int | None,
+    ) -> WorkingStateSnapshot:
+        del config
+        ranked = sorted(
+            candidate_set.candidates,
+            key=lambda candidate: (
+                -(candidate.workspace_score_hint if candidate.workspace_score_hint is not None else 0.0),
+                candidate.candidate_id,
+            ),
+        )
+        bound = max(1, self.max_retained)
+        retained = ranked[:bound]
+        return WorkingStateSnapshot(
+            state_id=f"working-state:runtime:{tick_id}",
+            source_candidate_set_id=candidate_set.set_id,
+            retained_candidate_ids=tuple(candidate.candidate_id for candidate in retained),
+            tick_id=tick_id,
+        )

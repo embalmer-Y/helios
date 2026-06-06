@@ -69,6 +69,8 @@ class PersistedExperienceRecord:
     linkage: Mapping[str, str]
     sequence: int = UNASSIGNED_SEQUENCE
     embedding: tuple[float, ...] | None = None
+    record_kind: str = "experience_writeback"
+    metadata: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for attr_name in (
@@ -79,6 +81,7 @@ class PersistedExperienceRecord:
             "outcome_class",
             "source_outcome_kind",
             "writeback_status",
+            "record_kind",
         ):
             if not getattr(self, attr_name):
                 raise PersistenceError(
@@ -95,6 +98,13 @@ class PersistedExperienceRecord:
                     "PersistedExperienceRecord linkage must map non-empty keys to string ids"
                 )
         object.__setattr__(self, "linkage", linkage)
+        metadata = MappingProxyType(dict(self.metadata))
+        for key, value in metadata.items():
+            if not key or not isinstance(value, str):
+                raise PersistenceError(
+                    "PersistedExperienceRecord metadata must map non-empty keys to string values"
+                )
+        object.__setattr__(self, "metadata", metadata)
         if self.embedding is not None:
             vector = tuple(float(component) for component in self.embedding)
             if not vector:
@@ -139,6 +149,8 @@ class PersistedExperienceRecord:
             linkage=dict(self.linkage),
             sequence=sequence,
             embedding=self.embedding,
+            record_kind=self.record_kind,
+            metadata=dict(self.metadata),
         )
 
     def with_embedding(self, vector: tuple[float, ...]) -> "PersistedExperienceRecord":
@@ -179,6 +191,8 @@ class PersistedExperienceRecord:
             linkage=dict(self.linkage),
             sequence=self.sequence,
             embedding=tuple(float(component) for component in vector),
+            record_kind=self.record_kind,
+            metadata=dict(self.metadata),
         )
 
 

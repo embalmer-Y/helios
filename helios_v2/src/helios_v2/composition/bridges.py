@@ -881,6 +881,102 @@ class ExperienceRecordBridge:
 
 
 @dataclass
+class MemoryRecordBridge:
+    """Owner: composition.
+
+    Purpose:
+        Project the `06` memory affect-and-replay stage result of one completed tick into
+        durable `PersistedExperienceRecord` values for the `33` experience store, persisting
+        exactly the consolidation-worthy memory items the `06` owner marked.
+
+    Notes:
+        Owner-neutral glue. It reads only the published `MemoryFormationState` (the formed
+        memory items plus the replay candidates whose `forced_consolidation` flag the `06`
+        salience gate already set) and projects exactly those flagged items into storage
+        records tagged `record_kind="affect_memory"`. It re-derives no salience, re-ranks
+        nothing, and decides no consolidation policy; it filters by the flag `06` published.
+        It is used only by the explicit opt-in semantic-memory assembly. Affect-memory records
+        store the `06` family as the continuity kind (the store's tier mapping reads it as a
+        by-kind transport fact) and never replace or suppress the `15` continuity stream.
+    """
+
+    def build_records(self, memory_stage_result, tick_id) -> tuple[PersistedExperienceRecord, ...]:
+        """Owner: composition.
+
+        Purpose:
+            Build the durable affect-memory records for one tick from the memory stage result.
+
+        Inputs:
+            `memory_stage_result` - the tick's `MemoryAffectReplayStageResult`.
+            `tick_id` - the completed tick id.
+
+        Returns:
+            One `PersistedExperienceRecord` per consolidation-worthy memory item (those whose
+            replay candidate carries `forced_consolidation=True`), preserving feeling-state
+            provenance. Empty when no item cleared the `06` salience gate this tick.
+
+        Notes:
+            The summary is a bounded projection of the item's content packet; the store never
+            reads it for meaning. The candidate's `replay_reasons` become the record reason
+            trace, preserving why `06` judged the memory worth consolidating.
+        """
+
+        state = memory_stage_result.state
+        worthy_candidates = {
+            candidate.memory_id: candidate
+            for candidate in state.replay_candidates
+            if candidate.forced_consolidation
+        }
+        records: list[PersistedExperienceRecord] = []
+        for item in state.memory_items:
+            candidate = worthy_candidates.get(item.memory_id)
+            if candidate is None:
+                continue
+            linkage = {"source_feeling_state_id": item.source_feeling_state_id}
+            if item.binding_context_id:
+                linkage["binding_context_id"] = item.binding_context_id
+            metadata = {"memory_family": item.family}
+            records.append(
+                PersistedExperienceRecord(
+                    record_id=f"affect-memory:{item.memory_id}",
+                    tick_id=tick_id,
+                    continuity_kind=item.family,
+                    outcome_class="affect_memory",
+                    source_outcome_kind="memory_item",
+                    source_outcome_id=item.memory_id,
+                    writeback_status="formed",
+                    summary=_memory_content_summary(item),
+                    requested_effect_summary="",
+                    applied_effect_summary="",
+                    reason_trace=candidate.replay_reasons,
+                    linkage=linkage,
+                    record_kind="affect_memory",
+                    metadata=metadata,
+                )
+            )
+        return tuple(records)
+
+
+def _memory_content_summary(item) -> str:
+    """Owner: composition. Build a bounded non-empty summary from a memory item's content.
+
+    The `PersistedExperienceRecord` contract requires a non-empty summary. This projects the
+    item's `MemoryContentPacket` into a stable string, preferring an explicit summary ref, then
+    a context ref, then the salient tokens, then a stable fallback keyed by the memory id. It is
+    a transport projection; the store never reads it for meaning.
+    """
+
+    content = item.content
+    if content.summary_ref:
+        return content.summary_ref
+    if content.context_ref:
+        return content.context_ref
+    if content.salient_tokens:
+        return " ".join(content.salient_tokens)
+    return f"affect-memory:{item.memory_id}"
+
+
+@dataclass
 class ContinuityCheckpointBridge:
     """Owner: composition.
 

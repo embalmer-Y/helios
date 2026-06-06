@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R42。测试基线：560 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R46。测试基线：618 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -85,16 +85,18 @@
 - 下一步：（1）✅ 双时间尺度体感持久化 + 跨重启续存——**R44 已交付**；（2）在出现真实内感受源后整合真实身体/内感受信号——注意这目前是无 owner 的留白（`gap_interoceptive_signal_source`）；（3）`P5` 学习有界 coupling/alpha 系数；（4）把真实体感喂给 `06` 记忆情感标注、可报告意识与行为,使体感在下游产生因果（FG-2）；（5）给 `03` 其余维去 shim,使所有上游驱动皆为真实。
 
 ### 2.6 `06` 记忆情感与重放 — `helios_v2.memory`
-- 完成度：`baseline_real`（输入仍 shim；`33` 已有耐久 store，但 `06` 形成仍在进程内造记忆）。
+- 完成度：`baseline_real`（语义记忆装配下形成已去 shim 且记忆已耐久；输入在 `05` 以上仍依赖 opt-in）。
 - 职责：情感标记的记忆形成与重放候选surfacing，含强制巩固约束。不拥有检索规划、工作空间晋升或身份回写。
 - 在循环中的作用：形成情景/情感记忆并向工作空间供给重放候选。
-- 下一步（P2/P3）：把 `06` 记忆条目接入 `33` 耐久 store（形成 → 持久化 → 与 `10` 共享同一耐久底座），使记忆形成不再每 tick 凭空造。再从真实感受/失配证据去 shim 形成。
+- 完成度细节：`45`（P2 收尾 / P3 中段去 shim）一次收口 `06` 的两处 shim。**形成**：owner 自有的 `AffectGroundedMemoryFormationPath` 在语义记忆装配下取代常量 shim，从真实 `05` `InteroceptiveFeelingState` 形成 affect-tagged 记忆（item 的 `affect_tag` 是真实的当下体感向量，非常量），并由 owner 持有 episodic/autobiographical 家族映射（带 mismatch 证据 → autobiographical）。**显著性门控**：owner 自有的 `SalienceGatedReplayCandidateSelector` 从真实体感（arousal/tension/pain）与 mismatch 算出有界 affect-intensity，据此设每条 replay candidate 的 `forced_consolidation` + `priority_hint`（阈值/系数挂 `consolidation_policy`/`replay_priority_policy` 学习参数类别，P5 可学）——故平淡低情感 tick 不巩固任何记忆，高情感或高 mismatch tick 才巩固。**耐久**：经 owner-neutral 的 `MemoryRecordBridge` + `RuntimeHandle._persist_memory` carry（仿 `_persist_experience`），把恰好被标记 `forced_consolidation` 的 item 以 `record_kind="affect_memory"` 写时 embed 持久化进共享 `33` store，与 `15` 流共存。**召回**：复用 `34` 的语义召回面，affect-memory 经 `10` 可召回并跨重启续存。`06` 既不 import persistence 也不 import embedding owner；carry seam 不重算决策（只按 `06` 已设的 flag 过滤）。默认/纯 recency 装配保持常量 `06` shim。Caveat：记忆内容塑形仍最小（仅沿用 binding context 内容），去重/合并本刀未做。
+- 下一步（P2/P3）：（1）✅ 形成去 shim + 接耐久 store——**R45 已交付**；（2）去重与同记忆合并/巩固（挂 `consolidation_policy`，有界、owner 拥有），退休本刀的 no-dedup 约束；（3）真实 `05` 体感更深地驱动形成（不止 affect tag），并喂 06→07 真实候选；（4）R35 方案 B（持久化原始刺激）落地后，novelty 同语域比较。
 
 ### 2.7 `07` 工作空间竞争与工作态 — `helios_v2.workspace`
-- 完成度：`baseline_real`（输入仍 shim）。
+- 完成度：`baseline_real`（语义记忆装配下竞争与注意力瓶颈已去 shim；首版权重/瓶颈常量、单一候选来源）。
 - 职责：候选集竞争与短时工作态保持；记忆衍生内容的晋升边界。不拥有意识承诺或检索。
 - 在循环中的作用：注意力瓶颈（FPN 式竞争），决定什么进入可报告意识。
-- 下一步（P3）：上游候选变真后做真实竞争打分（可学习/注意力式 scorer）；保持 owner 纯净同时增大下游影响。
+- 完成度细节：`46`（P3 中段去 shim,基于 R45 的真实 `priority_hint`）一次收口 `07` 的两处 shim。**竞争**：owner 自有的 `SalienceWeightedWorkspaceCompetitionPath` 把每个候选的竞争分算成真实有界函数 `score = clamp(0.6*priority_hint + 0.4*feeling_salience)`（feeling_salience 读真实 `05` 体感 arousal/tension/pain），取代常量 `0.95`;每条 replay 候选仍进 candidate set（保留 forced 标记与 feeling provenance,故 owner 既有不变量全部成立）。**注意力瓶颈**：owner 自有的 `BoundedAttentionRetentionPath` 只保留 top-K（首版 `max_retained=3`,挂 `working_state_update_policy`）进 working state,确定性 candidate-id tie-break,非空集永不产出空 working state,取代"保留全部"shim。**类脑语义（owner 确认）**："被巩固"（`06` 标 forced、长期持久化）与"此刻在注意焦点"（bounded working state）是两回事——一个 forced 候选可以在注意力竞争中落选、本 tick 不被 held,它仍在 candidate set（仍作为素材到 `08`）、仍被持久化,只是不在本 tick 焦点。权重/瓶颈是首版常量（挂学习参数类别,P5 可学）。opt-in 于与 R45 同一语义记忆开关（真实 `priority_hint` 只在 `06` 去 shim 后存在）;默认/非语义装配保持常量分 + 保留全部。无契约变更（`WorkspaceCandidateSet`/`WorkingStateSnapshot` 不变）;`07` 不 import 任何其他 owner;既有不变量仍 fail-fast。
+- 下一步（P3 / P5）：（1）✅ 真实竞争 + 注意力瓶颈——**R46 已交付**；（2）P5 学习竞争权重与瓶颈 K；（3）真实 `08` 承诺路径更锐利地消费 bounded working state（top-1 可报告内容,`07` 之后的下一刀）；（4）多来源竞争（`06` 之外的候选源变真后）。
 
 ### 2.8 `08` 可报告意识内容 — `helios_v2.consciousness`
 - 完成度：`baseline_real`（owner 语义相对完整,但上游 06/07 与承诺路径 `FirstVersionConsciousCommitmentPath` 仍是首版 shim,故与 03-07 同一口径,进度图标黄）。
@@ -209,7 +211,7 @@
 - 完成度：`infra_done`（opt-in）。
 - 职责：`PersistedExperienceRecord`/`PriorExistenceSnapshot` 契约、注入式后端协议（SQLite 文件 + 内存 double）、`ExperienceStore` facade（append / recent-N / count / snapshot / 相似度检索）、recency + 语义候选 provider。耐久追加 `15` 连续性流；确定性 recency 或余弦相似度再入 `10`。自身绝不 embed 文本；绝非权威 owner 间传输。
 - 作用：给系统跨重启存活的记忆（FG-5.1）；持久化经验重新进入思考窗口。
-- 下一步（P2）：`18`/`09`/`14` 的最新态检查点/恢复；把 `06` 记忆条目接入 store；之后做巩固/遗忘策略与 P5 学习的耐久底座。
+- 下一步（P2）：`18`/`09`/`14` 的最新态检查点/恢复（`09`/`18`/`04`/`05` 已落地，`14` 待其获得跨 tick 状态）；✅ 把 `06` 记忆条目接入 store——**R45 已交付**（affect-memory 经 `record_kind` 判别字段与 `15` 流共存于同一 store）；之后做巩固/遗忘策略与 P5 学习的耐久底座。
 
 ### 3.6 `34` embedding 推理网关 — `helios_v2.embedding`
 - 完成度：`infra_done`（opt-in）。

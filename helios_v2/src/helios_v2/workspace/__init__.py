@@ -24,12 +24,20 @@ from .contracts import (
     WorkspaceLearnedParameterCategory,
     validate_memory_replay_candidates,
 )
-from .engine import WorkingStateRetentionPath, WorkspaceCompetitionEngine, WorkspaceCompetitionPath
+from .engine import (
+    BoundedAttentionRetentionPath,
+    SalienceWeightedWorkspaceCompetitionPath,
+    WorkingStateRetentionPath,
+    WorkspaceCompetitionEngine,
+    WorkspaceCompetitionPath,
+)
 
 __all__ = [
+    "BoundedAttentionRetentionPath",
     "PublishWorkingStateOp",
     "PublishWorkspaceCandidateSetOp",
     "RunWorkspaceCompetitionOp",
+    "SalienceWeightedWorkspaceCompetitionPath",
     "WorkingStateRetentionPath",
     "WorkingStateSnapshot",
     "WorkspaceCandidate",

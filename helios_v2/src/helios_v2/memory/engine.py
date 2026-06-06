@@ -24,14 +24,22 @@ from .contracts import (
     MemoryAffectReplayConfig,
     MemoryAffectReplayError,
     MemoryBindingContext,
+    MemoryFamily,
     MemoryFormationState,
     MemoryReplayCandidate,
     PredictionMismatchEvidence,
     PublishMemoryFormationStateOp,
     PublishReplayCandidatesOp,
     RecordMemoryOp,
+    ReplayReason,
     validate_prediction_mismatch_evidence,
 )
+
+
+def _clamp_unit(value: float) -> float:
+    """Owner: memory affect and replay layer. Clamp a value into [0.0, 1.0], rounded for determinism."""
+
+    return round(min(1.0, max(0.0, value)), 4)
 
 
 def _validate_feeling_state(state: InteroceptiveFeelingState) -> None:
@@ -304,3 +312,143 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
             memory_count=len(state.memory_items),
             candidate_count=len(state.replay_candidates),
         )
+
+
+@dataclass
+class AffectGroundedMemoryFormationPath(MemoryFormationPath):
+    """Owner: memory affect and replay layer.
+
+    Purpose:
+        Form one affect-tagged memory item from the real `05` interoceptive feeling state and
+        the explicit binding context, replacing the constant first-version shim so the formed
+        memory's affect tag is the genuine felt body-state of the tick, not a fixed vector.
+
+    Failure semantics:
+        Returns no item when there is no binding context (a defined outcome, nothing to bind a
+        memory to). Otherwise the engine validates the produced item's provenance.
+
+    Notes:
+        Owned by `06`. It reads only the feeling state, binding context, and optional mismatch
+        evidence; it imports neither the persistence nor the embedding owner and performs no
+        durability. The episodic-vs-autobiographical family is an owner-owned first-version
+        mapping: a tick carrying explicit prediction-mismatch evidence (genuine surprise) forms
+        an autobiographical memory; every other tick forms an episodic memory. Richer
+        feeling-driven family/content shaping is deferred (a later slice), so this mapping is
+        deliberately minimal and not over-claimed.
+    """
+
+    def form_memory_items(
+        self,
+        feeling_state: InteroceptiveFeelingState,
+        binding_context: MemoryBindingContext | None,
+        mismatch_evidence: PredictionMismatchEvidence | None,
+        config: MemoryAffectReplayConfig,
+        tick_id: int | None,
+    ) -> tuple[AffectTaggedMemoryItem, ...]:
+        del config
+        if binding_context is None:
+            return ()
+        family: MemoryFamily = "autobiographical" if mismatch_evidence is not None else "episodic"
+        return (
+            AffectTaggedMemoryItem(
+                memory_id=f"memory:runtime:{tick_id}",
+                family=family,
+                source_feeling_state_id=feeling_state.state_id,
+                # The affect tag is the REAL 05 feeling vector for this tick, not a constant.
+                affect_tag=feeling_state.feeling,
+                content=binding_context.content,
+                binding_context_id=binding_context.context_id,
+                tick_id=tick_id,
+            ),
+        )
+
+
+@dataclass
+class SalienceGatedReplayCandidateSelector(ReplayCandidateSelector):
+    """Owner: memory affect and replay layer.
+
+    Purpose:
+        Decide which formed memory items are consolidation-worthy through an owner-owned
+        salience gate computed from the real feeling signal and optional prediction-mismatch
+        evidence, replacing the constant first-version selector that marked every item
+        forced-consolidation with a fixed priority. The gate sets each candidate's
+        `forced_consolidation` flag and bounded `priority_hint` from that real salience, so a
+        flat low-affect tick with no mismatch consolidates nothing and is not durably stored.
+
+    Failure semantics:
+        Pure deterministic function of its inputs. Output `priority_hint` is clamped to the
+        `MemoryReplayCandidate` `[0, 1]` contract and `replay_reasons` stays within the fixed
+        `ReplayReason` taxonomy.
+
+    Notes:
+        Owned by `06`. The salience is `max(affect_intensity, mismatch_weight * mismatch_score)`
+        where `affect_intensity` is a bounded weighted sum of the felt arousal/tension/pain. The
+        threshold and weights are explicit bounded first-version constants organized under the
+        owner config's declared learned-parameter categories (`consolidation_policy` for the
+        threshold, `replay_priority_policy` for the weights); a later `P5` slice learns them
+        without changing the gate shape. Deterministic, bounded, stateless.
+    """
+
+    consolidation_threshold: float = 0.5
+    arousal_weight: float = 0.5
+    tension_weight: float = 0.3
+    pain_weight: float = 0.2
+    mismatch_weight: float = 0.6
+
+    def select_candidates(
+        self,
+        memory_items: tuple[AffectTaggedMemoryItem, ...],
+        feeling_state: InteroceptiveFeelingState,
+        mismatch_evidence: PredictionMismatchEvidence | None,
+        config: MemoryAffectReplayConfig,
+    ) -> tuple[MemoryReplayCandidate, ...]:
+        del config
+        feeling = feeling_state.feeling
+        affect_intensity = _clamp_unit(
+            self.arousal_weight * feeling.arousal
+            + self.tension_weight * feeling.tension
+            + self.pain_weight * feeling.pain_like
+        )
+        mismatch_score = mismatch_evidence.mismatch_score if mismatch_evidence is not None else 0.0
+        mismatch_term = _clamp_unit(self.mismatch_weight * mismatch_score)
+        salience = max(affect_intensity, mismatch_term)
+        forced = salience >= self.consolidation_threshold
+        reasons = self._derive_reasons(affect_intensity, mismatch_term, feeling)
+        candidates: list[MemoryReplayCandidate] = []
+        for index, item in enumerate(memory_items):
+            candidates.append(
+                MemoryReplayCandidate(
+                    candidate_id=f"candidate:runtime:{feeling_state.tick_id}:{index}",
+                    memory_id=item.memory_id,
+                    family=item.family,
+                    source_feeling_state_id=feeling_state.state_id,
+                    replay_reasons=reasons,
+                    forced_consolidation=forced,
+                    priority_hint=salience,
+                )
+            )
+        return tuple(candidates)
+
+    def _derive_reasons(
+        self,
+        affect_intensity: float,
+        mismatch_term: float,
+        feeling,
+    ) -> tuple[ReplayReason, ...]:
+        """Owner: memory affect and replay layer. Derive replay reasons from the gate signal.
+
+        Always reports at least one reason (the `MemoryReplayCandidate` contract requires it):
+        the dominant salience contributor. Tension/discomfort is reported in addition when the
+        felt tension or pain is the affect driver, and mismatch is reported when surprise drove
+        the gate. Reasons stay within the fixed `ReplayReason` taxonomy.
+        """
+
+        reasons: list[ReplayReason] = []
+        if mismatch_term >= affect_intensity and mismatch_term > 0.0:
+            reasons.append("prediction_mismatch_or_surprise")
+        if feeling.tension >= feeling.arousal or feeling.pain_like > 0.0:
+            reasons.append("unresolved_tension_or_discomfort")
+        if not reasons or affect_intensity >= mismatch_term:
+            if "high_affect_intensity" not in reasons:
+                reasons.insert(0, "high_affect_intensity")
+        return tuple(reasons)

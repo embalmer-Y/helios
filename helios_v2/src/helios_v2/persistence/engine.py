@@ -41,6 +41,8 @@ _AUTOBIOGRAPHICAL_CONTINUITY_KINDS = frozenset(
         "identity_change",
         "blocked_identity_change",
         "internal_thought_cycle",
+        # Requirement `45`: affect-memory records store the `06` family as the continuity kind.
+        "autobiographical",
     }
 )
 
@@ -224,7 +226,13 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             ) from error
 
     def initialize(self) -> None:
-        """Owner: durable experience store. Create the records table if absent (idempotent)."""
+        """Owner: durable experience store. Create the records table if absent (idempotent).
+
+        Additive columns (`record_kind`, `metadata`) introduced by requirement `45` are added
+        to a pre-existing table through a guarded `ALTER TABLE`, so an older R33/R34 file
+        upgrades in place without data loss. A NULL `record_kind` on a legacy row reads back as
+        the default `experience_writeback`, preserving prior records byte-for-byte.
+        """
 
         try:
             with self._connect() as connection:
@@ -244,16 +252,32 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                         applied_effect_summary TEXT NOT NULL,
                         reason_trace TEXT NOT NULL,
                         linkage TEXT NOT NULL,
-                        embedding TEXT
+                        embedding TEXT,
+                        record_kind TEXT,
+                        metadata TEXT
                     )
                     """
                 )
+                self._ensure_column(connection, "record_kind", "TEXT")
+                self._ensure_column(connection, "metadata", "TEXT")
                 connection.commit()
             self._initialized = True
         except sqlite3.Error as error:
             raise PersistenceError(
                 f"SqliteExperienceStoreBackend could not initialize '{self.db_path}': {error}"
             ) from error
+
+    def _ensure_column(self, connection: sqlite3.Connection, column: str, column_type: str) -> None:
+        """Owner: durable experience store. Add a column to an existing table if it is absent.
+
+        Guarded by `PRAGMA table_info` so an older file gains the additive column once, and a
+        current file is left unchanged. New columns are nullable, so existing rows keep their
+        values and read back through the contract defaults.
+        """
+
+        existing = {row[1] for row in connection.execute(f"PRAGMA table_info({self._TABLE})")}
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {self._TABLE} ADD COLUMN {column} {column_type}")
 
     def append(
         self,
@@ -275,8 +299,8 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             record_id, tick_id, continuity_kind, outcome_class,
                             source_outcome_kind, source_outcome_id, writeback_status,
                             summary, requested_effect_summary, applied_effect_summary,
-                            reason_trace, linkage, embedding
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            reason_trace, linkage, embedding, record_kind, metadata
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             record.record_id,
@@ -292,6 +316,8 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             json.dumps(list(record.reason_trace)),
                             json.dumps(dict(record.linkage)),
                             json.dumps(list(record.embedding)) if record.embedding is not None else None,
+                            record.record_kind,
+                            json.dumps(dict(record.metadata)) if record.metadata else None,
                         ),
                     )
                     assigned = cursor.lastrowid
@@ -321,7 +347,7 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                     SELECT sequence, record_id, tick_id, continuity_kind, outcome_class,
                            source_outcome_kind, source_outcome_id, writeback_status, summary,
                            requested_effect_summary, applied_effect_summary, reason_trace, linkage,
-                           embedding
+                           embedding, record_kind, metadata
                     FROM {self._TABLE}
                     ORDER BY sequence DESC
                     LIMIT ?
@@ -368,10 +394,14 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             reason_trace = tuple(json.loads(row[11]))
             linkage = dict(json.loads(row[12]))
             embedding = tuple(json.loads(row[13])) if row[13] is not None else None
+            metadata = dict(json.loads(row[15])) if len(row) > 15 and row[15] is not None else {}
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise PersistenceError(
                 f"SqliteExperienceStoreBackend found a corrupt row in '{self.db_path}': {error}"
             ) from error
+        # A legacy row predating requirement `45` has a NULL/absent record_kind; it reads back
+        # as the default experience-writeback kind, preserving prior records byte-for-byte.
+        record_kind = str(row[14]) if len(row) > 14 and row[14] is not None else "experience_writeback"
         return PersistedExperienceRecord(
             record_id=str(row[1]),
             tick_id=row[2] if row[2] is None else int(row[2]),
@@ -387,6 +417,8 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             linkage=linkage,
             sequence=int(row[0]),
             embedding=embedding,
+            record_kind=record_kind,
+            metadata=metadata,
         )
 
 
@@ -630,6 +662,11 @@ def _record_tier(record: PersistedExperienceRecord) -> tuple[ThoughtWindowTier, 
 
     This is a transport mapping by stored kind, not a semantic judgment; content is never
     read for meaning. Returns the thought-window tier and the candidate memory_type.
+
+    Affect-memory records (requirement `45`) store the `06` memory family directly as the
+    continuity kind: an `autobiographical` family maps to the autobiographical tier and an
+    `episodic` family to the mid-term tier, alongside the existing `15` continuity-kind
+    mapping. The mapping stays a by-kind transport decision.
     """
 
     if record.continuity_kind in _AUTOBIOGRAPHICAL_CONTINUITY_KINDS:

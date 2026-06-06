@@ -451,3 +451,163 @@ def test_engine_rejects_non_contract_prediction_mismatch_evidence() -> None:
             _build_binding_context(),
             ForeignEvidence(),  # type: ignore[arg-type]
         )
+
+
+# --- R45: affect-grounded formation + salience-gated consolidation (owner-owned) ---
+
+from helios_v2.memory import (  # noqa: E402
+    AffectGroundedMemoryFormationPath,
+    SalienceGatedReplayCandidateSelector,
+)
+
+
+def _feeling_state_with(feeling: InteroceptiveFeelingVector, tick_id: int = 9) -> InteroceptiveFeelingState:
+    return InteroceptiveFeelingState(
+        state_id=f"interoceptive-feeling-state:nm:{tick_id}",
+        source_neuromodulator_state_id="neuromodulator-state:nm",
+        feeling=feeling,
+        tick_id=tick_id,
+    )
+
+
+def _vector(
+    *,
+    arousal: float = 0.3,
+    tension: float = 0.3,
+    pain_like: float = 0.0,
+    valence: float = 0.5,
+    comfort: float = 0.5,
+    fatigue: float = 0.3,
+    social_safety: float = 0.5,
+) -> InteroceptiveFeelingVector:
+    return InteroceptiveFeelingVector(
+        valence=valence,
+        arousal=arousal,
+        tension=tension,
+        comfort=comfort,
+        fatigue=fatigue,
+        pain_like=pain_like,
+        social_safety=social_safety,
+    )
+
+
+def test_affect_grounded_formation_tags_item_with_real_feeling() -> None:
+    path = AffectGroundedMemoryFormationPath()
+    feeling = _vector(arousal=0.81, tension=0.42)
+    state = _feeling_state_with(feeling, tick_id=7)
+
+    items = path.form_memory_items(state, _build_binding_context(), None, _build_config(), 7)
+
+    assert len(items) == 1
+    item = items[0]
+    # The affect tag is the REAL 05 feeling vector, not a constant.
+    assert item.affect_tag == feeling
+    assert item.source_feeling_state_id == state.state_id
+    assert item.family == "episodic"  # no mismatch -> episodic
+    assert item.binding_context_id == "binding:001"
+
+
+def test_affect_grounded_formation_promotes_autobiographical_on_mismatch() -> None:
+    path = AffectGroundedMemoryFormationPath()
+    items = path.form_memory_items(
+        _feeling_state_with(_vector()),
+        _build_binding_context(),
+        _build_mismatch_evidence(),
+        _build_config(),
+        7,
+    )
+
+    assert items[0].family == "autobiographical"
+
+
+def test_affect_grounded_formation_returns_nothing_without_binding_context() -> None:
+    path = AffectGroundedMemoryFormationPath()
+    assert path.form_memory_items(_feeling_state_with(_vector()), None, None, _build_config(), 7) == ()
+
+
+def test_affect_grounded_formation_is_deterministic() -> None:
+    path = AffectGroundedMemoryFormationPath()
+    feeling = _vector(arousal=0.6, tension=0.5)
+    args = (_feeling_state_with(feeling), _build_binding_context(), None, _build_config(), 7)
+    first = path.form_memory_items(*args)
+    second = path.form_memory_items(*args)
+    assert first[0].affect_tag == second[0].affect_tag
+    assert first[0].memory_id == second[0].memory_id
+    assert first[0].family == second[0].family
+
+
+def _formed_item(family: str = "episodic") -> AffectTaggedMemoryItem:
+    return AffectTaggedMemoryItem(
+        memory_id="memory:001",
+        family=family,  # type: ignore[arg-type]
+        source_feeling_state_id="interoceptive-feeling-state:nm:9",
+        affect_tag=_vector(),
+        content=_build_content(),
+        binding_context_id="binding:001",
+        tick_id=9,
+    )
+
+
+def test_salience_gate_consolidates_high_affect_tick() -> None:
+    selector = SalienceGatedReplayCandidateSelector()
+    feeling = _vector(arousal=0.9, tension=0.8, pain_like=0.3)
+    state = _feeling_state_with(feeling)
+
+    candidates = selector.select_candidates((_formed_item(),), state, None, _build_config())
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.forced_consolidation is True
+    assert candidate.priority_hint is not None and candidate.priority_hint >= 0.5
+    assert 0.0 <= candidate.priority_hint <= 1.0
+
+
+def test_salience_gate_does_not_consolidate_flat_low_affect_tick() -> None:
+    selector = SalienceGatedReplayCandidateSelector()
+    feeling = _vector(arousal=0.1, tension=0.1, pain_like=0.0)
+    state = _feeling_state_with(feeling)
+
+    candidates = selector.select_candidates((_formed_item(),), state, None, _build_config())
+
+    assert candidates[0].forced_consolidation is False
+
+
+def test_salience_gate_consolidates_on_high_mismatch_even_with_flat_feeling() -> None:
+    selector = SalienceGatedReplayCandidateSelector()
+    feeling = _vector(arousal=0.1, tension=0.1, pain_like=0.0)
+    state = _feeling_state_with(feeling)
+
+    candidates = selector.select_candidates(
+        (_formed_item(),), state, _build_mismatch_evidence(), _build_config()
+    )
+
+    assert candidates[0].forced_consolidation is True
+    assert "prediction_mismatch_or_surprise" in candidates[0].replay_reasons
+
+
+def test_salience_gate_is_deterministic() -> None:
+    selector = SalienceGatedReplayCandidateSelector()
+    feeling = _vector(arousal=0.7, tension=0.6)
+    state = _feeling_state_with(feeling)
+    first = selector.select_candidates((_formed_item(),), state, None, _build_config())
+    second = selector.select_candidates((_formed_item(),), state, None, _build_config())
+    assert first[0].priority_hint == second[0].priority_hint
+    assert first[0].forced_consolidation == second[0].forced_consolidation
+    assert first[0].replay_reasons == second[0].replay_reasons
+
+
+def test_salience_gated_selector_integrates_with_engine() -> None:
+    engine = MemoryAffectReplayEngine(
+        config=_build_config(),
+        formation_path=AffectGroundedMemoryFormationPath(),
+        replay_selector=SalienceGatedReplayCandidateSelector(),
+    )
+    feeling = _vector(arousal=0.9, tension=0.8)
+    state = engine.record_state(
+        _feeling_state_with(feeling, tick_id=9),
+        _build_binding_context(),
+        None,
+        tick_id=9,
+    )
+    assert state.memory_items[0].affect_tag == feeling
+    assert state.replay_candidates[0].forced_consolidation is True

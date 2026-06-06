@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R44 (`05` interoceptive feeling dual-timescale persistence + checkpoint; `05` evolves cross-tick and resumes across restart, completing the affect pair). Test baseline: 584 passed. HEAD-era: R44. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R46 (`07` workspace competition de-shim: real salience-weighted scoring + a bounded attention bottleneck; consolidated ≠ held in attention). Test baseline: 618 passed. HEAD-era: R46. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -53,8 +53,8 @@ flowchart TD
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
     S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
-    S06[06 Memory Affect and Replay - baseline/shim in]:::base
-    S07[07 Workspace Competition - baseline/shim in]:::base
+    S06[06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall (semantic)]:::base
+    S07[07 Workspace Competition - real competition + bounded attention bottleneck (semantic)]:::base
     S08["08 Reportable Conscious Content - owner semantics rel. complete, but upstream/commitment path still first-version shim"]:::base
     S09["09 Thought Gating - NE arousal coupled (semantic)/other inputs shim"]:::base
     S10[10 Directed Retrieval - baseline/shim in]:::base
@@ -98,6 +98,7 @@ flowchart TD
     TH24 --> S18
     COMP -. assembles all 19 stages .-> K01
     S15 -. durable append (opt-in persistence) .-> PER
+    S06 -. affect-memory persist (opt-in semantic, salience-gated) .-> PER
     PER -. recency or semantic re-entry across restart (opt-in) .-> S10
     EMB -. embed-at-write + embed-at-query (opt-in semantic) .-> PER
     S09 -. continuation pressure (save after tick) .-> CKPT
@@ -285,6 +286,40 @@ flowchart TD
   Also removed a pre-existing dead duplicate `NeuromodulatorDerivedFeelingConstructionPath`. Deferred:
   real interoceptive-signal integration, P5 coefficient learning, feeding the evolving `05` feeling
   into `06`/behavior (FG-2).
+- P2 closeout / P3 mid-chain (R45): the `06` memory owner closes both its shims at once. Formation
+  de-shim: an owner-owned `AffectGroundedMemoryFormationPath` replaces the constant shim under the
+  semantic assembly, forming affect-tagged memory from the real `05` feeling state (the item's
+  `affect_tag` is the genuine felt body-state, not a constant; owner-owned episodic/autobiographical
+  family mapping, mismatch → autobiographical). Salience gate: an owner-owned
+  `SalienceGatedReplayCandidateSelector` computes a bounded affect-intensity from the real feeling
+  (arousal/tension/pain) + mismatch and sets each candidate's `forced_consolidation` + `priority_hint`
+  from it (threshold/weights under `consolidation_policy`/`replay_priority_policy`, P5-learnable), so a
+  flat low-affect tick consolidates nothing and a high-affect or high-mismatch tick consolidates.
+  Durability: `PersistedExperienceRecord` gains an additive `record_kind` (default
+  `experience_writeback`, so the 15 stream is byte-for-byte unchanged) + an opaque `metadata`; the
+  SQLite backend upgrades an old file in place via a PRAGMA-guarded `ALTER TABLE`; an owner-neutral
+  `MemoryRecordBridge` + `RuntimeHandle._persist_memory` carry persists exactly the
+  `forced_consolidation` items as `record_kind="affect_memory"`, embedded at write, co-residing with
+  the 15 stream. Recall: reuses the 34 semantic recall surface, so affect-memory is recallable through
+  10 and resumes across restart; `_record_tier` maps by family. `06` imports neither persistence nor
+  embedding; the carry seam re-derives no decision. Opt-in on the existing semantic-memory switch;
+  default/recency assemblies keep the constant `06` shim. A request without store+embedding is a
+  CompositionError; an embedding/store failure is a hard stop; no dedup/merge this slice. 607 tests
+  green and network-free. Deferred: dedup/merge, deeper feeling-driven formation, real 06→07 candidates.
+- P3 mid-chain (R46): the `07` workspace owner is de-shimmed into a real attention bottleneck.
+  Competition: an owner-owned `SalienceWeightedWorkspaceCompetitionPath` scores each candidate as a
+  bounded function of the real `06` `priority_hint` + the real `05` feeling salience
+  (`clamp(0.6*priority + 0.4*feeling_salience)`), replacing the constant 0.95; every replay candidate
+  stays in the candidate set (forced flag + provenance preserved, owner invariants hold). Bottleneck:
+  an owner-owned `BoundedAttentionRetentionPath` retains only the top-K (`max_retained=3`, under
+  `working_state_update_policy`) into the working state with a deterministic tie-break and a never-empty
+  guarantee, replacing retain-everything. Brain-aligned semantic (owner-confirmed): "consolidated" (a
+  `06`-forced candidate, persisted long-term) ≠ "held in attention" (the bounded working state) — a
+  forced candidate may lose the competition and not be held this tick, while remaining in the candidate
+  set (still reaching `08`) and still persisted. Opt-in on the same semantic-memory switch as R45;
+  default/non-semantic assemblies keep the constant-score / retain-everything shim. No contract change;
+  `07` imports no other owner. 618 tests green and network-free. Deferred: P5 weight/K learning, a
+  sharper `08` commitment, multi-source competition.
 - Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
   signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
   produces them today — the sensory sources emit only text, so `internal_signals` is always empty

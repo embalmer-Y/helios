@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R44（`05` 体感双时间尺度持久化 + 纳入检查点；`05` 跨 tick 演化并跨重启续存,完成情感对子）。测试基线：584 passed。版本：R44。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R46（`07` 工作空间竞争去 shim：真实竞争打分 + 有界注意力瓶颈;consolidated≠held in attention）。测试基线：618 passed。版本：R46。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -45,8 +45,8 @@ flowchart TD
     S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
     S04["04 神经调质系统 - appraisal推导+双时间尺度(语义)/跨tick演化"]:::base
     S05["05 内感受体感层 - 神经调质推导+双时间尺度(语义)/跨tick演化"]:::base
-    S06[06 记忆情感与重放 - 基线/输入仍shim]:::base
-    S07[07 工作空间竞争 - 基线/输入仍shim]:::base
+    S06[06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回(语义装配)]:::base
+    S07[07 工作空间竞争 - 真实竞争+有界注意力瓶颈(语义装配)]:::base
     S08["08 可报告意识内容 - owner语义相对完整,但上游/承诺路径仍首版shim"]:::base
     S09["09 思考门控与延续压力 - NE arousal已耦合(语义)/其余输入仍shim"]:::base
     S10[10 定向检索 - 基线/输入仍shim]:::base
@@ -90,6 +90,7 @@ flowchart TD
     TH24 --> S18
     COMP -. 装配全部19阶段 .-> K01
     S15 -. 持久化追加(opt-in持久化) .-> PER
+    S06 -. 情感记忆持久化(opt-in语义,显著性门控) .-> PER
     PER -. recency 或 语义 重启再入(opt-in) .-> S10
     EMB -. 写时embed + 查询时embed(opt-in语义) .-> PER
     S09 -. 延续压力(tick后保存) .-> CKPT
@@ -211,6 +212,26 @@ flowchart TD
   feeling。快照升 version 3 加 `feeling` 字段,`05` 跨重启续存;版本不符（v1/v2）或 feeling 损坏在 load 时 fail-fast。
   默认/recency/离线保持无状态常量 `05`。同时清除了一处既有的死重复 `NeuromodulatorDerivedFeelingConstructionPath` 定义。
   延后:真实内感受信号整合、P5 系数学习、把演化的 `05` feeling 喂给 06/行为（FG-2）。
+- P2 收尾 / P3 中段（R45）：`06` 记忆 owner 一次收口两处 shim。形成去 shim：owner 自有的
+  `AffectGroundedMemoryFormationPath` 在语义装配下取代常量 shim,从真实 `05` 体感状态形成 affect-tagged 记忆
+  （item 的 `affect_tag` 是真实当下体感,非常量;owner 持有 episodic/autobiographical 家族映射,mismatch→autobiographical）。
+  显著性门控：owner 自有的 `SalienceGatedReplayCandidateSelector` 从真实体感（arousal/tension/pain）+ mismatch 算有界
+  affect-intensity,据此设每条 candidate 的 `forced_consolidation` + `priority_hint`（阈值/系数挂 `consolidation_policy`/
+  `replay_priority_policy`,P5 可学）,故平淡低情感 tick 不巩固、高情感或高 mismatch tick 才巩固。耐久：`PersistedExperienceRecord`
+  加 additive `record_kind`（默认 `experience_writeback`,15 流字节级不变）+ 不透明 `metadata`,SQLite 经 PRAGMA 守卫的
+  `ALTER TABLE` 就地升级旧文件;owner-neutral 的 `MemoryRecordBridge` + `RuntimeHandle._persist_memory` carry 把恰好被标记
+  `forced_consolidation` 的 item 以 `record_kind="affect_memory"` 写时 embed 持久化,与 15 流共存。召回：复用 34 语义召回面,
+  affect-memory 经 10 可召回且跨重启续存;`_record_tier` 按家族映射。`06` 既不 import persistence 也不 import embedding;
+  carry seam 不重算决策。opt-in 于既有语义记忆开关;默认/recency 装配保持常量 `06` shim。无 store+embedding 请求是
+  CompositionError;embedding/store 失败 hard stop;本刀不做去重/合并。607 测试全绿、离线。延后:去重/合并、更深的体感驱动形成、06→07 真实候选。
+- P3 中段（R46）：`07` 工作空间去 shim,成为真正的注意力瓶颈。竞争：owner 自有的 `SalienceWeightedWorkspaceCompetitionPath`
+  把每个候选竞争分算成真实有界函数 `clamp(0.6*priority_hint + 0.4*feeling_salience)`（读真实 `06` priority + 真实 `05`
+  体感 arousal/tension/pain）,取代常量 0.95;每条候选仍进 candidate set（保留 forced 标记与 provenance,owner 不变量全成立）。
+  瓶颈：owner 自有的 `BoundedAttentionRetentionPath` 只保留 top-K（首版 max_retained=3,挂 `working_state_update_policy`）进
+  working state,确定性 tie-break,非空集永不空,取代"保留全部"。类脑语义（已与 owner 确认）："被巩固"（forced,长期持久化）≠
+  "此刻在注意焦点"（bounded working state）：forced 候选可在注意竞争中落选、本 tick 不被 held,但仍在 candidate set（仍到 `08`）、
+  仍被持久化。opt-in 于与 R45 同一开关;默认/非语义装配保持常量分 + 保留全部。无契约变更;`07` 不 import 其他 owner。618 测试全绿、离线。
+  延后:P5 学权重/K、更锐利的 `08` 承诺、多来源竞争。
 - 内感受来源留白（BODY 节点,红）：`05` 已建成可消费真实身体/内感受信号（feeling 阶段从 `02` 批次按 body/interoceptive
   modality 筛选）,但当前没有任何东西生产它们——sensory 源只产生 text,故 `internal_signals` 恒为空,体感仅由 `04`
   神经调质状态推导。BODY 节点是只有接口、无 owner 生产者的占位。真实生产者属后续 owner：模拟身体状态模型,或把
