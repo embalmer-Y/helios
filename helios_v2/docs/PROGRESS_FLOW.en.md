@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R48 (`09` gate `global_activation_level` grounded in the real `07` workspace activation; the gate now consumes two real signals: arousal + activation). Test baseline: 631 passed. HEAD-era: R48. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R49 (`10` directed-retrieval recall-intent sourced from the real prior-tick `11` handoff; memory-guided-maintenance loop closed). Test baseline: 635 passed. HEAD-era: R49. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -57,7 +57,7 @@ flowchart TD
     S07[07 Workspace Competition - real competition + bounded attention bottleneck (semantic)]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); upstream 06/07 de-shimmed"]:::base
     S09["09 Thought Gating - NE arousal + workspace activation coupled (semantic)/other inputs shim"]:::base
-    S10[10 Directed Retrieval - baseline/shim in]:::base
+    S10[10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
     S16E["16 Outward Externalization Draft - non-authoritative premotor-prep draft (planner 13 + channel 30 hold execution)"]:::base
@@ -352,6 +352,18 @@ flowchart TD
   constants (no real producer running before `09` yet — `drive_urgency_signal` is owned by `18`,
   which runs after `09`; the rest need unowned compute/clock/DMN producers). 631 tests green and
   network-free.
+- P3 mid-chain (R49): the `10` directed-retrieval request's `recall_intent`/`selected_memory_refs`
+  are de-shimmed (the query-planning path itself was already real; only its inputs were shim). The
+  constant `recall_intent="remember runtime chain context"` and fabricated refs are replaced, under
+  the semantic assembly, by the prior tick's `11` `MemoryHandoffDirective` (when `11` saved one for
+  the next tick), so a line of thought the system chose to continue steers what memory it retrieves
+  next tick (memory-guided maintenance, `ARCHITECTURE_PHILOSOPHY` §5.3). The carry mirrors the
+  R32/R42 pattern: an owner-neutral `PriorThoughtRecallHolder`, a post-tick
+  `_carry_recall_directive` capture, and a `ThoughtDirectedRetrievalRequestBridge`. With no saved
+  handoff (first tick / non-fired / `11` did not continue) the request falls back to the real `09`
+  `compact_stimuli` with no recall intent (a defined behavior, always valid). Owner-neutral:
+  composition transports the `11`-owned directive verbatim; `10`/`11` are unchanged. Opt-in on the
+  same switch; default/non-semantic keep the constant. 635 tests green and network-free.
 - Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
   signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
   produces them today — the sensory sources emit only text, so `internal_signals` is always empty

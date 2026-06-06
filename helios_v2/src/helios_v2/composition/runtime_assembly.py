@@ -187,6 +187,8 @@ from .bridges import (
     FirstVersionThoughtGateSignalBridge,
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
+    PriorThoughtRecallHolder,
+    ThoughtDirectedRetrievalRequestBridge,
     EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
     MemoryGroundedRetrievalAmbiguitySource,
@@ -569,6 +571,7 @@ class RuntimeHandle:
     experience_store: ExperienceStore | None = None
     experience_record_bridge: ExperienceRecordBridge | None = None
     memory_record_bridge: "MemoryRecordBridge | None" = None
+    prior_thought_recall_holder: "PriorThoughtRecallHolder | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
     continuity_checkpoint_bridge: "ContinuityCheckpointBridge | None" = None
@@ -631,6 +634,7 @@ class RuntimeHandle:
         result = self.kernel.tick()
         self._carry_timeline(result.tick_id)
         self._carry_consequence_claim(result)
+        self._carry_recall_directive(result)
         self._persist_experience(result)
         self._persist_memory(result)
         self._checkpoint_continuity(result)
@@ -671,6 +675,31 @@ class RuntimeHandle:
         self.timeline_holder.prior_consequence_claim = (
             dict(claim) if isinstance(claim, Mapping) else None
         )
+
+    def _carry_recall_directive(self, result: RuntimeTickResult) -> None:
+        """Capture the just-completed tick's `11` recall directive for the next tick's `10` request.
+
+        This is owner-neutral carry (R49): it reads the `11` internal-thought stage result's
+        `memory_handoff` and, when the thought owner saved it for the next tick, stores its
+        `recall_intent` and `selected_memory_refs` in the holder so the next tick's directed
+        retrieval is memory-guided by the thought the system chose to continue. When the gate did
+        not fire (no `11` result), or `11` saved no directive, the holder is cleared so the next
+        tick falls back to the real `09` `compact_stimuli`. It transports `11`-owned values
+        verbatim and computes no retrieval policy. A no-op when the recall carry is disabled.
+        """
+
+        if self.prior_thought_recall_holder is None:
+            return
+        stage_result = result.stage_results.get("internal_thought_loop_owner")
+        cycle_result = getattr(stage_result, "result", None)
+        handoff = getattr(cycle_result, "memory_handoff", None)
+        if handoff is not None and handoff.saved_for_next_tick:
+            self.prior_thought_recall_holder.set_directive(
+                handoff.recall_intent,
+                handoff.selected_memory_refs,
+            )
+        else:
+            self.prior_thought_recall_holder.clear()
 
     def _persist_experience(self, result: RuntimeTickResult) -> None:
         """Durably append the just-completed tick's `15` continuity records when enabled.
@@ -1158,6 +1187,14 @@ def assemble_runtime(
     timeline_sink = _find_in_memory_sink(recorder)
     timeline_holder = TimelineViewHolder(instrumented=timeline_sink is not None)
 
+    # Owner-neutral carry for the prior-tick `11` recall directive (R49). Under the
+    # semantic-memory assembly the handle captures the `11` `memory_handoff` after each tick and
+    # the directed-retrieval request bridge reads it next tick, so the thought owner's saved
+    # recall intent steers the next tick's `10` retrieval. Default-off: no holder otherwise.
+    prior_thought_recall_holder = (
+        PriorThoughtRecallHolder() if semantic_memory_enabled else None
+    )
+
     kernel = RuntimeKernel(
         dependency_specs=resolved_specs,
         dependency_provider=resolved_provider,
@@ -1185,7 +1222,11 @@ def assemble_runtime(
         ),
         DirectedRetrievalRuntimeStage(
             directed_retrieval_layer=directed_retrieval,
-            request_provider=FirstVersionDirectedRetrievalRequestBridge(),
+            request_provider=(
+                ThoughtDirectedRetrievalRequestBridge(holder=prior_thought_recall_holder)
+                if prior_thought_recall_holder is not None
+                else FirstVersionDirectedRetrievalRequestBridge()
+            ),
         ),
         EmbodiedPromptRuntimeStage(
             prompt_layer=embodied_prompt,
@@ -1305,6 +1346,7 @@ def assemble_runtime(
         memory_record_bridge=(
             MemoryRecordBridge() if semantic_memory_enabled else None
         ),
+        prior_thought_recall_holder=prior_thought_recall_holder,
         embed_record=_embed_text if embedding_gateway is not None else None,
         continuity_checkpoint=continuity_checkpoint,
         continuity_checkpoint_bridge=continuity_checkpoint_bridge,

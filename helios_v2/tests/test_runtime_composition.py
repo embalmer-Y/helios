@@ -2003,3 +2003,125 @@ def test_workspace_activation_helper_behavior() -> None:
     assert _workspace_activation(_result((), cands)) == 0.0
     # Only the retained subset counts (c is not retained).
     assert _workspace_activation(_result(("a", "c"), cands)) == pytest.approx(0.5)
+
+
+# --- Requirement 49: thought-directed retrieval recall intent ---
+
+
+@dataclass
+class ContinuingThoughtProvider:
+    """Provider double whose envelope always requests continuation, so 11 saves a handoff."""
+
+    def complete(self, profile, request, api_key) -> ProviderCompletion:
+        import json
+
+        envelope = {
+            "thought": "keep thinking about the current line",
+            "sufficiency": 0.2,
+            "wants_to_continue": True,
+            "continue_reason": "need more context",
+            "proposed_action": {"intends_action": False, "summary": ""},
+            "self_revision": {"intends_revision": False, "summary": ""},
+        }
+        return ProviderCompletion(output_text=json.dumps(envelope), finish_reason="stop")
+
+
+def _continuing_gateway() -> LlmGateway:
+    resolved = default_composition_config()
+    return LlmGateway(
+        provider=ContinuingThoughtProvider(),
+        registry=LlmProfileRegistry(profiles=resolved.llm.profiles),
+        env={"OPENAI_API_KEY": "sk-test"},
+    )
+
+
+def _directed_retrieval(result):
+    return result.stage_results["directed_retrieval_into_thought_window"]
+
+
+def test_semantic_assembly_first_tick_falls_back_to_stimuli() -> None:
+    # The first tick has no prior 11 handoff, so the 10 request is driven by the real 09
+    # compact_stimuli with no recall intent (the defined absence fallback).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+        gateway=_continuing_gateway(),
+    )
+    handle.startup()
+    dr = _directed_retrieval(handle.tick())
+    assert dr.request.recall_intent is None
+    assert dr.request.selected_memory_refs == ()
+    assert dr.plan.query_source == "compact_stimuli"
+    # Not the constant shim string.
+    assert "remember runtime chain context" not in dr.plan.query_text
+
+
+def test_semantic_assembly_carries_prior_thought_recall_intent() -> None:
+    # After a tick where 11 continued and saved a handoff, the next tick's 10 request carries the
+    # real 11 recall intent (not the constant string).
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+        gateway=_continuing_gateway(),
+    )
+    handle.startup()
+    first = handle.tick()
+    # The first tick's 11 saved a handoff with this recall intent.
+    first_handoff = first.stage_results["internal_thought_loop_owner"].result.memory_handoff
+    assert first_handoff is not None and first_handoff.saved_for_next_tick
+
+    second = handle.tick()
+    dr = _directed_retrieval(second)
+    assert dr.request.recall_intent == first_handoff.recall_intent
+    assert dr.request.recall_intent != "remember runtime chain context"
+    assert dr.request.selected_memory_refs == first_handoff.selected_memory_refs
+    # The recall intent leads the query text and the source reflects it.
+    assert dr.request.recall_intent in dr.plan.query_text
+    assert dr.plan.query_source in {"recall_intent", "mixed"}
+
+
+def test_default_assembly_keeps_constant_recall_intent() -> None:
+    # Without the semantic opt-in, the 10 request keeps the constant recall intent and the
+    # fabricated memory ref (the first-version bridge).
+    handle = _assemble()
+    handle.startup()
+    dr = _directed_retrieval(handle.tick())
+    assert dr.request.recall_intent == "remember runtime chain context"
+    assert dr.request.selected_memory_refs == ("memory:runtime:1",)
+
+
+def test_thought_directed_request_bridge_uses_holder_and_falls_back() -> None:
+    from types import SimpleNamespace
+
+    from helios_v2.composition.bridges import (
+        PriorThoughtRecallHolder,
+        ThoughtDirectedRetrievalRequestBridge,
+    )
+    from helios_v2.thought_gating import ContinuationPressureState, SelectedStimulusSummary
+
+    stimulus = SelectedStimulusSummary(
+        stimulus_id="s1", source_kind="external_text", source_channel_id="cli", stimulus_intensity=0.9
+    )
+    # The bridge reads only .result.result_id, .continuation_state.active, .result.selected_stimuli.
+    gating_stage_result = SimpleNamespace(
+        result=SimpleNamespace(result_id="gate:1", selected_stimuli=(stimulus,)),
+        continuation_state=ContinuationPressureState.inactive(),
+    )
+    frame = SimpleNamespace(tick_id=5)
+
+    # Holder carries a directive → the request uses it.
+    holder = PriorThoughtRecallHolder(recall_intent="recall the prior thread", selected_memory_refs=("m:1",))
+    bridge = ThoughtDirectedRetrievalRequestBridge(holder=holder)
+    request = bridge.build_request(frame, gating_stage_result)
+    assert request.recall_intent == "recall the prior thread"
+    assert request.selected_memory_refs == ("m:1",)
+    assert request.source_gate_result_id == "gate:1"
+
+    # Empty holder → stimulus-driven fallback (no recall intent).
+    holder.clear()
+    request2 = bridge.build_request(frame, gating_stage_result)
+    assert request2.recall_intent is None
+    assert request2.selected_memory_refs == ()
+    assert request2.compact_stimuli == (stimulus,)

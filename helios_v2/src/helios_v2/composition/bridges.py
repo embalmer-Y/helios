@@ -1358,6 +1358,75 @@ class FirstVersionDirectedRetrievalRequestBridge:
 
 
 @dataclass
+class PriorThoughtRecallHolder:
+    """Owner: composition (semantic-memory assembly only).
+
+    Purpose:
+        Carry the prior tick's `11` internal-thought `MemoryHandoffDirective` projection
+        (its `recall_intent` and `selected_memory_refs`) forward to the current tick's `10`
+        directed-retrieval request, so the thought owner's saved recall intent steers the next
+        tick's retrieval.
+
+    Notes:
+        Owner-neutral carry, mirroring `TimelineViewHolder`. The runtime captures the `11`-owned
+        directive after each tick (clearing the holder when no directive was saved); the
+        directed-retrieval request bridge reads it next tick. It transports `11`-owned values
+        verbatim and computes no retrieval policy.
+    """
+
+    recall_intent: str | None = None
+    selected_memory_refs: tuple[str, ...] = ()
+
+    def set_directive(self, recall_intent: str | None, selected_memory_refs: tuple[str, ...]) -> None:
+        """Owner: composition. Store the prior tick's `11` recall directive (or clear it)."""
+
+        self.recall_intent = recall_intent
+        self.selected_memory_refs = tuple(selected_memory_refs)
+
+    def clear(self) -> None:
+        """Owner: composition. Clear the carry (no prior recall directive for the next tick)."""
+
+        self.recall_intent = None
+        self.selected_memory_refs = ()
+
+
+@dataclass
+class ThoughtDirectedRetrievalRequestBridge:
+    """Owner: composition (semantic-memory assembly only).
+
+    Purpose:
+        Build the directed-retrieval request from the thought-gating result, sourcing
+        `recall_intent` and `selected_memory_refs` from the prior tick's `11` recall directive
+        (carried in the holder) so retrieval is memory-guided by the thought the system chose to
+        continue. When the holder carries no directive (the first tick, a non-fired tick, or a
+        tick where `11` did not continue), it falls back to the real `09` `compact_stimuli`
+        exactly as the first-version bridge, with no recall intent.
+
+    Notes:
+        Owner-neutral glue. The carried `recall_intent`/`selected_memory_refs` are `11`-owned
+        values transported verbatim; this bridge computes no retrieval policy and decides no
+        tiered selection (that stays in `10`). `compact_stimuli` is always the real `09`
+        selected-stimulus summaries, so the request stays valid even with no carried intent.
+    """
+
+    holder: PriorThoughtRecallHolder
+
+    def build_request(self, frame, thought_gating_result) -> RetrievalRequest:
+        tick_id = frame.tick_id
+        return RetrievalRequest(
+            request_id=f"retrieval-request:runtime:{tick_id}",
+            source_gate_result_id=thought_gating_result.result.result_id,
+            source_continuation_active=thought_gating_result.continuation_state.active,
+            compact_stimuli=thought_gating_result.result.selected_stimuli,
+            recall_intent=self.holder.recall_intent,
+            selected_memory_refs=self.holder.selected_memory_refs,
+            target_tiers=("short_term", "mid_term", "long_term", "autobiographical"),
+            limit=2,
+            tick_id=tick_id,
+        )
+
+
+@dataclass
 class FirstVersionEmbodiedPromptRequestBridge:
     """Owner: composition.
 

@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R48。测试基线：631 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R49。测试基线：635 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -113,10 +113,11 @@
 - 下一步：（1）✅ `global_activation_level` 接真实 `07`——**R48 已交付**；其余输入各自一刀：`workload_pressure`（待真实 compute/runtime 压力生产者）、`temporal_signal`（时钟源）、`dmn_available`（DMN 源）、`drive_urgency_signal`（`18` 在 `09` 后,需跨 tick carry）、`selected_stimuli`（`02`/`03` 投影）；（2）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（3）`P5` 在 `gate_policy` 类别下学习权重与门控阈值；（4）深化多 tick carry；（5）跨重启持久化/恢复延续压力——**R42 已落地**。
 
 ### 2.10 `10` 定向检索进思考窗口 — `helios_v2.directed_retrieval`
-- 完成度：`baseline_real`（规划仍 shim；启用持久化/语义记忆时候选来源已真实）。
+- 完成度：`baseline_real`（候选来源真实；recall-intent 自 R49 起由真实 `11` handoff 驱动）。
 - 职责：检索查询规划、分层选择、有界思考窗口 bundle 装配的唯一 owner。不拥有记忆持久化或思考生成。
 - 在循环中的作用：装配思考 owner 推理所依据的有界记忆窗口。
-- 下一步：随 `33`/`34` 候选 provider 已真实（recency，再语义）。剩余：从真实上游门控深化查询规划与 recall-intent 收口；把检索意图接到后续连续性（wave_B）。
+- 完成度细节：`49` 去 shim 了 `10` 请求的 `recall_intent`/`selected_memory_refs`（查询规划路径本身早已真实,只是其输入是 shim）。常量 `recall_intent="remember runtime chain context"` 与伪造的 `selected_memory_refs=("memory:runtime:{tick}",)` 在语义装配下被替换为**上一 tick 的 `11` 内部思考 `MemoryHandoffDirective`**（当 `11` 为下一 tick 保存了 recall_intent + selected_memory_refs 时）,故系统选择继续的那条思路真实地引导下一 tick 检索什么记忆——收口记忆引导维持闭环（`ARCHITECTURE_PHILOSOPHY` §5.3）。carry 复用 R32 后果声明 / R42 连续性 的同一机制：owner-neutral 的 `PriorThoughtRecallHolder` + `RuntimeHandle._carry_recall_directive` tick 后捕获 + `ThoughtDirectedRetrievalRequestBridge` 读取。无保存 handoff 时（首 tick、未 fire tick、或 `11` 未继续）请求回落到真实 `09` `compact_stimuli`、无 recall intent——这是定义行为非降级,且因 `compact_stimuli` 恒真而始终有效。owner-neutral：composition 逐字转发 `11` 拥有的 directive、不算检索策略;`10`/`11` 契约与引擎不变。opt-in 于与 R45-R48 同一开关;默认/非语义装配保持常量 recall intent。
+- 下一步：随 `33`/`34` 候选 provider 已真实（recency，再语义）。剩余：（1）✅ recall-intent 接真实 `11` handoff——**R49 已交付**；（2）`10` 内更深的 recall-intent 塑形（按意图内容选 tier/limit）；（3）把检索意图接到 `18`/`24` 长程连续性线程,让连续性线程跨多 tick 引导检索（wave_B）；（4）真实 `compact_stimuli` 出处（去 shim 的 `02`/`03` 投影）。
 
 ### 2.11 `16` 具身 prompt 契约 — `helios_v2.prompt_contract`
 - 完成度：`baseline_real`。

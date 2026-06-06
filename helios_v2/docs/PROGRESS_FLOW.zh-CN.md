@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R48（`09` 门控 `global_activation_level` 接真实 `07` 工作空间激活;门控现消费两个真实信号 arousal+activation）。测试基线：631 passed。版本：R48。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R49（`10` 定向检索 recall-intent 接真实 `11` handoff;记忆引导维持闭环收口）。测试基线：635 passed。版本：R49。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -49,7 +49,7 @@ flowchart TD
     S07[07 工作空间竞争 - 真实竞争+有界注意力瓶颈(语义装配)]:::base
     S08["08 可报告意识内容 - 真实点火承诺(语义装配);上游06/07已去shim"]:::base
     S09["09 思考门控与延续压力 - NE arousal + 工作空间激活已耦合(语义)/其余输入仍shim"]:::base
-    S10[10 定向检索 - 基线/输入仍shim]:::base
+    S10[10 定向检索 - recall-intent接真实11 handoff(语义)/候选来源已真实]:::base
     S16P[16 具身prompt契约 - 基线]:::base
     S16O["16 外化表达草稿 - 仅草稿(非授权)"]:::base
     S16E["16 外化执行草稿 - 非授权的前运动预备草案(执行权在 planner 13 + channel 30)"]:::base
@@ -247,6 +247,13 @@ flowchart TD
   `contributing_signals["global_activation_level"]`。opt-in 于同一开关;默认/非语义装配保持 `0.9`。其余四个常量门控输入
   （`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）与 `selected_stimuli` 投影仍首版常量（`09` 前暂无真实
   生产者——`drive_urgency_signal` 归 `18`,在 `09` 后;其余需未拥有的 compute/时钟/DMN 源）。626→631 测试全绿、离线。
+- P3 中段（R49）：`10` 定向检索的 `recall_intent`/`selected_memory_refs` 去 shim（查询规划路径本身早已真实,只是输入是 shim）。
+  常量 `recall_intent="remember runtime chain context"` 与伪造 refs 在语义装配下被替换为**上一 tick 的 `11` `MemoryHandoffDirective`**
+  （当 `11` 为下一 tick 保存了 recall_intent + refs 时）,故系统选择继续的那条思路真实引导下一 tick 检索什么记忆（记忆引导维持闭环,
+  `ARCHITECTURE_PHILOSOPHY` §5.3）。carry 复用 R32/R42 机制：owner-neutral `PriorThoughtRecallHolder` + `_carry_recall_directive`
+  tick 后捕获 + `ThoughtDirectedRetrievalRequestBridge`。无保存 handoff 时（首 tick/未 fire/未继续）回落到真实 `09` `compact_stimuli`、
+  无 recall intent（定义行为,因 `compact_stimuli` 恒真而始终有效）。owner-neutral：逐字转发 `11` directive、不算检索策略;`10`/`11` 不变。
+  opt-in 于同一开关;默认/非语义保持常量。631→635 测试全绿、离线。
 - 内感受来源留白（BODY 节点,红）：`05` 已建成可消费真实身体/内感受信号（feeling 阶段从 `02` 批次按 body/interoceptive
   modality 筛选）,但当前没有任何东西生产它们——sensory 源只产生 text,故 `internal_signals` 恒为空,体感仅由 `04`
   神经调质状态推导。BODY 节点是只有接口、无 owner 生产者的占位。真实生产者属后续 owner：模拟身体状态模型,或把

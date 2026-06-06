@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R48. Test baseline: 631 passed (network-free).
+> Status: living owner reference. Last synced: R49. Test baseline: 635 passed (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -118,10 +118,11 @@ two transport stages for 21).
 - Next step: (1) ✅ `global_activation_level` from the real `07` — **delivered in R48**; the rest each as its own slice: `workload_pressure` (a real compute/runtime-pressure producer), `temporal_signal` (a clock source), `dmn_available` (a DMN source), `drive_urgency_signal` (owned by `18`, which runs after `09` — needs a cross-tick carry), `selected_stimuli` (a `02`/`03` projection); (2) couple the cortisol/inhibition hard-gate-eligibility channels once `03` threat is real; (3) P5 learning of the weights and gate thresholds under the `gate_policy` category; (4) deepen multi-tick carry; (5) persist/restore continuation pressure across restart — **landed in R42**.
 
 ### 2.10 `10` Directed Retrieval Into Thought Window — `helios_v2.directed_retrieval`
-- Completeness: `baseline_real` (planning shim; candidate source now real when persistence/semantic memory is enabled).
+- Completeness: `baseline_real` (candidate source real; recall intent now driven by the real `11` handoff since R49).
 - Responsibility: the sole owner of retrieval-query planning, tiered selection, and bounded thought-window bundle assembly. Does not own memory persistence or thought generation.
 - Role in the loop: assembles the bounded memory window the thought owner reasons over.
-- Next step: with `33`/`34` the candidate provider is real (recency, then semantic). Remaining: deepen query-plan policy and recall-intent closure from real upstream gating; connect retrieval intent to later continuity (wave_B).
+- Completeness detail: `49` de-shims the `10` request's `recall_intent`/`selected_memory_refs` (the query-planning path itself was already real; only its inputs were shim). The constant `recall_intent="remember runtime chain context"` and fabricated `selected_memory_refs` are replaced, under the semantic-memory assembly, by the prior tick's `11` `MemoryHandoffDirective` (when `11` saved one for the next tick), so a line of thought the system chose to continue steers what memory it retrieves next tick — closing the memory-guided-maintenance loop (`ARCHITECTURE_PHILOSOPHY` §5.3). The carry mirrors the R32/R42 pattern: an owner-neutral `PriorThoughtRecallHolder`, a post-tick `RuntimeHandle._carry_recall_directive` capture, and a `ThoughtDirectedRetrievalRequestBridge`. With no saved handoff (first tick / non-fired tick / `11` did not continue), the request falls back to the real `09` `compact_stimuli` with no recall intent — a defined behavior, always valid. Owner-neutral: composition transports the `11`-owned directive verbatim; `10`/`11` contracts and engines are unchanged. Opt-in on the same semantic-memory opt-in as R45-R48; default/non-semantic keep the constant recall intent.
+- Next step: (1) ✅ recall intent from the real `11` handoff — **delivered in R49**; (2) deeper recall-intent shaping in `10` (tier/limit from intent content); (3) connect retrieval intent to `18`/`24` long-horizon continuity threads so a thread steers retrieval across many ticks (wave_B); (4) real `compact_stimuli` provenance from a de-shimmed `02`/`03` projection.
 
 ### 2.11 `16` Embodied Prompt Contract — `helios_v2.prompt_contract`
 - Completeness: `baseline_real`.
