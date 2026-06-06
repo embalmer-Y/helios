@@ -2577,3 +2577,111 @@ def test_r54_fired_tick_unchanged_activated_true() -> None:
         "identity_governance_self_revision_integration",
     ):
         assert result.stage_results[stage_name].activated is True, stage_name
+
+
+# --- Requirement 55: temporal pacing and DMN rest-state gate inputs ---
+
+
+def test_r55_default_assembly_keeps_constant_temporal_and_dmn() -> None:
+    # No temporal source -> the gate keeps temporal_signal=0.4 and the DMN term byte-for-byte.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    gate = _gate_result(result)
+    assert gate.contributing_signals["temporal_signal"] == pytest.approx(0.4)
+
+
+def test_r55_temporal_source_forwards_into_gate_signal() -> None:
+    # With a temporal source wired, the gate's temporal_signal comes from the source. The default
+    # sensory source emits an external (text) stimulus, so DMN is suppressed and the elapsed-rest
+    # accumulation resets whenever the gate fires.
+    from helios_v2.temporal import RestStateTemporalSource
+
+    source = RestStateTemporalSource(per_tick_increment=0.2)
+    handle = _assemble(temporal_source=source)
+    handle.startup()
+    result = handle.tick()
+    gate = _gate_result(result)
+    # First tick: cold-start elapsed-rest is 0, so temporal_signal is the source's 0.0, not 0.4.
+    assert gate.contributing_signals["temporal_signal"] == pytest.approx(0.0)
+
+
+def test_r55_dmn_reflects_external_stimulus_presence() -> None:
+    # The default sensory source emits an external text stimulus, so the temporal source reports
+    # the DMN as suppressed (dmn_available=False) — its +0.10 gate term is absent.
+    from helios_v2.temporal import RestStateTemporalSource
+    from helios_v2.composition.bridges import _external_stimulus_present, _temporal_inputs
+    from helios_v2.runtime.stages import RuntimeFrame, SensoryIngressStageResult
+    from helios_v2.sensory import SensoryIngress, RawSignal
+
+    # Owner-neutral helper level: an external stimulus present -> dmn_available False.
+    ingress = SensoryIngress()
+
+    from dataclasses import dataclass as _dc
+
+    @_dc
+    class _TextSource:
+        @property
+        def source_name(self) -> str:
+            return "cli"
+
+        def emit_raw_signals(self):
+            return (
+                RawSignal(
+                    signal_id="001",
+                    source_name="cli",
+                    signal_type="text",
+                    content="hello",
+                    channel="cli",
+                    metadata=None,
+                ),
+            )
+
+    ingress.register_source(_TextSource())
+    batch = ingress.collect_stimuli()
+    publish_op = ingress.build_publish_batch_op(batch)
+    frame = RuntimeFrame(
+        tick_id=1,
+        stage_results={"sensory_ingress": SensoryIngressStageResult(batch=batch, publish_op=publish_op)},
+    )
+    assert _external_stimulus_present(frame) is True
+    _, dmn = _temporal_inputs(frame, RestStateTemporalSource())
+    assert dmn is False
+
+    # An empty (rest) batch -> dmn_available True.
+    empty_ingress = SensoryIngress()
+    empty_batch = empty_ingress.collect_stimuli()
+    empty_publish = empty_ingress.build_publish_batch_op(empty_batch)
+    rest_frame = RuntimeFrame(
+        tick_id=2,
+        stage_results={"sensory_ingress": SensoryIngressStageResult(batch=empty_batch, publish_op=empty_publish)},
+    )
+    assert _external_stimulus_present(rest_frame) is False
+    _, dmn_rest = _temporal_inputs(rest_frame, RestStateTemporalSource())
+    assert dmn_rest is True
+
+
+def test_r55_elapsed_rest_accumulates_across_no_fire_ticks_end_to_end() -> None:
+    # Drive consecutive no-fire ticks (high compute load -> resource_pressure_too_high, R53/R54)
+    # under a temporal source, and assert the temporal_signal accumulates across them (rest pacing).
+    from helios_v2.temporal import RestStateTemporalSource
+
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+        interoceptive_sampler=_ConfigurableInteroceptiveSampler(cpu=0.95, memory=0.95),
+        temporal_source=RestStateTemporalSource(per_tick_increment=0.2),
+    )
+    handle.startup()
+    r1 = handle.tick()
+    r2 = handle.tick()
+    r3 = handle.tick()
+    assert _gate_result(r1).decision == "no_fire"
+    # Tick 1 cold start: 0.0; subsequent no-fire ticks accumulate.
+    t1 = _gate_result(r1).contributing_signals["temporal_signal"]
+    t2 = _gate_result(r2).contributing_signals["temporal_signal"]
+    t3 = _gate_result(r3).contributing_signals["temporal_signal"]
+    assert t1 == pytest.approx(0.0)
+    assert t2 == pytest.approx(0.2)
+    assert t3 == pytest.approx(0.4)

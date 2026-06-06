@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R54。测试基线：690 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R55。测试基线：702 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -111,7 +111,7 @@
 - 职责：思考窗口触发决策与多 tick 延续压力 carry 的唯一 owner；紧凑门控可观测。不坍缩进检索或思考生成。
 - 在循环中的作用：决定一个 tick 是否触发思考路径，并把延续压力向前 carry。
 - 完成度细节：`37`（P3 第三刀去 shim）使 `09` 门控决策成为 `04` 神经调质水平的首个真实消费者。owner 新增 `ArousalAwareThoughtGatePath` 与 `ThoughtGateSignalSnapshot` 上一个附加可选原始事实字段 `neuromodulatory_arousal`；语义记忆装配下 composition 把真实 `04` 去甲肾上腺素水平转发进来（仅原始事实——arousal→门控的映射归属本 owner,不在 composition）。该 path 向门控分数加一个非负有界项 `arousal_gain * arousal`（首版 `0.15`,属 `gate_policy` 类别）；单调、确定性、无状态,且结构上绝非硬门控（权重 `0.15 < fire 阈值 0.55`,且加项非负）。`48`（接 R46）把门控分中第二大的非刺激项 `global_activation_level`（权重 `* 0.20`）从常量 `0.9` 去 shim：语义装配下 composition 的门控信号 bridge 现从同 tick 的 `07` `WorkspaceCompetitionStageResult` 取真实工作空间激活——保留候选中的最大 `workspace_score_hint`（注意力中持有的主导点火强度）,无保留则 `0.0`。owner-neutral glue（bridge 只转发有界原始事实,clamp 到 `[0,1]`）;`09` 仍独占门控决策与该项权重（门控 path 不变）。R37 的 arousal 耦合保留（两个真实事实同乘一个快照）。`07` 在 `09` 前运行,故缺失/类型错的 `07` 结果是 hard fail（既有 `RuntimeStageExecutionError`）,无静默回退。其余门控信号输入（`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）与 `selected_stimuli` 投影仍为首版常量；当 `neuromodulatory_arousal` 为 `None` 时门控 path 仍字节级复刻首版（默认/recency/离线不变）。
-- 下一步：（1）✅ `global_activation_level` 接真实 `07`——**R48 已交付**；（2）✅ `workload_pressure` 接真实 compute/runtime 压力——**R53 已交付**（owner-neutral helper 从同 tick `02` 批次的 R50 内感受 cpu/memory 负载刺激取最大值,经两个门控信号 bridge 转发,取代常量 `0.1`;`09` 仍独占该项权重与 block 阈值;**R53 浮现的约束**：高负载现会正确地把门控压到 `resource_pressure_too_high`/no-fire,但装配链尚无 gate-no-fire 收口（directed retrieval 对非 fire 门控会抛错）,故 R53 端到端只在 fire 窗口内（cpu/memory ≤ ~0.3）演练,高负载→block 关系在 helper 级验证——**R54 已收口该 gate-no-fire tick**（是 R28 fired-but-no-proposal `internal_only` 的门控-no-fire 镜像：no-fire 时每个 gate 后阶段产出显式 not-activated 结果、不调 owner fire 路径,经既有 internal-only 连续性尾收口,高负载 tick 现端到端完成））；其余输入各自一刀：`temporal_signal`（时钟源）、`dmn_available`（DMN 源）、`drive_urgency_signal`（`18` 在 `09` 后,需跨 tick carry）、`selected_stimuli`（`02`/`03` 投影）；（3）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（4）`P5` 在 `gate_policy` 类别下学习权重与门控阈值；（5）跨重启持久化/恢复延续压力——**R42 已落地**。
+- 下一步：（1）✅ `global_activation_level` 接真实 `07`——**R48 已交付**；（2）✅ `workload_pressure` 接真实 compute/runtime 压力——**R53 已交付**（owner-neutral helper 从同 tick `02` 批次的 R50 内感受 cpu/memory 负载刺激取最大值,经两个门控信号 bridge 转发,取代常量 `0.1`;`09` 仍独占该项权重与 block 阈值;**R53 浮现的约束**：高负载现会正确地把门控压到 `resource_pressure_too_high`/no-fire,但装配链尚无 gate-no-fire 收口（directed retrieval 对非 fire 门控会抛错）,故 R53 端到端只在 fire 窗口内（cpu/memory ≤ ~0.3）演练,高负载→block 关系在 helper 级验证——**R54 已收口该 gate-no-fire tick**（是 R28 fired-but-no-proposal `internal_only` 的门控-no-fire 镜像：no-fire 时每个 gate 后阶段产出显式 not-activated 结果、不调 owner fire 路径,经既有 internal-only 连续性尾收口,高负载 tick 现端到端完成））；其余输入各自一刀：`temporal_signal` + `dmn_available`——**R55 已交付**（新 owner `helios_v2.temporal`：rest→DMN、elapsed-rest→temporal_signal 累积/重置,经门控信号 bridge 转发,`09` 仍独占权重；R54 使其安全：真实 temporal 输入现可正常导致 no-fire 而不崩溃）；`drive_urgency_signal`（`18` 在 `09` 后,需跨 tick carry,R56）、`selected_stimuli`（`02`/`03` 投影,后续）；（3）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（4）`P5` 在 `gate_policy` 类别下学习权重与门控阈值；（5）跨重启持久化/恢复延续压力——**R42 已落地**。
 
 ### 2.10 `10` 定向检索进思考窗口 — `helios_v2.directed_retrieval`
 - 完成度：`baseline_real`（候选来源真实；recall-intent 自 R49 起由真实 `11` handoff 驱动）。
@@ -233,6 +233,12 @@
 - 职责：外周传入式生产者（类比内感受感受器报告身体内部状态）。把运行时真实内部状况（compute/runtime 压力：CPU/内存/延迟/错误率）报告为有界 `interoceptive` `RawSignal` 喂进 `02`。`RuntimePressureSample` 契约（四个 `[0,1]` 通道）、注入式 `RuntimePressureSampler` 协议、首版 `StdlibRuntimePressureSampler`（懒 `psutil` 取真实 CPU/内存,缺失降级到 stdlib load-average 或定义的中性默认,绝不为"仅不可用"的事实抛错）、`RuntimeInteroceptiveSource`（实现既有 `SensorySource`,每通道一条有界确定性信号）。不拥有任何 feeling/salience/认知策略,不 import feeling/appraisal/neuromodulation owner。
 - 作用：收口 `gap_interoceptive_signal_source` 的**生产者半边**——`02→05` 的身体信号传入路径（代码早已存在但恒空）现真实承载信号；opt-in `assemble_runtime(interoceptive_sampler=...)` 下 `05` stage 收到非空且校验通过的 `internal_signals`。**消费者半边自 R51 起也已闭合**：`05` 的 `InteroceptiveSignalModulatedFeelingConstructionPath` 现据这些信号叠加压力贡献塑造体感。
 - 下一步：（1）✅ 让 `05` 构造路径真正消费 `internal_signals` 塑造体感（FG-2）——**R51 已交付**；（2）✅ 把同一压力读数喂给 `09` 门控的 `workload_pressure`（第二消费者）——**R53 已交付**（cpu/memory 负载经门控信号 bridge 取代常量 `0.1`）；（3）更丰富的内感受通道（模拟身体状态模型：心跳/呼吸类比、跨 tick 疲劳累积）；（4）从 `21` 可观测喂真实 tick 延迟/错误率到 latency/error 通道（当前为首版可注入默认）。
+
+### 3.9 时间节律与 DMN 源 — `helios_v2.temporal`
+- 完成度：`infra_done`（opt-in）。
+- 职责：报告 `09` 门控消费的两个真实情境事实——默认模式网络（DMN）是否在线（rest vs 外部任务）与从 elapsed rest 累积的自发思考节律。`TemporalPacingSample` 契约（`temporal_signal` `[0,1]` + `dmn_available` bool）、注入式 `TemporalSource` 协议（`sample(external_stimulus_present)` + `observe_tick(fired)`）、首版 `RestStateTemporalSource`（`dmn_available = not external_stimulus_present`;`temporal_signal = clamp(per_tick_increment * ticks_since_last_fire, 0, max_signal)`,跨无 fire tick 累积、fire 时重置）。不拥有门控决策或权重（归 `09`）,不 import gate/appraisal/feeling/neuromodulation owner。
+- 作用：把 `09` 门控的 `temporal_signal`/`dmn_available` 从常量去 shim,使系统能表达 rest-state 自发思考节律（越久未思考越倾向于自发思考）与外部任务时 DMN 退离。跨 tick elapsed 状态经 owner-neutral 的 `RuntimeHandle._carry_temporal` seam 从已发布门控决策推进（fire 重置、no-fire 累加）。R54 使其安全：真实 temporal 输入现可正常导致 no-fire 而不中止 tick。
+- 下一步：（1）`drive_urgency_signal` 接真实 `18`（R56,门控最后一个常量输入）；（2）更丰富的时间动力学（昼夜/超日节律、真实 wall-clock 或 tick 速率节律）与 P5 学习累积率/门控权重；（3）更细的 DMN 模型（分级在线而非二元 rest/task 切换；DMN 在线耦合内省检索）；（4）跨重启 carry elapsed 状态（经 seed seam,已预留）。
 
 ---
 

@@ -140,6 +140,7 @@ from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfi
 from helios_v2.embedding import EmbeddingGatewayAPI, EmbeddingRequest
 from helios_v2.continuity_checkpoint import ContinuityCheckpointStore
 from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
+from helios_v2.temporal import TemporalSource
 from helios_v2.persistence import (
     ExperienceStore,
     SemanticStoreBackedDirectedMemoryCandidateProvider,
@@ -577,6 +578,7 @@ class RuntimeHandle:
     memory_record_bridge: "MemoryRecordBridge | None" = None
     prior_thought_recall_holder: "PriorThoughtRecallHolder | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
+    temporal_source: "TemporalSource | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
     continuity_checkpoint_bridge: "ContinuityCheckpointBridge | None" = None
     thought_gating_stage: "ThoughtGatingRuntimeStage | None" = None
@@ -639,6 +641,7 @@ class RuntimeHandle:
         self._carry_timeline(result.tick_id)
         self._carry_consequence_claim(result)
         self._carry_recall_directive(result)
+        self._carry_temporal(result)
         self._persist_experience(result)
         self._persist_memory(result)
         self._checkpoint_continuity(result)
@@ -704,6 +707,24 @@ class RuntimeHandle:
             )
         else:
             self.prior_thought_recall_holder.clear()
+
+    def _carry_temporal(self, result: RuntimeTickResult) -> None:
+        """Advance the temporal source's cross-tick elapsed-rest state from this tick's gate decision.
+
+        Owner-neutral carry (R55): it reads the published `09` gate decision and tells the temporal
+        source whether a thought fired this tick (fire resets the accumulated rest; no-fire advances
+        it), so the next tick's `temporal_signal` genuinely reflects elapsed rest. It computes no
+        temporal mapping (the source owns that) and is a no-op when no temporal source is wired.
+        """
+
+        if self.temporal_source is None:
+            return
+        stage_result = result.stage_results.get("thought_gating_and_continuation_pressure")
+        gate_result = getattr(stage_result, "result", None)
+        decision = getattr(gate_result, "decision", None)
+        if decision is None:
+            return
+        self.temporal_source.observe_tick(fired=(decision == "fire"))
 
     def _persist_experience(self, result: RuntimeTickResult) -> None:
         """Durably append the just-completed tick's `15` continuity records when enabled.
@@ -833,6 +854,7 @@ def assemble_runtime(
     embedding_profile_name: str = "experience-embedding",
     continuity_checkpoint: ContinuityCheckpointStore | None = None,
     interoceptive_sampler: "RuntimePressureSampler | None" = None,
+    temporal_source: "TemporalSource | None" = None,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1247,9 +1269,9 @@ def assemble_runtime(
         ThoughtGatingRuntimeStage(
             thought_gating_layer=thought_gating,
             signal_provider=(
-                NeuromodulatorAwareThoughtGateSignalBridge()
+                NeuromodulatorAwareThoughtGateSignalBridge(temporal_source=temporal_source)
                 if semantic_memory_enabled
-                else FirstVersionThoughtGateSignalBridge()
+                else FirstVersionThoughtGateSignalBridge(temporal_source=temporal_source)
             ),
         ),
         DirectedRetrievalRuntimeStage(
@@ -1380,6 +1402,7 @@ def assemble_runtime(
         ),
         prior_thought_recall_holder=prior_thought_recall_holder,
         embed_record=_embed_text if embedding_gateway is not None else None,
+        temporal_source=temporal_source,
         continuity_checkpoint=continuity_checkpoint,
         continuity_checkpoint_bridge=continuity_checkpoint_bridge,
         thought_gating_stage=thought_gating_stage_ref,

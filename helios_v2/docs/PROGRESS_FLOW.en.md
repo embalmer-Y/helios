@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R54 (gate no-fire tick closure: on a no-fire gate the post-gate stages emit not-activated results and the tick closes through the existing internal-only continuity tail, so a high-load tick completes end to end, lifting the R53 firing-window constraint). Test baseline: 690 passed. HEAD-era: R54. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R55 (`09` gate `temporal_signal` + `dmn_available` grounded in a real temporal/rest-state source: new owner `helios_v2.temporal`, rest→DMN and elapsed-rest→spontaneous-thought pacing accumulate/reset, opt-in). Test baseline: 702 passed. HEAD-era: R55. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -56,7 +56,7 @@ flowchart TD
     S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall + recalled affect-memory as multi-candidate (R52, semantic)"]:::base
     S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
-    S09["09 Thought Gating - NE arousal + workspace activation + workload_pressure from real load (R53, semantic)/other inputs shim"]:::base
+    S09["09 Thought Gating - NE arousal + workspace activation + workload_pressure(R53) + temporal/DMN(R55) real/drive_urgency still shim"]:::base
     S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
@@ -471,6 +471,24 @@ flowchart TD
   fabricated cognition (inactive results carry `None` artifacts; markers are ids only). The fired
   path is byte-for-byte unchanged. This lifts the R53 firing-window constraint: a high-compute-load
   tick now completes end to end as a no-fire tick. 685 -> 690 tests green and network-free.
+- P3 gate-input de-shim (R55): the `09` gate's `temporal_signal` (was constant `0.4`) and
+  `dmn_available` (was constant `True`) are grounded in a real temporal/rest-state source. A new
+  owner `helios_v2.temporal` produces a bounded `TemporalPacingSample` (`temporal_signal` `[0,1]` +
+  `dmn_available` bool); the first-version `RestStateTemporalSource` maps rest (no external stimulus)
+  to `dmn_available=True` and an external task to `False` (DMN engages at rest, suppressed on task),
+  and accumulates `temporal_signal` across consecutive no-fire ticks
+  (`clamp(per_tick_increment * ticks_since_last_fire, 0, max_signal)`), resetting on a fire — the
+  spontaneous-thought pacing of elapsed rest. Both gate-signal bridges forward the source's outputs
+  in place of the constants via a shared `_temporal_inputs(frame, source)` helper (reading the raw
+  external-stimulus fact from the `02` batch through `_external_stimulus_present`); the `09` owner
+  keeps the gate weights and decision. The cross-tick elapsed state is advanced post-tick from the
+  published gate decision through the owner-neutral `RuntimeHandle._carry_temporal` seam (fire
+  resets, no-fire increments). R54 made this safe: a real temporal input can now drive a no-fire
+  without aborting, so the runtime can express rest-state spontaneous-thought pacing and DMN
+  task-disengagement. The temporal owner holds no salience/feeling/cognitive policy and imports no
+  gate/appraisal/feeling/neuromodulation owner. Opt-in (`assemble_runtime(temporal_source=...)`);
+  deterministic; default/recency/semantic/channel-bound/interoceptive assemblies keep `0.4`/`True`
+  byte-for-byte when no source is wired. 690 -> 702 tests green and network-free.
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real

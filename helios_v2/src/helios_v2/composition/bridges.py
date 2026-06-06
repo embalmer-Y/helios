@@ -1347,16 +1347,19 @@ class FirstVersionThoughtGateSignalBridge:
         bounded signal snapshot; it does not decide the gate result.
     """
 
+    temporal_source: object | None = None
+
     def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
         tick_id = frame.tick_id
+        temporal_signal, dmn_available = _temporal_inputs(frame, self.temporal_source)
         return ThoughtGateSignalSnapshot(
             snapshot_id=f"gate-snapshot:runtime:{tick_id}",
             source_conscious_state_id=conscious_result.state.state_id,
             workload_pressure=_interoceptive_workload_pressure(frame),
             global_activation_level=0.9,
-            temporal_signal=0.4,
+            temporal_signal=temporal_signal,
             drive_urgency_signal=0.7,
-            dmn_available=True,
+            dmn_available=dmn_available,
             selected_stimuli=(
                 SelectedStimulusSummary(
                     stimulus_id=f"stimulus:runtime:{tick_id}",
@@ -1400,6 +1403,7 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
 
     neuromodulator_stage_name: str = "neuromodulator_system"
     workspace_stage_name: str = "workspace_competition_and_working_state"
+    temporal_source: object | None = None
 
     def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
         from helios_v2.runtime.stages import (
@@ -1434,14 +1438,15 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
                 f"'{self.workspace_stage_name}' result to be WorkspaceCompetitionStageResult"
             )
         global_activation_level = _workspace_activation(workspace_result)
+        temporal_signal, dmn_available = _temporal_inputs(frame, self.temporal_source)
         return ThoughtGateSignalSnapshot(
             snapshot_id=f"gate-snapshot:runtime:{tick_id}",
             source_conscious_state_id=conscious_result.state.state_id,
             workload_pressure=_interoceptive_workload_pressure(frame),
             global_activation_level=global_activation_level,
-            temporal_signal=0.4,
+            temporal_signal=temporal_signal,
             drive_urgency_signal=0.7,
-            dmn_available=True,
+            dmn_available=dmn_available,
             selected_stimuli=(
                 SelectedStimulusSummary(
                     stimulus_id=f"stimulus:runtime:{tick_id}",
@@ -1530,6 +1535,44 @@ def _interoceptive_workload_pressure(frame, default: float = 0.1) -> float:
     if not pressures:
         return default
     return _clamp(round(max(pressures), 4), 0.0, 1.0)
+
+
+# R55: stimulus modalities that are internal (not an external task). DMN engages at rest (no
+# external stimulus) and is suppressed when an external stimulus is present.
+_INTERNAL_MODALITIES = frozenset({"body", "interoceptive", "background"})
+
+
+def _external_stimulus_present(frame) -> bool:
+    """Owner: composition (R55). Read whether the current tick carries an external stimulus.
+
+    Reads the `02` sensory batch and returns True when any stimulus has a non-internal modality (an
+    external task is present), False otherwise (rest). A missing `02` result is treated as rest (a
+    defined reading, consistent with an empty tick). This is a raw situational fact; the rest-to-DMN
+    mapping is owned by the `helios_v2.temporal` owner.
+    """
+
+    from helios_v2.runtime.stages import SensoryIngressStageResult
+
+    stage_results = frame.stage_results or {}
+    sensory = stage_results.get("sensory_ingress")
+    if not isinstance(sensory, SensoryIngressStageResult):
+        return False
+    return any(stimulus.modality not in _INTERNAL_MODALITIES for stimulus in sensory.batch.stimuli)
+
+
+def _temporal_inputs(frame, temporal_source) -> tuple[float, bool]:
+    """Owner: composition (R55). Resolve the `09` gate's temporal/DMN inputs.
+
+    When no temporal source is wired, returns the first-version constants `(0.4, True)` byte-for-byte
+    so assemblies without a temporal source are unchanged. When a source is wired, returns its bounded
+    `temporal_signal` and rest-derived `dmn_available` for the current tick. Owner-neutral glue: it
+    forwards raw facts and the source's outputs; the `09` owner keeps the gate weights.
+    """
+
+    if temporal_source is None:
+        return 0.4, True
+    sample = temporal_source.sample(_external_stimulus_present(frame))
+    return sample.temporal_signal, sample.dmn_available
 
 
 @dataclass
