@@ -2125,3 +2125,44 @@ def test_thought_directed_request_bridge_uses_holder_and_falls_back() -> None:
     assert request2.recall_intent is None
     assert request2.selected_memory_refs == ()
     assert request2.compact_stimuli == (stimulus,)
+
+
+# --- Requirement 50: runtime interoceptive signal source (BODY producer) ---
+
+
+@dataclass
+class _FixedInteroceptiveSampler:
+    def sample(self):
+        from helios_v2.interoception import RuntimePressureSample
+
+        return RuntimePressureSample(
+            cpu_pressure=0.5, memory_pressure=0.4, latency_pressure=0.0, error_pressure=0.0
+        )
+
+
+def test_interoception_opt_in_feeds_internal_signals_into_feeling() -> None:
+    # With the interoceptive source registered, the 02 batch carries modality="interoceptive"
+    # stimuli and the 05 feeling stage receives non-empty internal_signals (the live BODY afferent).
+    handle = _assemble(interoceptive_sampler=_FixedInteroceptiveSampler())
+    handle.startup()
+    result = handle.tick()
+
+    sensory = result.stage_results["sensory_ingress"]
+    interoceptive = [s for s in sensory.batch.stimuli if s.modality == "interoceptive"]
+    assert len(interoceptive) == 4
+
+    feeling = result.stage_results["interoceptive_feeling_layer"]
+    # The 05 update op records how many internal signals it received.
+    assert feeling.update_op.internal_signal_count == 4
+
+
+def test_default_assembly_has_no_interoceptive_signals() -> None:
+    # Without the opt-in, no interoceptive source is registered and 05 gets empty internal_signals.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+
+    sensory = result.stage_results["sensory_ingress"]
+    assert all(s.modality != "interoceptive" for s in sensory.batch.stimuli)
+    feeling = result.stage_results["interoceptive_feeling_layer"]
+    assert feeling.update_op.internal_signal_count == 0

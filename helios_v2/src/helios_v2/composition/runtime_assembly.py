@@ -137,6 +137,7 @@ from helios_v2.appraisal import (
 from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
 from helios_v2.embedding import EmbeddingGatewayAPI, EmbeddingRequest
 from helios_v2.continuity_checkpoint import ContinuityCheckpointStore
+from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
 from helios_v2.persistence import (
     ExperienceStore,
     SemanticStoreBackedDirectedMemoryCandidateProvider,
@@ -828,6 +829,7 @@ def assemble_runtime(
     embedding_gateway: EmbeddingGatewayAPI | None = None,
     embedding_profile_name: str = "experience-embedding",
     continuity_checkpoint: ContinuityCheckpointStore | None = None,
+    interoceptive_sampler: "RuntimePressureSampler | None" = None,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -958,6 +960,13 @@ def assemble_runtime(
             )
     else:
         ingress.register_source(FirstVersionSensorySource(signals=resolved_config.source_signals))
+
+    # Interoceptive source (R50): opt-in. When a sampler is provided, register a real
+    # interoceptive afferent producer alongside the primary source, so the `02 -> 05` body-signal
+    # path carries real compute/runtime-pressure stimuli instead of being empty. Default-off: when
+    # no sampler is given, no interoceptive source is registered and the assembly is unchanged.
+    if interoceptive_sampler is not None:
+        ingress.register_source(RuntimeInteroceptiveSource(sampler=interoceptive_sampler))
 
     # Persistence-enabled assembly: register the durable experience store readiness gate so
     # an un-initializable/unwritable store fails fast at startup rather than running

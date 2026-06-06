@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R49（`10` 定向检索 recall-intent 接真实 `11` handoff;记忆引导维持闭环收口）。测试基线：635 passed。版本：R49。文档澄清（R41 后）：BODY 重分类为留白(无生产者)；16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R50（新增 `helios_v2.interoception` 内感受生产者：真实 compute/runtime 压力 → `02` → `05`,收口 BODY 生产者半边,opt-in）。测试基线：650 passed。版本：R50。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -40,7 +40,7 @@ flowchart TD
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
     EXT([外界刺激: CLI已绑定 / QQ / 语音 后续]):::base
-    BODY["内部身体信号 - 内感受来源: 留白,目前无生产者(见 gap_interoceptive_signal_source)"]:::gap
+    BODY["内部身体信号 - 内感受来源: R50 已交付生产者(helios_v2.interoception, compute/runtime压力, opt-in); 05消费待下一刀"]:::base
     S02[02 感觉接入 - 相对完整]:::deep
     S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
     S04["04 神经调质系统 - appraisal推导+双时间尺度(语义)/跨tick演化"]:::base
@@ -254,10 +254,16 @@ flowchart TD
   tick 后捕获 + `ThoughtDirectedRetrievalRequestBridge`。无保存 handoff 时（首 tick/未 fire/未继续）回落到真实 `09` `compact_stimuli`、
   无 recall intent（定义行为,因 `compact_stimuli` 恒真而始终有效）。owner-neutral：逐字转发 `11` directive、不算检索策略;`10`/`11` 不变。
   opt-in 于同一开关;默认/非语义保持常量。631→635 测试全绿、离线。
-- 内感受来源留白（BODY 节点,红）：`05` 已建成可消费真实身体/内感受信号（feeling 阶段从 `02` 批次按 body/interoceptive
-  modality 筛选）,但当前没有任何东西生产它们——sensory 源只产生 text,故 `internal_signals` 恒为空,体感仅由 `04`
-  神经调质状态推导。BODY 节点是只有接口、无 owner 生产者的占位。真实生产者属后续 owner：模拟身体状态模型,或把
-  计算/运行时压力（CPU/内存/延迟）映射成有界内感受信号的首版代理（见 `gap_interoceptive_signal_source`）。
+- P3 / FG-2 前置（R50）：内感受生产者落地,收口 `gap_interoceptive_signal_source` 的**生产者半边**。新增 owner
+  `helios_v2.interoception`（外周传入式生产者）把运行时真实内部状况（compute/runtime 压力:CPU/内存/延迟/错误率）作为
+  有界 `interoceptive` `RawSignal` 喂进 `02`:`RuntimePressureSample` 契约（四个 `[0,1]` 通道）+ 注入式 `RuntimePressureSampler`
+  协议 + 首版 `StdlibRuntimePressureSampler`（懒 psutil,缺失降级到 stdlib load-average 或定义的中性默认,绝不为"仅不可用"
+  抛错）+ `RuntimeInteroceptiveSource`（实现既有 `SensorySource`,每通道一条有界确定性信号）。sensory 归一化为
+  `modality="interoceptive"` 刺激,`05` stage 已筛入并经 `validate_internal_body_signal` 校验,故 `05` 收到非空 `internal_signals`。
+  **范围（无半步）**：本刀交付生产者 + 活的已校验传入路径;`05` 构造路径本刀仍忽略 `internal_signals`（体感值不变）,让 `05`
+  真正消费它塑造体感是下一刀（FG-2）。owner 不拥有 feeling/salience/认知策略,不 import feeling/appraisal/neuromodulation owner;
+  仅不可用事实降级到定义默认,彻底的 sampler 异常仍上抛（不伪造健康身体）。opt-in `assemble_runtime(interoceptive_sampler=...)`;
+  默认/channel-bound/语义装配关闭时字节级不变;无新强制/网络依赖（psutil 懒加载且可降级）。635→650 测试全绿、离线。
 - 前运动预备 vs 执行（16 标签）：`16` 外化表达/外化执行节点产出的是**非授权草案**,功能上对标前运动区/SMA 的运动
   预备与内部预演,**不是执行**。真正的 go/no-go 在 `13` planner,真正的传输在 `30`/`31` channel。草案带显式的
   `forbidden_capabilities` / `final_authorities` / `execution_boundary_summary`；"草稿"绝不可读作"执行"

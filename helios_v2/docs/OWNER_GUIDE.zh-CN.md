@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R49。测试基线：635 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R50。测试基线：650 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -82,7 +82,7 @@
 - 职责：从神经调质状态 + 内部信号产出主观身体感受向量（valence/arousal/tension/comfort/fatigue/pain/social-safety）；仅软调制输出。不拥有调质状态或记忆。
 - 在循环中的作用："我的身体状态感觉如何"层，喂给可报告意识与连续性。
 - 完成度细节：`38`（P3 第四刀去 shim）在语义记忆装配下把常量构造 shim 换成 owner 私有的 `NeuromodulatorDerivedFeelingConstructionPath`（channel→维度映射归 `05` 自己；每维 `clamp(baseline + sum(coupling_k * level_k))` 的**瞬时 target**）。`44`（P2/P3 铰链,`04` 的镜像）在此之上加**双时间尺度持久化**：语义装配下构造路径换成 owner 持有的 `PersistentFeelingConstructionPath`（包裹 R38 target path）,每维与 R43 同形 `next = clamp(prior + alpha_phasic*(target-prior) + alpha_tonic*(baseline-prior))`（挂 `feeling_persistence` 类别,P5 可学,系数与 R43 一致）。瞬时 target 仍归注入的 R38 路径;跨 tick carry 是新的 `05` owner 语义。`FeelingConstructionPath`/`update_state` 加可选 `prior_feeling`/`prior_state`（默认 None 字节级复刻无状态）;`InteroceptiveFeelingRuntimeStage` 像 04/09/18 持有上一 tick 状态并提供 `seed_prior_state`。冷启动 prior=baseline feeling。`05` feeling 经检查点（快照升 v3 加 `feeling`）跨重启续存。默认/recency/离线装配保持常量体感。Caveat：真实 `05` 体感尚未可度量地塑造 `06`/行为，真实内感受 `internal_signals` 尚未整合。
-- 下一步：（1）✅ 双时间尺度体感持久化 + 跨重启续存——**R44 已交付**；（2）在出现真实内感受源后整合真实身体/内感受信号——注意这目前是无 owner 的留白（`gap_interoceptive_signal_source`）；（3）`P5` 学习有界 coupling/alpha 系数；（4）把真实体感喂给 `06` 记忆情感标注、可报告意识与行为,使体感在下游产生因果（FG-2）；（5）给 `03` 其余维去 shim,使所有上游驱动皆为真实。
+- 下一步：（1）✅ 双时间尺度体感持久化 + 跨重启续存——**R44 已交付**；（2）整合真实身体/内感受信号——**R50 已交付生产者**：`helios_v2.interoception` owner 现把真实 compute/runtime 压力作为 `interoceptive` 刺激喂进 `02`,`05` stage 已收到非空 `internal_signals`;**剩余**：让 `05` 构造路径真正消费 `internal_signals` 来塑造体感（不止 `04` 推导的 target）——下一刀（FG-2）；（3）`P5` 学习有界 coupling/alpha 系数；（4）把真实体感喂给 `06` 记忆情感标注、可报告意识与行为,使体感在下游产生因果（FG-2）；（5）给 `03` 其余维去 shim,使所有上游驱动皆为真实。
 
 ### 2.6 `06` 记忆情感与重放 — `helios_v2.memory`
 - 完成度：`baseline_real`（语义记忆装配下形成已去 shim 且记忆已耐久；输入在 `05` 以上仍依赖 opt-in）。
@@ -226,6 +226,12 @@
 - 职责：`RuntimeContinuitySnapshot` 契约（真正跨 tick 连续性状态的 owner-neutral 可序列化投影——`09` 延续压力 + `18`/`24` 长程连续性,直接复用这些 owner 的契约）、`CheckpointStoreBackend` 协议（单行 SQLite 文件后端 + 内存 double）、`ContinuityCheckpointStore` facade（`save_latest` 替换 / `load_latest` 或显式缺席）。保存最新态单快照（非追加日志）；自身绝不计算或重解释任何连续性决策。
 - 作用：给系统跨重启续存"我刚才想到哪了/我反复回到的倾向"（FG-5.1）。opt-in `assemble_runtime(continuity_checkpoint=...)` 下每 tick 后保存,启动时（fail-fast 门通过后）恢复并经 stage 种入口种入 `09`/`18` 的上次跨 tick 状态。独立于 `33`/`34`。
 - 下一步（P2）：随 `04`/`05` 双时间尺度动力学与 `14` 身份状态获得持久化 carry,把它们增量纳入快照（已版本化）；`06` 记忆条目接耐久底座后纳入巩固。
+
+### 3.8 内感受信号源 — `helios_v2.interoception`
+- 完成度：`infra_done`（opt-in；生产者已交付,`05` 消费待下一刀）。
+- 职责：外周传入式生产者（类比内感受感受器报告身体内部状态）。把运行时真实内部状况（compute/runtime 压力：CPU/内存/延迟/错误率）报告为有界 `interoceptive` `RawSignal` 喂进 `02`。`RuntimePressureSample` 契约（四个 `[0,1]` 通道）、注入式 `RuntimePressureSampler` 协议、首版 `StdlibRuntimePressureSampler`（懒 `psutil` 取真实 CPU/内存,缺失降级到 stdlib load-average 或定义的中性默认,绝不为"仅不可用"的事实抛错）、`RuntimeInteroceptiveSource`（实现既有 `SensorySource`,每通道一条有界确定性信号）。不拥有任何 feeling/salience/认知策略,不 import feeling/appraisal/neuromodulation owner。
+- 作用：收口 `gap_interoceptive_signal_source` 的**生产者半边**——`02→05` 的身体信号传入路径（代码早已存在但恒空）现真实承载信号；opt-in `assemble_runtime(interoceptive_sampler=...)` 下 `05` stage 收到非空且校验通过的 `internal_signals`。
+- 下一步：（1）让 `05` 构造路径真正消费 `internal_signals` 塑造体感（FG-2,下一刀）；（2）把同一压力读数喂给 `09` 门控的 `workload_pressure`（当前常量）作为第二消费者；（3）更丰富的内感受通道（模拟身体状态模型：心跳/呼吸类比、跨 tick 疲劳累积）；（4）从 `21` 可观测喂真实 tick 延迟/错误率到 latency/error 通道。
 
 ---
 

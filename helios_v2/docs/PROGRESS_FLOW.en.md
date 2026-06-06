@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R49 (`10` directed-retrieval recall-intent sourced from the real prior-tick `11` handoff; memory-guided-maintenance loop closed). Test baseline: 635 passed. HEAD-era: R49. Doc clarification (post-R41): BODY reclassified as a gap (no producer); 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R50 (new `helios_v2.interoception` producer: real compute/runtime pressure -> `02` -> `05`, closing the BODY producer half, opt-in). Test baseline: 650 passed. HEAD-era: R50. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -48,7 +48,7 @@ flowchart TD
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
     EXT([External stimulus: CLI bound now / QQ / voice future]):::base
-    BODY["Internal body signal - interoceptive source: GAP, no producer yet (see gap_interoceptive_signal_source)"]:::gap
+    BODY["Internal body signal - interoceptive source: R50 producer delivered (helios_v2.interoception, compute/runtime pressure, opt-in); 05 consumption next slice"]:::base
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
@@ -364,13 +364,25 @@ flowchart TD
   `compact_stimuli` with no recall intent (a defined behavior, always valid). Owner-neutral:
   composition transports the `11`-owned directive verbatim; `10`/`11` are unchanged. Opt-in on the
   same switch; default/non-semantic keep the constant. 635 tests green and network-free.
-- Interoceptive-source gap (BODY node, red): `05` is built to consume real body/interoceptive
-  signals (the feeling stage filters the `02` batch for body/interoceptive modality), but nothing
-  produces them today — the sensory sources emit only text, so `internal_signals` is always empty
-  and feeling is derived from the `04` neuromodulator state alone. The BODY node is an
-  interface-only placeholder with no owner. A real producer is a future owner: a simulated
-  body-state model, or a first-version proxy mapping compute/runtime pressure (CPU/memory/latency)
-  into bounded interoceptive signals (see `gap_interoceptive_signal_source`).
+- P3 / FG-2 prerequisite (R50): the interoceptive producer lands, closing the **producer** half of
+  `gap_interoceptive_signal_source`. A new owner `helios_v2.interoception` (a peripheral afferent
+  producer) reports the runtime's real internal condition (compute/runtime pressure:
+  cpu/memory/latency/error) as bounded `interoceptive` `RawSignal`s into `02`: a `RuntimePressureSample`
+  contract (four `[0,1]` channels) + an injected `RuntimePressureSampler` protocol + a first-version
+  `StdlibRuntimePressureSampler` (lazy psutil for real CPU/memory, degrading to stdlib load-average
+  or a defined neutral default, never raising for a merely-unavailable fact) + a
+  `RuntimeInteroceptiveSource` implementing the existing `SensorySource` (one bounded deterministic
+  signal per channel). Sensory normalizes them to `modality="interoceptive"` stimuli that the `05`
+  stage already filters and `validate_internal_body_signal` accepts, so `05` receives non-empty
+  `internal_signals`. **Scope (no half-step):** this slice delivers the producer and the live,
+  validated afferent; the `05` construction path still ignores `internal_signals` this slice (its
+  feeling value is unchanged), so making `05` actually consume them to shape feeling is the next
+  slice (FG-2). The owner holds no feeling/salience/cognitive policy and imports no
+  feeling/appraisal/neuromodulation owner; a merely-unavailable fact degrades to a defined default,
+  while an outright sampler exception propagates (no fabricated healthy body). Opt-in
+  (`assemble_runtime(interoceptive_sampler=...)`); default/channel-bound/semantic assemblies are
+  byte-for-byte unchanged when off; no new mandatory/network dependency (psutil lazy + degrades).
+  635 -> 650 tests green and network-free.
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real
