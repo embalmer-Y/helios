@@ -39,7 +39,7 @@ flowchart TD
     classDef infra fill:#cfe2f3,stroke:#1c4587,color:#0b3d91
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
-    EXT([外界刺激: 真实源可注入(R59 external_signal_source) / CLI已绑定 / QQ 语音 后续]):::base
+    EXT["外界刺激: 真实源可注入 - R59 external_signal_source / CLI已绑定 / QQ 语音 后续"]:::base
     BODY["内部身体信号 - 内感受来源: R50 交付生产者(helios_v2.interoception, compute/runtime压力, opt-in); R51起05真正消费塑造体感"]:::base
     S02[02 感觉接入 - 相对完整]:::deep
     S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base

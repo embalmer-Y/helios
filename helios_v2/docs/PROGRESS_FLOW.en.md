@@ -47,7 +47,7 @@ flowchart TD
     classDef infra fill:#cfe2f3,stroke:#1c4587,color:#0b3d91
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
-    EXT([External stimulus: real source injectable (R59 external_signal_source) / CLI bound / QQ voice future]):::base
+    EXT["External stimulus: real source injectable - R59 external_signal_source / CLI bound / QQ voice future"]:::base
     BODY["Internal body signal - interoceptive source: R50 producer delivered (helios_v2.interoception, compute/runtime pressure, opt-in); R51 05 consumes it to shape feeling"]:::base
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
