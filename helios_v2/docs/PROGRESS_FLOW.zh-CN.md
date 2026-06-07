@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R63（`09` 门控 `selected_stimuli` 去 shim：门控信号中最后一个常量 shim 被真实同 tick `03` appraisal 批最大值 aggregate/novelty/uncertainty 取代，经 owner-neutral `_selected_stimuli_from_appraisal` helper 投影；默认装配 `FirstVersionAggregateEstimator` 从 `0.4` 提升到 `0.7` 提供诚实点火源——门控分数 `~0.555 > 0.55`；缺失 `03` 结果回退到文档化冷启动常量；**R63 后门控信号中不再有常量 shim**）。测试基线：738 passed。版本：R63。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R64（P3 退出评估：自动化评估测试 `tests/test_p3_exit_evaluation.py` 正式验证 P3 退出信号——FG-1 去 shim 覆盖率（03-10 每阶段消费真实信号）、FG-2.1 情感跨 tick 演化、FG-2.2 外部因果链（变化刺激→03→04→05→09）和内部因果链（机器压力→05→07→09）、结构化 `P3ExitVerdict` pass/fail 报告；诚实记录不在 P3 范围的剩余 shim。测试基线：746 passed）。R63（`09` 门控 `selected_stimuli` 去 shim——门控信号中最后一个常量 shim 被真实同 tick `03` appraisal 取代；**R63 后门控信号中不再有常量 shim**）。版本：R64。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的

@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R62. Test baseline: 738 passed (network-free).
+> Status: living owner reference. Last synced: R64. Test baseline: 746 passed (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -44,6 +44,9 @@ fixed first-version constants, not real signals. De-shimming these is the substa
 the infrastructure owners. **Under the semantic + interoceptive assembly, `03-08` are de-shimmed,
 and since R51 there is a first end-to-end, evaluation-reconstructable FG-2 causal chain: real
 compute/runtime pressure -> `05` feeling -> `07` workspace competition.**
+**R64 formally assessed the P3 exit signal and judged PASS: FG-1 (stages 03-10 de-shim coverage),
+FG-2.1 (emotion evolves cross-tick), and FG-2.2 (external + internal causal chains traceable
+end-to-end) all hold.**
 
 ---
 

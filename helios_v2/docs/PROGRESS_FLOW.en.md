@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R63 (`09` gate `selected_stimuli` de-shim: the last constant shim in the gate signal replaced by real same-tick `03` appraisal batch-max aggregate/novelty/uncertainty projected through an owner-neutral `_selected_stimuli_from_appraisal` helper; the default assembly's `FirstVersionAggregateEstimator` raised from `0.4` to `0.7` to provide honest ignition alongside the other real signals — gate score `~0.555 > 0.55`; absent `03` result falls back to documented cold-start constants; **after R63 no constant shim remains in the gate signal**). Test baseline: 738 passed. HEAD-era: R63. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R64 (P3 exit evaluation: automated assessment tests `tests/test_p3_exit_evaluation.py` formally validate the P3 exit signal — FG-1 de-shim coverage (stages 03-10 each consume real signals), FG-2.1 emotion evolves cross-tick, FG-2.2 external causal chain (varying stimulus → 03 → 04 → 05 → 09) and internal causal chain (machine pressure → 05 → 07 → 09), structured `P3ExitVerdict` pass/fail report; honest record of out-of-scope remaining shims. Test baseline: 746 passed). R63 (`09` gate `selected_stimuli` de-shim — the last constant shim in the gate signal replaced by real same-tick `03` appraisal; **after R63 no constant shim remains in the gate signal**). HEAD-era: R64. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
