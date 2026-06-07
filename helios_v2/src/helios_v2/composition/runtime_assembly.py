@@ -72,6 +72,7 @@ from helios_v2.memory import (
     SalienceGatedReplayCandidateSelector,
 )
 from helios_v2.neuromodulation import (
+    AppraisalDerivedNeuromodulatorUpdatePath,
     DualTimescaleNeuromodulatorUpdatePath,
     NeuromodulatorConfig,
     NeuromodulatorEngine,
@@ -146,7 +147,7 @@ from helios_v2.persistence import (
     SemanticStoreBackedDirectedMemoryCandidateProvider,
     StoreBackedDirectedMemoryCandidateProvider,
 )
-from helios_v2.sensory import RawSignal, SensoryIngress
+from helios_v2.sensory import RawSignal, SensoryIngress, SensorySource
 from helios_v2.thought_gating import (
     ArousalAwareThoughtGatePath,
     FirstVersionThoughtGatePath,
@@ -161,7 +162,6 @@ from helios_v2.workspace import (
 )
 
 from .bridges import (
-    AppraisalDerivedNeuromodulatorUpdatePath,
     ChannelBackedPlannerBridgeRequestBridge,
     ChannelSubsystemStateProvider,
     ContinuityCheckpointBridge,
@@ -839,22 +839,158 @@ class RuntimeHandle:
         return tuple(self.tick() for _ in range(n))
 
 
+# Sentinel marking a loose `assemble_runtime` keyword argument the caller did not supply, so the
+# resolver can distinguish "omitted" from "explicitly passed None" when reconciling with a profile.
+_UNSET: object = object()
+
+
+# The names of the capability/override seams a `RuntimeProfile` carries. Used by the resolver
+# to reject combining an explicit profile with overlapping loose `assemble_runtime` kwargs.
+_RUNTIME_PROFILE_FIELD_NAMES: tuple[str, ...] = (
+    "dependency_specs",
+    "dependency_provider",
+    "config",
+    "recorder",
+    "gateway",
+    "deterministic_thought",
+    "channel_cli",
+    "cli_output_sink",
+    "experience_store",
+    "embedding_gateway",
+    "embedding_profile_name",
+    "continuity_checkpoint",
+    "interoceptive_sampler",
+    "temporal_source",
+    "external_signal_source",
+)
+
+
+@dataclass(frozen=True)
+class RuntimeProfile:
+    """Owner: composition.
+
+    Purpose:
+        A first-class, introspectable bundle of the capability seams and dependency-surface
+        overrides the composition root assembles a runtime with. It groups what were nine
+        loose `assemble_runtime` keyword arguments plus the three dependency-surface overrides
+        into one validated object, owns the cross-capability validation in one place, and
+        exposes the derived capability flags as named properties.
+
+    Failure semantics:
+        `__post_init__` raises `CompositionError` on a cross-capability rule violation
+        (currently: an embedding gateway without a durable experience store). Validation is
+        fail-fast at construction; there is no degraded profile.
+
+    Notes:
+        This is a composition-owned capability/configuration bundle. It holds no cognitive
+        policy: no salience mapping, no pressure constant, no decision threshold. Adding a new
+        capability is one field plus, if needed, one derived property here, instead of another
+        loose parameter threaded through `assemble_runtime`. All fields default to the current
+        default assembly's capability set, so `RuntimeProfile()` is the default runtime.
+    """
+
+    dependency_specs: tuple[RuntimeDependencySpec, ...] | None = None
+    dependency_provider: RuntimeDependencyProvider | None = None
+    config: "CompositionConfig | None" = None
+    recorder: "RuntimeObservabilityRecorder | None" = None
+    gateway: "LlmGatewayAPI | None" = None
+    deterministic_thought: bool = False
+    channel_cli: bool = False
+    cli_output_sink: "Callable[[str], None] | None" = None
+    experience_store: ExperienceStore | None = None
+    embedding_gateway: EmbeddingGatewayAPI | None = None
+    embedding_profile_name: str = "experience-embedding"
+    continuity_checkpoint: ContinuityCheckpointStore | None = None
+    interoceptive_sampler: "RuntimePressureSampler | None" = None
+    temporal_source: "TemporalSource | None" = None
+    external_signal_source: "SensorySource | None" = None
+
+    def __post_init__(self) -> None:
+        # Semantic memory (`34`) requires durable persistence (`33`): an embedding gateway
+        # without an experience store is a composition error, not a silent no-op.
+        if self.embedding_gateway is not None and self.experience_store is None:
+            raise CompositionError(
+                "Semantic memory requires a durable experience store: "
+                "pass experience_store together with embedding_gateway"
+            )
+        # The injected external afferent source and the channel-bound assembly both own the
+        # external afferent position; supplying both would register two competing external
+        # sources, so it is a fail-fast composition error rather than a silent precedence bug.
+        if self.external_signal_source is not None and self.channel_cli:
+            raise CompositionError(
+                "external_signal_source and channel_cli both own the external afferent: "
+                "pass only one"
+            )
+
+    @property
+    def semantic_memory_enabled(self) -> bool:
+        """Owner: composition.
+
+        Whether the semantic-memory assembly is active: a durable experience store and an
+        embedding gateway are both present. This is the single trigger for the `03`-`10`
+        de-shim wiring; it is computed once here rather than recomputed in `assemble_runtime`.
+        """
+
+        return self.experience_store is not None and self.embedding_gateway is not None
+
+
+def _resolve_profile(
+    profile: "RuntimeProfile | None",
+    loose_kwargs: dict[str, object],
+) -> "RuntimeProfile":
+    """Owner: composition.
+
+    Purpose:
+        Resolve the effective `RuntimeProfile` for `assemble_runtime`. When no explicit profile
+        is given, build one from the loose keyword arguments (the backward-compatible path).
+        When an explicit profile is given, reject any overlapping loose kwarg so configuration
+        is never silently sourced from two places.
+
+    Inputs:
+        `profile` - an explicit `RuntimeProfile` or `None`.
+        `loose_kwargs` - the loose capability/override kwargs `assemble_runtime` received,
+            already filtered to those the caller actually supplied (absent ones omitted).
+
+    Returns:
+        The effective `RuntimeProfile`.
+
+    Raises:
+        CompositionError if an explicit profile is combined with any overlapping loose kwarg.
+    """
+
+    if profile is None:
+        specs = loose_kwargs.get("dependency_specs")
+        if specs is not None:
+            loose_kwargs = dict(loose_kwargs)
+            loose_kwargs["dependency_specs"] = tuple(specs)
+        return RuntimeProfile(**loose_kwargs)  # type: ignore[arg-type]
+    overlapping = sorted(loose_kwargs.keys())
+    if overlapping:
+        raise CompositionError(
+            "assemble_runtime received both an explicit profile and overlapping loose "
+            f"keyword arguments {overlapping}; pass capabilities through the profile only"
+        )
+    return profile
+
+
 def assemble_runtime(
     *,
-    dependency_specs: list[RuntimeDependencySpec] | None = None,
-    dependency_provider: RuntimeDependencyProvider | None = None,
-    config: CompositionConfig | None = None,
-    recorder: RuntimeObservabilityRecorder | None = None,
-    gateway: LlmGatewayAPI | None = None,
-    deterministic_thought: bool = False,
-    channel_cli: bool = False,
-    cli_output_sink: "Callable[[str], None] | None" = None,
-    experience_store: ExperienceStore | None = None,
-    embedding_gateway: EmbeddingGatewayAPI | None = None,
-    embedding_profile_name: str = "experience-embedding",
-    continuity_checkpoint: ContinuityCheckpointStore | None = None,
-    interoceptive_sampler: "RuntimePressureSampler | None" = None,
-    temporal_source: "TemporalSource | None" = None,
+    profile: "RuntimeProfile | None" = None,
+    dependency_specs: list[RuntimeDependencySpec] | None | object = _UNSET,
+    dependency_provider: RuntimeDependencyProvider | None | object = _UNSET,
+    config: "CompositionConfig | None | object" = _UNSET,
+    recorder: "RuntimeObservabilityRecorder | None | object" = _UNSET,
+    gateway: "LlmGatewayAPI | None | object" = _UNSET,
+    deterministic_thought: bool | object = _UNSET,
+    channel_cli: bool | object = _UNSET,
+    cli_output_sink: "Callable[[str], None] | None | object" = _UNSET,
+    experience_store: ExperienceStore | None | object = _UNSET,
+    embedding_gateway: EmbeddingGatewayAPI | None | object = _UNSET,
+    embedding_profile_name: str | object = _UNSET,
+    continuity_checkpoint: ContinuityCheckpointStore | None | object = _UNSET,
+    interoceptive_sampler: "RuntimePressureSampler | None | object" = _UNSET,
+    temporal_source: "TemporalSource | None | object" = _UNSET,
+    external_signal_source: "SensorySource | None | object" = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -890,18 +1026,59 @@ def assemble_runtime(
         named LLM profile and that profile's static readiness is a critical dependency; the
         `deterministic_thought` opt-in assembles the deterministic path without that
         dependency.
+
+        Capabilities may be passed either as the loose keyword arguments above (backward
+        compatible) or bundled into an explicit `profile` (`RuntimeProfile`). Supplying both an
+        explicit profile and an overlapping loose kwarg raises `CompositionError`.
     """
+
+    _loose: dict[str, object] = {}
+    for _name, _value in (
+        ("dependency_specs", dependency_specs),
+        ("dependency_provider", dependency_provider),
+        ("config", config),
+        ("recorder", recorder),
+        ("gateway", gateway),
+        ("deterministic_thought", deterministic_thought),
+        ("channel_cli", channel_cli),
+        ("cli_output_sink", cli_output_sink),
+        ("experience_store", experience_store),
+        ("embedding_gateway", embedding_gateway),
+        ("embedding_profile_name", embedding_profile_name),
+        ("continuity_checkpoint", continuity_checkpoint),
+        ("interoceptive_sampler", interoceptive_sampler),
+        ("temporal_source", temporal_source),
+        ("external_signal_source", external_signal_source),
+    ):
+        if _value is not _UNSET:
+            _loose[_name] = _value
+    resolved_profile = _resolve_profile(profile, _loose)
+
+    # Rebind the local capability names from the resolved profile so the assembly body below is
+    # unchanged. The profile owns the cross-capability validation (embedding requires store) and
+    # the derived `semantic_memory_enabled` flag.
+    dependency_specs = (
+        list(resolved_profile.dependency_specs)
+        if resolved_profile.dependency_specs is not None
+        else None
+    )
+    dependency_provider = resolved_profile.dependency_provider
+    config = resolved_profile.config
+    recorder = resolved_profile.recorder
+    gateway = resolved_profile.gateway
+    deterministic_thought = resolved_profile.deterministic_thought
+    channel_cli = resolved_profile.channel_cli
+    cli_output_sink = resolved_profile.cli_output_sink
+    experience_store = resolved_profile.experience_store
+    embedding_gateway = resolved_profile.embedding_gateway
+    embedding_profile_name = resolved_profile.embedding_profile_name
+    continuity_checkpoint = resolved_profile.continuity_checkpoint
+    interoceptive_sampler = resolved_profile.interoceptive_sampler
+    temporal_source = resolved_profile.temporal_source
+    external_signal_source = resolved_profile.external_signal_source
 
     resolved_config = config if config is not None else default_composition_config()
     thought_profile_name = resolved_config.llm.thought_profile_name
-
-    # Semantic memory (`34`) requires durable persistence (`33`): an embedding gateway without
-    # an experience store is a composition error, not a silent no-op.
-    if embedding_gateway is not None and experience_store is None:
-        raise CompositionError(
-            "Semantic memory requires a durable experience store: "
-            "pass experience_store together with embedding_gateway"
-        )
 
     def _embed_text(text: str) -> tuple[float, ...]:
         """Owner-neutral embed callable bound to the injected embedding gateway.
@@ -983,6 +1160,12 @@ def assemble_runtime(
                 bound_driver_ids=(cli_driver.driver_id,),
                 baseline_provider=resolved_provider,
             )
+    elif external_signal_source is not None:
+        # External-afferent assembly (R59): a real, injected `SensorySource` drives the external
+        # afferent in place of the constant placeholder. Owner-neutral: composition forwards the
+        # source's `RawSignal`s through `02` normalization; it does not interpret or shape content.
+        # Mutually exclusive with `channel_cli` (validated on the profile).
+        ingress.register_source(external_signal_source)
     else:
         ingress.register_source(FirstVersionSensorySource(signals=resolved_config.source_signals))
 
@@ -1034,8 +1217,9 @@ def assemble_runtime(
     # `03` dimension de-shims share one trigger with the `04` neuromodulation de-shim (R36):
     # the semantic-memory assembly (store + embedding gateway both present), where `03`
     # appraisal produces real signals. Deriving neuromodulation from appraisal only matters
-    # once appraisal itself is real, so the de-shims activate together.
-    semantic_memory_enabled = experience_store is not None and embedding_gateway is not None
+    # once appraisal itself is real, so the de-shims activate together. The trigger is owned by
+    # the resolved profile (computed once), not recomputed here.
+    semantic_memory_enabled = resolved_profile.semantic_memory_enabled
 
     # `03` dimension de-shims (R35 novelty, R39 uncertainty + social, R40 threat + reward): when
     # enabled, all five `03` dimensions become real signals. The appraisal owner keeps every

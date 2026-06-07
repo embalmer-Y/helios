@@ -37,7 +37,11 @@ from helios_v2.appraisal.engine import (
     SocialContextSource,
 )
 from helios_v2.action_externalization import ThoughtExternalizationRequest
-from helios_v2.autonomy import ProactiveDriveRequest
+from helios_v2.autonomy import (
+    AutonomyDriveInputProjection,
+    ProactiveCognitionFacts,
+    ProactiveDriveRequest,
+)
 from helios_v2.channel import ChannelSubsystemAPI
 from helios_v2.directed_retrieval import (
     DirectedMemoryCandidateProvider,
@@ -133,6 +137,53 @@ class FirstVersionSensorySource:
                 metadata={"turn_id": "t1"},
             ),
         )
+
+
+@dataclass
+class SequenceExternalSignalSource:
+    """Owner: composition (external-afferent assembly only, R59).
+
+    Purpose:
+        A first-version injectable external `SensorySource` that replays a caller-supplied
+        sequence of real `RawSignal` batches, one batch per tick. It is the honest in-repo
+        demonstration of the external-afferent seam: it carries only the real signals the
+        caller provides and emits an explicitly empty batch once the sequence is exhausted.
+
+    Failure semantics:
+        None of its own; `02` sensory owns required-signal validation. An empty batch is a
+        defined honest-absence behavior, never a fabricated stimulus.
+
+    Notes:
+        This source fabricates no content. It does not invent, randomize, or cycle canned
+        text to simulate a changing external world (that would be the prompt theater
+        `ARCHITECTURE_PHILOSOPHY` §4.3/§8 forbids). Real deployments inject their own
+        `SensorySource` (e.g. a network-driver adapter in `wave_C`); this type exists so the
+        seam is exercised with real, caller-owned signals in tests and dev. The cursor advances
+        per `emit_raw_signals` call; past the end it yields `()`.
+    """
+
+    source_name_value: str = "external"
+    batches: tuple[tuple[RawSignal, ...], ...] = ()
+    _cursor: int = field(default=0, init=False, repr=False)
+
+    @property
+    def source_name(self) -> str:
+        """Stable source owner name consumed by sensory ingress registration."""
+
+        return self.source_name_value
+
+    def emit_raw_signals(self) -> tuple[RawSignal, ...]:
+        """Return the current tick's caller-supplied real signal batch, then advance.
+
+        Past the end of the supplied sequence this returns an empty tuple (honest absence),
+        never a fabricated constant.
+        """
+
+        if self._cursor >= len(self.batches):
+            return ()
+        batch = self.batches[self._cursor]
+        self._cursor += 1
+        return batch
 
 
 @dataclass
@@ -460,114 +511,14 @@ class FirstVersionActiveChannelReporter(ActiveChannelReporter):
         return ("acetylcholine", "excitation")
 
 
-@dataclass(frozen=True)
-class _AggregatedSalience:
-    """Owner: composition. Per-dimension max salience aggregated across an appraisal batch."""
-
-    threat: float
-    reward: float
-    novelty: float
-    social: float
-    uncertainty: float
-
-
-def _aggregate_salience(batch) -> _AggregatedSalience:
-    """Owner: composition. Aggregate a rapid-appraisal batch into one coarse salience vector.
-
-    Per-dimension maximum across the batch's appraisals (the most salient stimulus drives
-    modulation). An empty batch yields all-zero salience, so derivation reduces to the tonic
-    baseline. Reads only the public `RapidSalienceVector` fields.
-    """
-
-    appraisals = batch.appraisals
-    if not appraisals:
-        return _AggregatedSalience(0.0, 0.0, 0.0, 0.0, 0.0)
-    vectors = [appraisal.salience for appraisal in appraisals]
-    return _AggregatedSalience(
-        threat=max(vector.threat for vector in vectors),
-        reward=max(vector.reward for vector in vectors),
-        novelty=max(vector.novelty for vector in vectors),
-        social=max(vector.social for vector in vectors),
-        uncertainty=max(vector.uncertainty for vector in vectors),
-    )
-
-
 def _clamp(value: float, low: float, high: float) -> float:
-    """Owner: composition. Clamp a value into [low, high]."""
+    """Owner: composition. Clamp a value into [low, high].
+
+    A pure owner-neutral numeric helper used by several projection bridges (recall similarity,
+    interoceptive workload pressure). It encodes no cognitive scoring policy.
+    """
 
     return round(min(high, max(low, value)), 4)
-
-
-@dataclass
-class AppraisalDerivedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
-    """Owner: composition (semantic-memory assembly only).
-
-    Purpose:
-        Derive the next neuromodulator levels from the real rapid-appraisal batch around the
-        configured tonic baseline, replacing the constant first-version path so real `03`
-        salience (especially the R35 novelty signal) shapes the `04` state.
-
-    Failure semantics:
-        A malformed batch is rejected by the `04` engine before this path runs. This path is a
-        total deterministic function of the batch + config; it never branches into a degraded
-        mode and never diverges outside the legal range (every channel is clamped).
-
-    Notes:
-        Owner-neutral glue conforming to the owner's `NeuromodulatorUpdatePath` protocol; the
-        `04` engine is unchanged. Stateless by design: it reads no prior-tick levels (true
-        dual-timescale decay is a later slice). The per-channel sensitivity coefficients are
-        explicit bounded first-version constants organized under the config's declared
-        learned-parameter categories; a later P5 slice tunes them without changing the equation
-        shape. The mapping is a fixed linear combination plus clamp -- no NN, no hidden branch.
-    """
-
-    novelty_to_norepinephrine: float = 0.5
-    uncertainty_to_norepinephrine: float = 0.3
-    reward_to_dopamine: float = 0.5
-    novelty_to_dopamine: float = 0.15
-    threat_to_cortisol: float = 0.5
-
-    def update_levels(
-        self,
-        batch,
-        config: NeuromodulatorConfig,
-        tick_id: int | None,
-        prior_levels: NeuromodulatorLevels | None = None,
-    ) -> NeuromodulatorLevels:
-        del tick_id, prior_levels
-        salience = _aggregate_salience(batch)
-        base = config.tonic_baseline
-        low = config.legal_min
-        high = config.legal_max
-        return NeuromodulatorLevels(
-            dopamine=_clamp(
-                base.dopamine
-                + self.reward_to_dopamine * salience.reward
-                + self.novelty_to_dopamine * salience.novelty,
-                low.dopamine,
-                high.dopamine,
-            ),
-            norepinephrine=_clamp(
-                base.norepinephrine
-                + self.novelty_to_norepinephrine * salience.novelty
-                + self.uncertainty_to_norepinephrine * salience.uncertainty,
-                low.norepinephrine,
-                high.norepinephrine,
-            ),
-            cortisol=_clamp(
-                base.cortisol + self.threat_to_cortisol * salience.threat,
-                low.cortisol,
-                high.cortisol,
-            ),
-            # Remaining channels regress to the tonic baseline (clamped) in this slice; their
-            # real drivers are later de-shim slices.
-            serotonin=_clamp(base.serotonin, low.serotonin, high.serotonin),
-            acetylcholine=_clamp(base.acetylcholine, low.acetylcholine, high.acetylcholine),
-            oxytocin=_clamp(base.oxytocin, low.oxytocin, high.oxytocin),
-            opioid_tone=_clamp(base.opioid_tone, low.opioid_tone, high.opioid_tone),
-            excitation=_clamp(base.excitation, low.excitation, high.excitation),
-            inhibition=_clamp(base.inhibition, low.inhibition, high.inhibition),
-        )
 
 
 @dataclass
@@ -2074,45 +2025,21 @@ class FirstVersionAutonomyRequestBridge:
     """Owner: composition.
 
     Purpose:
-        Build the proactive-drive request from the upstream owner results for one tick,
-        deriving the autonomy drive inputs from the thought owner's real fired-cycle
-        decision plus the planner and continuation results.
+        Build the proactive-drive request from the upstream owner results for one tick by
+        extracting the raw cognition facts and delegating the fact-to-drive-input mapping to
+        the `18` owner's `AutonomyDriveInputProjection`.
 
     Notes:
         Owner-neutral glue. It preserves the upstream gate, retrieval, thought, planner,
-        governance, writeback, and outward-expression provenance ids and translates the
-        thought owner's decision into the bounded drive inputs the autonomy owner consumes.
-        It does NOT select the proactive disposition; the autonomy owner applies its own rule
-        to these inputs. The mapping below is a deterministic translation table from
-        cognition outcome to bounded pressures, not a disposition decision.
-
-    Derivation constants (explicit, documented; see requirement 29):
-        - An action-bearing tick raises continuation/temporal/identity pressure so the
-          autonomy owner's `outward_drive >= 1.6` action threshold is reachable when the
-          planner executed (externalize) or blocked (defer with a blocked-outward record).
-        - A continue/no-action tick keeps outward_drive below the action threshold so the
-          autonomy owner falls through to reflect/explore/defer, and keeps continuation
-          pressure high enough on a continue decision that a carry-forward deferral forms
-          (which is what activates the 24 continuity-thread layer on repeated continue ticks).
+        governance, writeback, and outward-expression provenance ids and reads the raw
+        cognition facts from the published stage results. It does NOT author the
+        cognition-to-pressure mapping, the planner executed/blocked classification, the
+        retrieval-pull normalization, or the autonomy action threshold — those are the `18`
+        owner's policy, recovered into `helios_v2.autonomy` in R57. The bridge only forwards
+        raw facts and assembles the request from the owner-derived summaries.
     """
 
-    # Action-bearing tick pressures (chosen so outward_drive = 0.9+0.4+0.4 = 1.7 >= 1.6).
-    _ACTION_CONTINUATION_PRESSURE: float = 0.9
-    _ACTION_TEMPORAL_PRESSURE: float = 0.4
-    _ACTION_IDENTITY_PRESSURE: float = 0.4
-    # Non-action tick pressures (kept below the 1.6 action threshold).
-    _CONTINUE_CONTINUATION_PRESSURE: float = 0.8
-    _CONCLUDED_CONTINUATION_PRESSURE: float = 0.3
-    _BASELINE_TEMPORAL_PRESSURE: float = 0.3
-    _UNRESOLVED_IDENTITY_PRESSURE: float = 0.6
-    _RESOLVED_IDENTITY_PRESSURE: float = 0.2
-
-    _PLANNER_EXECUTED_STATUSES = ("executed", "accepted")
-    _PLANNER_BLOCKED_STATUSES = (
-        "policy_rejected",
-        "execution_consistency_failed",
-        "execution_failed",
-    )
+    projection: AutonomyDriveInputProjection = field(default_factory=AutonomyDriveInputProjection)
 
     def build_request(
         self,
@@ -2131,17 +2058,21 @@ class FirstVersionAutonomyRequestBridge:
         # No-fire tick (R54): the thought path did not activate. Build the autonomy request from
         # the gate result id plus deterministic no-fire marker ids for the absent thought/retrieval/
         # outward artifacts (explicit absence, not fabricated cognition). The autonomy owner still
-        # runs: it integrates continuation/continuity regardless of whether thought fired. No action,
-        # no outward readiness; continuation pressure comes from the carried `09` continuation state
-        # so a no-fire tick still forms/reinforces deferred continuity like a continue tick.
+        # runs: it integrates continuation/continuity regardless of whether thought fired. The raw
+        # cognition facts (activated=False, continuation_active carried) are forwarded to the owner
+        # projection, which owns the no-fire drive-input mapping.
         if not internal_thought_result.activated:
             tick_label = tick_id if tick_id is not None else "na"
-            continuation_active = thought_gating_result.continuation_state.active
-            continuation_pressure = (
-                self._CONTINUE_CONTINUATION_PRESSURE
-                if continuation_active
-                else self._CONCLUDED_CONTINUATION_PRESSURE
+            facts = ProactiveCognitionFacts(
+                activated=False,
+                has_action_proposal=False,
+                continuation_requested=False,
+                continuation_active=thought_gating_result.continuation_state.active,
+                has_self_revision=False,
+                planner_status=planner_bridge_result.result.status,
+                retrieval_hit_count=0,
             )
+            summaries = self.projection.derive_drive_inputs(facts)
             return ProactiveDriveRequest(
                 request_id=f"autonomy-request:no-fire:runtime:{tick_id}",
                 source_gate_result_id=thought_gating_result.result.result_id,
@@ -2156,50 +2087,25 @@ class FirstVersionAutonomyRequestBridge:
                 source_outward_expression_externalization_draft_id=(
                     f"no-fire-outward-externalization:{tick_label}"
                 ),
-                continuation_summary={"continuation_pressure": round(min(1.0, max(0.0, continuation_pressure)), 4)},
-                retrieval_pull_summary={"retrieval_pull": 0.0},
-                temporal_pressure_summary={"temporal_pressure": self._BASELINE_TEMPORAL_PRESSURE},
-                identity_unresolved_summary={"identity_unresolved_pressure": self._RESOLVED_IDENTITY_PRESSURE},
-                outward_readiness_summary={
-                    "outward_ready": False,
-                    "externalization_blocked": False,
-                },
+                continuation_summary=summaries["continuation_summary"],
+                retrieval_pull_summary=summaries["retrieval_pull_summary"],
+                temporal_pressure_summary=summaries["temporal_pressure_summary"],
+                identity_unresolved_summary=summaries["identity_unresolved_summary"],
+                outward_readiness_summary=summaries["outward_readiness_summary"],
             )
+
         bundle = directed_retrieval_result.bundle
-        retrieval_pull = float(len(bundle.mid_term_hits) + len(bundle.autobiographical_hits)) / 4.0
-
         thought = internal_thought_result.result
-        planner_status = planner_bridge_result.result.status
-        continuation_active = thought_gating_result.continuation_state.active
-
-        has_action = thought.action_proposal is not None
-        planner_executed = planner_status in self._PLANNER_EXECUTED_STATUSES
-        planner_blocked = planner_status in self._PLANNER_BLOCKED_STATUSES
-        wants_continue = bool(thought.continuation_requested) or bool(continuation_active)
-        has_self_revision = thought.self_revision_proposal is not None
-
-        # Outward readiness derives only from whether the thought owner produced an action
-        # proposal and how the planner handled it. No action proposal -> neither ready nor
-        # blocked, so the autonomy owner cannot externalize this tick.
-        outward_ready = has_action and planner_executed
-        externalization_blocked = has_action and planner_blocked
-
-        if has_action:
-            continuation_pressure = self._ACTION_CONTINUATION_PRESSURE
-            temporal_pressure = self._ACTION_TEMPORAL_PRESSURE
-            identity_unresolved_pressure = self._ACTION_IDENTITY_PRESSURE
-        else:
-            continuation_pressure = (
-                self._CONTINUE_CONTINUATION_PRESSURE
-                if wants_continue
-                else self._CONCLUDED_CONTINUATION_PRESSURE
-            )
-            temporal_pressure = self._BASELINE_TEMPORAL_PRESSURE
-            identity_unresolved_pressure = (
-                self._UNRESOLVED_IDENTITY_PRESSURE
-                if has_self_revision
-                else self._RESOLVED_IDENTITY_PRESSURE
-            )
+        facts = ProactiveCognitionFacts(
+            activated=True,
+            has_action_proposal=thought.action_proposal is not None,
+            continuation_requested=bool(thought.continuation_requested),
+            continuation_active=thought_gating_result.continuation_state.active,
+            has_self_revision=thought.self_revision_proposal is not None,
+            planner_status=planner_bridge_result.result.status,
+            retrieval_hit_count=len(bundle.mid_term_hits) + len(bundle.autobiographical_hits),
+        )
+        summaries = self.projection.derive_drive_inputs(facts)
 
         return ProactiveDriveRequest(
             request_id=f"autonomy-request:runtime:{tick_id}",
@@ -2215,16 +2121,11 @@ class FirstVersionAutonomyRequestBridge:
             source_outward_expression_externalization_draft_id=(
                 outward_expression_externalization_result.draft.draft_id
             ),
-            continuation_summary={"continuation_pressure": round(min(1.0, max(0.0, continuation_pressure)), 4)},
-            retrieval_pull_summary={"retrieval_pull": round(min(1.0, max(0.0, retrieval_pull)), 4)},
-            temporal_pressure_summary={"temporal_pressure": round(min(1.0, max(0.0, temporal_pressure)), 4)},
-            identity_unresolved_summary={
-                "identity_unresolved_pressure": round(min(1.0, max(0.0, identity_unresolved_pressure)), 4)
-            },
-            outward_readiness_summary={
-                "outward_ready": outward_ready,
-                "externalization_blocked": externalization_blocked,
-            },
+            continuation_summary=summaries["continuation_summary"],
+            retrieval_pull_summary=summaries["retrieval_pull_summary"],
+            temporal_pressure_summary=summaries["temporal_pressure_summary"],
+            identity_unresolved_summary=summaries["identity_unresolved_summary"],
+            outward_readiness_summary=summaries["outward_readiness_summary"],
         )
 
 

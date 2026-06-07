@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R55。测试基线：702 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R59。测试基线：728 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -56,7 +56,8 @@
 - 完成度：`deep_real`。
 - 职责：把外部与内部原始信号归一化为去重的 `Stimulus`/`StimulusBatch`；保留传输固有的 QoS 元数据。不拥有显著性、检索或路由。
 - 在循环中的作用：第一个认知阶段；把 `RawSignal`（来自 source 或 channel 子系统）变成后续 owner 依赖的归一化批次。
-- 下一步：保护边界真相；无需去 shim。真实外部（网络）信号源随未来 channel driver 到来，不在此处。
+- 完成度细节（R59 外部 afferent 诚实化）：`02` 本身的归一化是真实的,但喂给它的**外部刺激源**此前是常量 shim——默认/语义装配注册 `FirstVersionSensorySource`,每 tick 固定吐 `content="hello runtime"`,这是 composition 注入的常量冒充外部输入（违反 FG-1）,且因内容不变,真实 `03` novelty 在首次写库后塌成定值。R59 把外部 afferent 变成一等可注入能力:`RuntimeProfile.external_signal_source`（符合既有 `02 SensorySource` 协议）注入时取代常量 placeholder;它与 `channel_cli` 互斥（都占外部 afferent 位,同传 `CompositionError`）。首版 `SequenceExternalSignalSource` 只回放调用方提供的真实信号、耗尽后吐空批次,**绝不编造内容**（不发明/随机/循环编造文本,守 §4.3/§8 反 prompt theater）;空 afferent 是诚实缺席,经既有 no-fire/internal-only 收口。语义装配下,变化的外部刺激可测量地改变 `03` novelty 与 `04`/`05` 状态——这是继 R51 内感受链之后的**第二条 FG-2 因果链（外部 afferent）**。**默认 placeholder 现明确标注为非真实**:R59 不让默认变真实（需真实部署源,网络属 wave_C）,而是让真实源可注入、并停止把常量当真实 afferent 计入。opt-in、default-off。
+- 下一步：保护边界真相；真实外部（网络）信号源随未来 channel driver（wave_C）经 R59 的 `external_signal_source` seam 接入。
 
 ### 2.3 `03` 快速显著性评估 — `helios_v2.appraisal`
 - 完成度：`baseline_real`（语义记忆装配下已完全去 shim：五维全部真实——novelty 自 R35、uncertainty + social 自 R39、threat + reward 自 R40——外加聚合判断自 R41；`03` 的每个输出都真实,无常量）。
@@ -75,7 +76,7 @@
 - 完成度：`baseline_real`（语义记忆装配下水平已由 appraisal 推导,并自 R43 起经双时间尺度动力学跨 tick 演化、跨重启续存）。
 - 职责：独立建模的神经调质水平状态（DA/NE/5-HT/ACh/皮质醇/催产素/阿片 + 兴奋/抑制），含显式可学习参数类别。不拥有体感主观化或行动。
 - 在循环中的作用：应当偏置门控阈值、检索、外化强度的调制层。
-- 完成度细节：`36`（P3 第二刀去 shim）在语义记忆装配下把常量更新路径替换为 composition 提供的 `AppraisalDerivedNeuromodulatorUpdatePath`（遵循 owner 既有的 `NeuromodulatorUpdatePath` 协议；引擎与契约不变）。它先对 rapid-appraisal 批次按维度取最大聚合，再按 `clamp(tonic_baseline + sum(sensitivity_k * salience_k), legal_min, legal_max)` 推导每个通道的**瞬时 drive**：多巴胺由 reward（外加弱 novelty）驱动、去甲肾上腺素由 novelty 与 uncertainty 驱动、皮质醇由 threat 驱动，其余通道回归各自 tonic 基线。`43`（P2/P3 铰链）在此之上加了**双时间尺度动力学**：语义装配下 update path 换成 owner 持有的 `DualTimescaleNeuromodulatorUpdatePath`（包裹上面的 drive path）,每通道 `next = clamp(prior + alpha_phasic*(drive-prior) + alpha_tonic*(baseline-prior))`（相位快、张力慢,`0 < alpha_tonic < alpha_phasic <= 1`,挂 `decay_speed_persistence` 类别,P5 可学）。瞬时 drive 仍归注入路径;跨 tick carry/衰减是新的 `04` owner 语义。`NeuromodulatorUpdatePath`/`update_state` 加可选 `prior_levels`/`prior_state`（默认 None 字节级复刻无状态）;`NeuromodulatorRuntimeStage` 像 09/18 持有上一 tick 状态并提供 `seed_prior_state`。冷启动 prior=tonic baseline（一步,无伪造历史）;积分器有界;不稳定 alpha 构造期被拒。`04` 状态经 R42 检查点（快照升 v2 加 `neuromodulator_levels`）跨重启续存。默认、纯时近、离线装配保留无状态常量路径。Caveat：当前只有 novelty 是真实 `03` 驱动（R35），喂给 drive 的其余四维显著性仍是首版常量。
+- 完成度细节：`36`（P3 第二刀去 shim）在语义记忆装配下把常量更新路径替换为 `04` owner 拥有的 `AppraisalDerivedNeuromodulatorUpdatePath`（遵循 owner 既有的 `NeuromodulatorUpdatePath` 协议；引擎与契约不变）。**R56 起该路径由 composition 回迁到 `04` owner 包 `helios_v2.neuromodulation`**：哪个显著性驱动哪个神经调质通道、强度多少，是 `04` 的本职认知策略，此前误置于 assembly-only 的 composition 胶水里（违反 §4.5 / §3.2），现已收回 owner，composition 只构造/注入/包裹它（行为字节级不变，纯回迁）。它先对 rapid-appraisal 批次按维度取最大聚合，再按 `clamp(tonic_baseline + sum(sensitivity_k * salience_k), legal_min, legal_max)` 推导每个通道的**瞬时 drive**：多巴胺由 reward（外加弱 novelty）驱动、去甲肾上腺素由 novelty 与 uncertainty 驱动、皮质醇由 threat 驱动，其余通道回归各自 tonic 基线。`43`（P2/P3 铰链）在此之上加了**双时间尺度动力学**：语义装配下 update path 换成 owner 持有的 `DualTimescaleNeuromodulatorUpdatePath`（包裹上面的 drive path）,每通道 `next = clamp(prior + alpha_phasic*(drive-prior) + alpha_tonic*(baseline-prior))`（相位快、张力慢,`0 < alpha_tonic < alpha_phasic <= 1`,挂 `decay_speed_persistence` 类别,P5 可学）。瞬时 drive 与跨 tick carry/衰减现已同处 `04` owner 包。`NeuromodulatorUpdatePath`/`update_state` 加可选 `prior_levels`/`prior_state`（默认 None 字节级复刻无状态）;`NeuromodulatorRuntimeStage` 像 09/18 持有上一 tick 状态并提供 `seed_prior_state`。冷启动 prior=tonic baseline（一步,无伪造历史）;积分器有界;不稳定 alpha 构造期被拒。`04` 状态经 R42 检查点（快照升 v2 加 `neuromodulator_levels`）跨重启续存。默认、纯时近、离线装配保留无状态常量路径。Caveat：当前只有 novelty 是真实 `03` 驱动（R35），喂给 drive 的其余四维显著性仍是首版常量。
 - 下一步：（1）✅ 双时间尺度 tonic/phasic 衰减携带上一 tick 水平 + 跨重启续存——**R43 已交付**；（2）`P5` 用奖励预测误差（DA）与结果反馈学习有界 sensitivity/alpha 系数，保持方程形状；（3）跨通道耦合（已声明的 `cross_channel_coupling_strength` 类别），超越首版独立映射；（4）下游耦合——`04` 的两个消费者现已都真实：去甲肾上腺素耦合进 `09` 门控（`37`），完整 `04` 状态驱动 `05` 体感（`38`）；仍待：cortisol/inhibition 硬门控进 `09`、以及其余通道（多巴胺→检索/探索）进各自消费者（FG-1/FG-2）；（5）给 `03` 其余四维去 shim，使所有神经调质驱动皆为真实。
 
 ### 2.5 `05` 内感受体感层 — `helios_v2.feeling`
@@ -111,7 +112,7 @@
 - 职责：思考窗口触发决策与多 tick 延续压力 carry 的唯一 owner；紧凑门控可观测。不坍缩进检索或思考生成。
 - 在循环中的作用：决定一个 tick 是否触发思考路径，并把延续压力向前 carry。
 - 完成度细节：`37`（P3 第三刀去 shim）使 `09` 门控决策成为 `04` 神经调质水平的首个真实消费者。owner 新增 `ArousalAwareThoughtGatePath` 与 `ThoughtGateSignalSnapshot` 上一个附加可选原始事实字段 `neuromodulatory_arousal`；语义记忆装配下 composition 把真实 `04` 去甲肾上腺素水平转发进来（仅原始事实——arousal→门控的映射归属本 owner,不在 composition）。该 path 向门控分数加一个非负有界项 `arousal_gain * arousal`（首版 `0.15`,属 `gate_policy` 类别）；单调、确定性、无状态,且结构上绝非硬门控（权重 `0.15 < fire 阈值 0.55`,且加项非负）。`48`（接 R46）把门控分中第二大的非刺激项 `global_activation_level`（权重 `* 0.20`）从常量 `0.9` 去 shim：语义装配下 composition 的门控信号 bridge 现从同 tick 的 `07` `WorkspaceCompetitionStageResult` 取真实工作空间激活——保留候选中的最大 `workspace_score_hint`（注意力中持有的主导点火强度）,无保留则 `0.0`。owner-neutral glue（bridge 只转发有界原始事实,clamp 到 `[0,1]`）;`09` 仍独占门控决策与该项权重（门控 path 不变）。R37 的 arousal 耦合保留（两个真实事实同乘一个快照）。`07` 在 `09` 前运行,故缺失/类型错的 `07` 结果是 hard fail（既有 `RuntimeStageExecutionError`）,无静默回退。其余门控信号输入（`workload_pressure`、`temporal_signal`、`drive_urgency_signal`、`dmn_available`）与 `selected_stimuli` 投影仍为首版常量；当 `neuromodulatory_arousal` 为 `None` 时门控 path 仍字节级复刻首版（默认/recency/离线不变）。
-- 下一步：（1）✅ `global_activation_level` 接真实 `07`——**R48 已交付**；（2）✅ `workload_pressure` 接真实 compute/runtime 压力——**R53 已交付**（owner-neutral helper 从同 tick `02` 批次的 R50 内感受 cpu/memory 负载刺激取最大值,经两个门控信号 bridge 转发,取代常量 `0.1`;`09` 仍独占该项权重与 block 阈值;**R53 浮现的约束**：高负载现会正确地把门控压到 `resource_pressure_too_high`/no-fire,但装配链尚无 gate-no-fire 收口（directed retrieval 对非 fire 门控会抛错）,故 R53 端到端只在 fire 窗口内（cpu/memory ≤ ~0.3）演练,高负载→block 关系在 helper 级验证——**R54 已收口该 gate-no-fire tick**（是 R28 fired-but-no-proposal `internal_only` 的门控-no-fire 镜像：no-fire 时每个 gate 后阶段产出显式 not-activated 结果、不调 owner fire 路径,经既有 internal-only 连续性尾收口,高负载 tick 现端到端完成））；其余输入各自一刀：`temporal_signal` + `dmn_available`——**R55 已交付**（新 owner `helios_v2.temporal`：rest→DMN、elapsed-rest→temporal_signal 累积/重置,经门控信号 bridge 转发,`09` 仍独占权重；R54 使其安全：真实 temporal 输入现可正常导致 no-fire 而不崩溃）；`drive_urgency_signal`（`18` 在 `09` 后,需跨 tick carry,R56）、`selected_stimuli`（`02`/`03` 投影,后续）；（3）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（4）`P5` 在 `gate_policy` 类别下学习权重与门控阈值；（5）跨重启持久化/恢复延续压力——**R42 已落地**。
+- 下一步：（1）✅ `global_activation_level` 接真实 `07`——**R48 已交付**；（2）✅ `workload_pressure` 接真实 compute/runtime 压力——**R53 已交付**（owner-neutral helper 从同 tick `02` 批次的 R50 内感受 cpu/memory 负载刺激取最大值,经两个门控信号 bridge 转发,取代常量 `0.1`;`09` 仍独占该项权重与 block 阈值;**R53 浮现的约束**：高负载现会正确地把门控压到 `resource_pressure_too_high`/no-fire,但装配链尚无 gate-no-fire 收口（directed retrieval 对非 fire 门控会抛错）,故 R53 端到端只在 fire 窗口内（cpu/memory ≤ ~0.3）演练,高负载→block 关系在 helper 级验证——**R54 已收口该 gate-no-fire tick**（是 R28 fired-but-no-proposal `internal_only` 的门控-no-fire 镜像：no-fire 时每个 gate 后阶段产出显式 not-activated 结果、不调 owner fire 路径,经既有 internal-only 连续性尾收口,高负载 tick 现端到端完成））；其余输入各自一刀：`temporal_signal` + `dmn_available`——**R55 已交付**（新 owner `helios_v2.temporal`：rest→DMN、elapsed-rest→temporal_signal 累积/重置,经门控信号 bridge 转发,`09` 仍独占权重；R54 使其安全：真实 temporal 输入现可正常导致 no-fire 而不崩溃）；`drive_urgency_signal`（`18` 在 `09` 后,需跨 tick carry,后续 slice）、`selected_stimuli`（`02`/`03` 投影,后续）；（3）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（4）`P5` 在 `gate_policy` 类别下学习权重与门控阈值；（5）跨重启持久化/恢复延续压力——**R42 已落地**。
 
 ### 2.10 `10` 定向检索进思考窗口 — `helios_v2.directed_retrieval`
 - 完成度：`baseline_real`（候选来源真实；recall-intent 自 R49 起由真实 `11` handoff 驱动）。
@@ -172,7 +173,8 @@
 - 完成度：`deep_real`（`relatively_complete`；自 R29 起接真实认知；含 `24` 长程连续性线程层）。
 - 职责：主动驱动整合、有界 disposition 选择、延迟连续性发布、长程连续性线程（复现强化、冲突仲裁、owner 拥有的 `LongHorizonContinuityState`）。可语义地请求主动外化，但绝不执行 channel 路径。
 - 在循环中的作用：把真实认知整合成主动 disposition（行动 → externalize，无行动 → reflect/defer），并跨 tick 形成/强化连续性线程。
-- 下一步（wave_B）：超越有界 carry 的更丰富长程动机演化；更锐利的连续性 key 方案；跨重启持久化/恢复长程状态——**R42 已落地**：`18`/`24` 延迟记录与连续性线程现经 `42` 检查点跨重启续存（opt-in）。
+- 完成度细节（R57 边界回收）：**"认知结果 → 驱动输入"的映射已从 composition 回迁到 `18` owner**。此前 `FirstVersionAutonomyRequestBridge` 在装配胶水里标定压力常量（`_ACTION_*=0.9/0.4/0.4` 等）、做 planner executed/blocked 分类、做 retrieval `/4.0` 归一化,且其注释逆向引用了 owner 的 `outward_drive >= 1.6` 阈值——这是 `18` 的本职认知策略,违反 §4.5/§7.1/§3.3。R57 新增 owner 拥有的 `ProactiveCognitionFacts`（composition 可读的原始认知事实契约）与 `AutonomyDriveInputProjection.derive_drive_inputs(facts)`（产出既有五个驱动输入 summary）,并把阈值固化为 owner 常量 `OUTWARD_ACTION_THRESHOLD = 1.6`（`FirstVersionAutonomyPath` 复用）。composition bridge 退化为：抽取原始事实 + 转发 provenance + 调 owner 投影。`ProactiveDriveRequest` 契约形状不变;逐 tick、逐装配字节级不变。
+- 下一步（wave_B）：超越有界 carry 的更丰富长程动机演化；更锐利的连续性 key 方案；跨重启持久化/恢复长程状态——**R42 已落地**：`18`/`24` 延迟记录与连续性线程现经 `42` 检查点跨重启续存（opt-in）。`drive_integration_policy` 下的压力常量与阈值现归 `18`,P5 可学。
 
 ### 2.20 `17` 评估保真与诊断 provenance — `helios_v2.evaluation`
 - 完成度：`baseline_real`（只读；自 R32 起对账执行真相；消费 `23` 时间线）。
@@ -195,8 +197,9 @@
 ### 3.2 `22` 运行时组合根 — `helios_v2.composition`
 - 完成度：`infra_done`。
 - 职责：仅装配地把依赖门、规范阶段链、owner-neutral 首版 bridge、可选 recorder、以及 opt-in 的 channel/persistence/embedding seam 接成可运行 `RuntimeHandle`。不持认知策略；无降级装配路径。
-- 作用：唯一持有完整装配真相的地方；拥有 `CANONICAL_STAGE_ORDER` / `CHANNEL_BOUND_STAGE_ORDER` 与 owner-neutral bridge。
-- 下一步：随 owner 去 shim，用 owner 真实的跨 owner 契约替换首版 bridge；保持装配不含认知策略。
+- 作用：唯一持有完整装配真相的地方；拥有 `CANONICAL_STAGE_ORDER` / `CHANNEL_BOUND_STAGE_ORDER`、owner-neutral bridge,以及 R58 的 `RuntimeProfile` 能力束。
+- 完成度细节（R58 能力束）：`assemble_runtime` 曾把九个能力 seam 作为松散 kwargs 传入,跨能力规则（embedding 需 store）内联校验,派生标志 `semantic_memory_enabled` 作为局部变量穿过约 10 个三元分支——每加一个能力就要再穿一个松散 flag。R58 引入冻结的、composition 拥有的 `RuntimeProfile` 能力束:聚合这些 seam,在 `__post_init__` 一处做跨能力 fail-fast 校验,以 `semantic_memory_enabled` 属性暴露派生标志（只算一次）。`assemble_runtime` 新增可加的 `profile=` 参数（仍接受全部既有 kwargs,经 `_UNSET` sentinel 构建 profile;profile 与重叠 kwargs 同传则 `CompositionError`）。纯结构重构,逐装配、逐调用方字节级不变。
+- 下一步：随 owner 去 shim，用 owner 真实的跨 owner 契约替换首版 bridge；保持装配不含认知策略。R56 已把误置于此的 `04` 神经调质 drive 映射（`AppraisalDerivedNeuromodulatorUpdatePath`）回迁到 `04` owner；R57 已把误置于此的 `18` autonomy 驱动输入映射（认知结果→压力常量、planner 分类、retrieval 归一化、阈值知识）回迁到 `18` owner（新增 `ProactiveCognitionFacts` + `AutonomyDriveInputProjection`）。guard（`tests/test_composition_owner_boundary_guard.py`）现同时防止 `<salience>_to_<channel>` 敏感度策略与 autonomy 驱动压力/阈值策略再次落入 composition。**当前仍留在 composition 的是被接受的 owner-neutral 胶水**：常量首版 shim 路径（`FirstVersion*`）与纯投影 bridge（只转发已发布 owner 字段、不施加打分权重,映射归消费方 owner,如 `09` 门控的 `workload_pressure`/`global_activation_level` 投影）。后续若发现其他认知策略残留,应按同一模式回迁。新能力应作为 `RuntimeProfile` 的一个字段加入,而非新的松散 kwarg。
 
 ### 3.3 `25` LLM 推理网关 — `helios_v2.llm`
 - 完成度：`infra_done`。

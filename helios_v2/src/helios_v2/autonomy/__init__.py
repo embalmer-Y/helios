@@ -12,16 +12,23 @@ from .contracts import (
     EvaluateProactiveDriveOp,
     LongHorizonContinuityState,
     ProactiveActivityMode,
+    ProactiveCognitionFacts,
     ProactiveDisposition,
     ProactiveDriveRequest,
     ProactiveDriveState,
     PublishAutonomyResultOp,
 )
-from .engine import AutonomyEngine, FirstVersionAutonomyPath
+from .engine import (
+    AutonomyDriveInputProjection,
+    AutonomyEngine,
+    FirstVersionAutonomyPath,
+    OUTWARD_ACTION_THRESHOLD,
+)
 
 __all__ = [
     "AutonomyAPI",
     "AutonomyConfig",
+    "AutonomyDriveInputProjection",
     "AutonomyEngine",
     "AutonomyError",
     "AutonomyLearnedParameterCategory",
@@ -32,7 +39,9 @@ __all__ = [
     "EvaluateProactiveDriveOp",
     "FirstVersionAutonomyPath",
     "LongHorizonContinuityState",
+    "OUTWARD_ACTION_THRESHOLD",
     "ProactiveActivityMode",
+    "ProactiveCognitionFacts",
     "ProactiveDisposition",
     "ProactiveDriveRequest",
     "ProactiveDriveState",

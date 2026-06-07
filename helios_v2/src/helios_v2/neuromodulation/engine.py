@@ -309,3 +309,111 @@ class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
             )
             next_values[channel] = _clamp(stepped, getattr(low, channel), getattr(high, channel))
         return NeuromodulatorLevels(**next_values)
+
+
+@dataclass(frozen=True)
+class _AggregatedSalience:
+    """Owner: neuromodulator system. Per-dimension max salience aggregated across a batch."""
+
+    threat: float
+    reward: float
+    novelty: float
+    social: float
+    uncertainty: float
+
+
+def _aggregate_salience(batch: RapidAppraisalBatch) -> _AggregatedSalience:
+    """Owner: neuromodulator system. Aggregate a rapid-appraisal batch into one salience vector.
+
+    Per-dimension maximum across the batch's appraisals (the most salient stimulus drives
+    modulation). An empty batch yields all-zero salience, so derivation reduces to the tonic
+    baseline. Reads only the public `RapidSalienceVector` fields.
+    """
+
+    appraisals = batch.appraisals
+    if not appraisals:
+        return _AggregatedSalience(0.0, 0.0, 0.0, 0.0, 0.0)
+    vectors = [appraisal.salience for appraisal in appraisals]
+    return _AggregatedSalience(
+        threat=max(vector.threat for vector in vectors),
+        reward=max(vector.reward for vector in vectors),
+        novelty=max(vector.novelty for vector in vectors),
+        social=max(vector.social for vector in vectors),
+        uncertainty=max(vector.uncertainty for vector in vectors),
+    )
+
+
+@dataclass
+class AppraisalDerivedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
+    """Owner: neuromodulator system (R36, recovered to the owner in R56).
+
+    Purpose:
+        Derive the next neuromodulator levels from the real rapid-appraisal batch around the
+        configured tonic baseline, replacing the constant first-version path so real `03`
+        salience (especially the R35 novelty signal) shapes the `04` state. This is the `04`
+        owner's defining cognitive policy: which appraisal salience drives which neuromodulator
+        channel and how strongly.
+
+    Failure semantics:
+        A malformed batch is rejected by the `04` engine before this path runs. This path is a
+        total deterministic function of the batch + config; it never branches into a degraded
+        mode and never diverges outside the legal range (every channel is clamped).
+
+    Notes:
+        Conforms to the owner's own `NeuromodulatorUpdatePath` protocol; the `04` engine is
+        unchanged and composition only constructs/injects/wraps this path (it no longer authors
+        the mapping). Stateless by design: it reads no prior-tick levels (true dual-timescale
+        decay is the R43 `DualTimescaleNeuromodulatorUpdatePath` wrapper). The per-channel
+        sensitivity coefficients are explicit bounded first-version constants organized under the
+        config's declared learned-parameter categories; a later P5 slice tunes them without
+        changing the equation shape. The mapping is a fixed linear combination plus clamp -- no
+        NN, no hidden branch.
+    """
+
+    novelty_to_norepinephrine: float = 0.5
+    uncertainty_to_norepinephrine: float = 0.3
+    reward_to_dopamine: float = 0.5
+    novelty_to_dopamine: float = 0.15
+    threat_to_cortisol: float = 0.5
+
+    def update_levels(
+        self,
+        batch: RapidAppraisalBatch,
+        config: NeuromodulatorConfig,
+        tick_id: int | None,
+        prior_levels: NeuromodulatorLevels | None = None,
+    ) -> NeuromodulatorLevels:
+        del tick_id, prior_levels
+        salience = _aggregate_salience(batch)
+        base = config.tonic_baseline
+        low = config.legal_min
+        high = config.legal_max
+        return NeuromodulatorLevels(
+            dopamine=_clamp(
+                base.dopamine
+                + self.reward_to_dopamine * salience.reward
+                + self.novelty_to_dopamine * salience.novelty,
+                low.dopamine,
+                high.dopamine,
+            ),
+            norepinephrine=_clamp(
+                base.norepinephrine
+                + self.novelty_to_norepinephrine * salience.novelty
+                + self.uncertainty_to_norepinephrine * salience.uncertainty,
+                low.norepinephrine,
+                high.norepinephrine,
+            ),
+            cortisol=_clamp(
+                base.cortisol + self.threat_to_cortisol * salience.threat,
+                low.cortisol,
+                high.cortisol,
+            ),
+            # Remaining channels regress to the tonic baseline (clamped) in this slice; their
+            # real drivers are later de-shim slices.
+            serotonin=_clamp(base.serotonin, low.serotonin, high.serotonin),
+            acetylcholine=_clamp(base.acetylcholine, low.acetylcholine, high.acetylcholine),
+            oxytocin=_clamp(base.oxytocin, low.oxytocin, high.oxytocin),
+            opioid_tone=_clamp(base.opioid_tone, low.opioid_tone, high.opioid_tone),
+            excitation=_clamp(base.excitation, low.excitation, high.excitation),
+            inhibition=_clamp(base.inhibition, low.inhibition, high.inhibition),
+        )

@@ -277,3 +277,128 @@ def test_no_deferred_continuity_yields_empty_long_horizon_state() -> None:
     assert result.drive_state.dominant_disposition == "externalize"
     assert result.long_horizon_state.active_thread_count == 0
     assert result.long_horizon_state.dominant_thread_id is None
+
+
+# --- Requirement 57: owner-owned cognition-to-drive-input projection ---
+
+
+from helios_v2.autonomy import (
+    AutonomyDriveInputProjection,
+    OUTWARD_ACTION_THRESHOLD,
+    ProactiveCognitionFacts,
+)
+
+
+def _facts(
+    *,
+    activated: bool = True,
+    has_action_proposal: bool = False,
+    continuation_requested: bool = False,
+    continuation_active: bool = False,
+    has_self_revision: bool = False,
+    planner_status: str = "no_actionable_proposal",
+    retrieval_hit_count: int = 0,
+) -> ProactiveCognitionFacts:
+    return ProactiveCognitionFacts(
+        activated=activated,
+        has_action_proposal=has_action_proposal,
+        continuation_requested=continuation_requested,
+        continuation_active=continuation_active,
+        has_self_revision=has_self_revision,
+        planner_status=planner_status,
+        retrieval_hit_count=retrieval_hit_count,
+    )
+
+
+def _outward_drive(summaries: dict[str, dict[str, object]]) -> float:
+    return (
+        summaries["continuation_summary"]["continuation_pressure"]
+        + summaries["temporal_pressure_summary"]["temporal_pressure"]
+        + summaries["identity_unresolved_summary"]["identity_unresolved_pressure"]
+    )
+
+
+def test_projection_action_executed_reaches_action_threshold_and_is_ready() -> None:
+    projection = AutonomyDriveInputProjection()
+    summaries = projection.derive_drive_inputs(
+        _facts(has_action_proposal=True, planner_status="executed", retrieval_hit_count=2)
+    )
+    # Action-bearing tick: 0.9 + 0.4 + 0.4 = 1.7 >= 1.6.
+    assert _outward_drive(summaries) >= OUTWARD_ACTION_THRESHOLD
+    assert summaries["continuation_summary"]["continuation_pressure"] == 0.9
+    assert summaries["temporal_pressure_summary"]["temporal_pressure"] == 0.4
+    assert summaries["identity_unresolved_summary"]["identity_unresolved_pressure"] == 0.4
+    assert summaries["outward_readiness_summary"]["outward_ready"] is True
+    assert summaries["outward_readiness_summary"]["externalization_blocked"] is False
+    # retrieval_pull = 2 / 4.0 = 0.5.
+    assert summaries["retrieval_pull_summary"]["retrieval_pull"] == 0.5
+
+
+def test_projection_action_blocked_marks_externalization_blocked() -> None:
+    projection = AutonomyDriveInputProjection()
+    summaries = projection.derive_drive_inputs(
+        _facts(has_action_proposal=True, planner_status="policy_rejected")
+    )
+    assert summaries["outward_readiness_summary"]["outward_ready"] is False
+    assert summaries["outward_readiness_summary"]["externalization_blocked"] is True
+    # Still an action-bearing tick: outward_drive reaches the threshold.
+    assert _outward_drive(summaries) >= OUTWARD_ACTION_THRESHOLD
+
+
+def test_projection_continue_no_action_stays_below_threshold() -> None:
+    projection = AutonomyDriveInputProjection()
+    summaries = projection.derive_drive_inputs(
+        _facts(has_action_proposal=False, continuation_requested=True, planner_status="no_actionable_proposal")
+    )
+    assert summaries["continuation_summary"]["continuation_pressure"] == 0.8
+    assert _outward_drive(summaries) < OUTWARD_ACTION_THRESHOLD
+    assert summaries["outward_readiness_summary"]["outward_ready"] is False
+    assert summaries["outward_readiness_summary"]["externalization_blocked"] is False
+
+
+def test_projection_concluded_no_continue_uses_low_continuation() -> None:
+    projection = AutonomyDriveInputProjection()
+    summaries = projection.derive_drive_inputs(_facts(has_action_proposal=False))
+    assert summaries["continuation_summary"]["continuation_pressure"] == 0.3
+
+
+def test_projection_self_revision_raises_identity_pressure() -> None:
+    projection = AutonomyDriveInputProjection()
+    summaries = projection.derive_drive_inputs(_facts(has_action_proposal=False, has_self_revision=True))
+    assert summaries["identity_unresolved_summary"]["identity_unresolved_pressure"] == 0.6
+
+
+def test_projection_no_fire_tick_has_no_outward_readiness() -> None:
+    projection = AutonomyDriveInputProjection()
+    summaries = projection.derive_drive_inputs(
+        _facts(activated=False, continuation_active=True, planner_status="no_actionable_proposal")
+    )
+    # No-fire carries continuation from the active continuation state, no outward readiness.
+    assert summaries["continuation_summary"]["continuation_pressure"] == 0.8
+    assert summaries["retrieval_pull_summary"]["retrieval_pull"] == 0.0
+    assert summaries["temporal_pressure_summary"]["temporal_pressure"] == 0.3
+    assert summaries["identity_unresolved_summary"]["identity_unresolved_pressure"] == 0.2
+    assert summaries["outward_readiness_summary"]["outward_ready"] is False
+    assert summaries["outward_readiness_summary"]["externalization_blocked"] is False
+
+
+def test_projection_no_fire_concluded_uses_low_continuation() -> None:
+    projection = AutonomyDriveInputProjection()
+    summaries = projection.derive_drive_inputs(_facts(activated=False, continuation_active=False))
+    assert summaries["continuation_summary"]["continuation_pressure"] == 0.3
+
+
+def test_projection_is_deterministic() -> None:
+    projection = AutonomyDriveInputProjection()
+    facts = _facts(has_action_proposal=True, planner_status="executed", retrieval_hit_count=3)
+    assert projection.derive_drive_inputs(facts) == projection.derive_drive_inputs(facts)
+
+
+def test_cognition_facts_reject_empty_planner_status() -> None:
+    with pytest.raises(AutonomyError, match="planner_status"):
+        _facts(planner_status="")
+
+
+def test_cognition_facts_reject_negative_hit_count() -> None:
+    with pytest.raises(AutonomyError, match="retrieval_hit_count"):
+        _facts(retrieval_hit_count=-1)

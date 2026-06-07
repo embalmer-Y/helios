@@ -24,6 +24,7 @@ from .contracts import (
 )
 from .engine import (
     ActiveChannelReporter,
+    AppraisalDerivedNeuromodulatorUpdatePath,
     DualTimescaleNeuromodulatorUpdatePath,
     NeuromodulatorEngine,
     NeuromodulatorUpdatePath,
@@ -31,6 +32,7 @@ from .engine import (
 
 __all__ = [
     "ActiveChannelReporter",
+    "AppraisalDerivedNeuromodulatorUpdatePath",
     "DecayFamily",
     "DualTimescaleNeuromodulatorUpdatePath",
     "LearnedParameterCategory",

@@ -14,10 +14,170 @@ from .contracts import (
     DeferredContinuityRecord,
     EvaluateProactiveDriveOp,
     LongHorizonContinuityState,
+    ProactiveCognitionFacts,
     ProactiveDriveRequest,
     ProactiveDriveState,
     PublishAutonomyResultOp,
 )
+
+
+# The owner's action threshold: a fired tick is treated as proactively action-requesting when
+# its outward drive (continuation + temporal + identity pressure) reaches this value. Owned by
+# the `18` autonomy owner; the drive-input projection's action pressures are calibrated so an
+# action-bearing tick reaches it. `FirstVersionAutonomyPath` uses the same constant for its
+# `proactive_action_requested` decision.
+OUTWARD_ACTION_THRESHOLD: float = 1.6
+
+
+def _bounded(value: float) -> float:
+    """Owner: autonomy. Clamp a drive-input pressure into [0, 1] and round for determinism."""
+
+    return round(min(1.0, max(0.0, value)), 4)
+
+
+@dataclass(frozen=True)
+class AutonomyDriveInputProjection:
+    """Owner-owned projection from raw cognition facts to the autonomy drive-input summaries.
+
+    Owner: subjective autonomy and proactive evolution.
+
+    Purpose:
+        Map `ProactiveCognitionFacts` (the raw upstream cognition facts composition forwards)
+        into the five drive-input summaries the autonomy path consumes
+        (`continuation_summary`, `retrieval_pull_summary`, `temporal_pressure_summary`,
+        `identity_unresolved_summary`, `outward_readiness_summary`). This is the `18` owner's
+        cognitive policy: how strong a proactive drive a given cognition outcome produces,
+        relative to the owner's own `OUTWARD_ACTION_THRESHOLD`. It was previously mislocated in
+        the composition autonomy bridge and recovered to the owner in R57.
+
+    Failure semantics:
+        Total deterministic function of the facts; every pressure is bounded into `[0, 1]`. It
+        never branches into a degraded mode and raises nothing of its own (the facts contract
+        validates its own inputs).
+
+    Notes:
+        The constants are calibrated so an action-bearing fired tick yields
+        `outward_drive = continuation + temporal + identity = 0.9 + 0.4 + 0.4 = 1.7`, at or
+        above `OUTWARD_ACTION_THRESHOLD = 1.6`, while a continue/no-action tick stays below it.
+        The constants are explicit bounded first-version values under the owner's declared
+        `drive_integration_policy` learned-parameter category (P5-learnable later).
+    """
+
+    # Action-bearing tick pressures (chosen so outward_drive = 0.9+0.4+0.4 = 1.7 >= 1.6).
+    action_continuation_pressure: float = 0.9
+    action_temporal_pressure: float = 0.4
+    action_identity_pressure: float = 0.4
+    # Non-action tick pressures (kept below the action threshold).
+    continue_continuation_pressure: float = 0.8
+    concluded_continuation_pressure: float = 0.3
+    baseline_temporal_pressure: float = 0.3
+    unresolved_identity_pressure: float = 0.6
+    resolved_identity_pressure: float = 0.2
+    # Retrieval pull normalization divisor.
+    retrieval_pull_divisor: float = 4.0
+
+    planner_executed_statuses: tuple[str, ...] = ("executed", "accepted")
+    planner_blocked_statuses: tuple[str, ...] = (
+        "policy_rejected",
+        "execution_consistency_failed",
+        "execution_failed",
+    )
+
+    def derive_drive_inputs(self, facts: ProactiveCognitionFacts) -> dict[str, dict[str, object]]:
+        """Owner: autonomy.
+
+        Purpose:
+            Return the five drive-input summaries for one tick from the raw cognition facts.
+
+        Inputs:
+            A `ProactiveCognitionFacts` carrying the upstream cognition outcome.
+
+        Returns:
+            A dict with keys `continuation_summary`, `retrieval_pull_summary`,
+            `temporal_pressure_summary`, `identity_unresolved_summary`,
+            `outward_readiness_summary`, each a plain dict matching the `ProactiveDriveRequest`
+            summary shape.
+
+        Notes:
+            Deterministic and bounded. The no-fire tick (R54: `activated is False`) yields no
+            outward readiness, baseline temporal pressure, resolved identity pressure, zero
+            retrieval pull, and a continuation pressure that follows `continuation_active`, so a
+            no-fire tick still forms/reinforces deferred continuity like a continue tick.
+        """
+
+        if not facts.activated:
+            continuation_pressure = (
+                self.continue_continuation_pressure
+                if facts.continuation_active
+                else self.concluded_continuation_pressure
+            )
+            return {
+                "continuation_summary": {"continuation_pressure": _bounded(continuation_pressure)},
+                "retrieval_pull_summary": {"retrieval_pull": 0.0},
+                "temporal_pressure_summary": {"temporal_pressure": self.baseline_temporal_pressure},
+                "identity_unresolved_summary": {
+                    "identity_unresolved_pressure": self.resolved_identity_pressure
+                },
+                "outward_readiness_summary": {
+                    "outward_ready": False,
+                    "externalization_blocked": False,
+                },
+            }
+
+        retrieval_pull = float(facts.retrieval_hit_count) / self.retrieval_pull_divisor
+        planner_executed = facts.planner_status in self.planner_executed_statuses
+        planner_blocked = facts.planner_status in self.planner_blocked_statuses
+        wants_continue = facts.continuation_requested or facts.continuation_active
+
+        # Outward readiness derives only from whether the thought owner produced an action
+        # proposal and how the planner handled it. No action proposal -> neither ready nor
+        # blocked, so the autonomy owner cannot externalize this tick.
+        outward_ready = facts.has_action_proposal and planner_executed
+        externalization_blocked = facts.has_action_proposal and planner_blocked
+
+        if facts.has_action_proposal:
+            continuation_pressure = self.action_continuation_pressure
+            temporal_pressure = self.action_temporal_pressure
+            identity_unresolved_pressure = self.action_identity_pressure
+        else:
+            continuation_pressure = (
+                self.continue_continuation_pressure
+                if wants_continue
+                else self.concluded_continuation_pressure
+            )
+            temporal_pressure = self.baseline_temporal_pressure
+            identity_unresolved_pressure = (
+                self.unresolved_identity_pressure
+                if facts.has_self_revision
+                else self.resolved_identity_pressure
+            )
+
+        return {
+            "continuation_summary": {"continuation_pressure": _bounded(continuation_pressure)},
+            "retrieval_pull_summary": {"retrieval_pull": _bounded(retrieval_pull)},
+            "temporal_pressure_summary": {"temporal_pressure": _bounded(temporal_pressure)},
+            "identity_unresolved_summary": {
+                "identity_unresolved_pressure": _bounded(identity_unresolved_pressure)
+            },
+            "outward_readiness_summary": {
+                "outward_ready": outward_ready,
+                "externalization_blocked": externalization_blocked,
+            },
+        }
+
+
+@runtime_checkable
+class AutonomyPath(Protocol):
+    """Owner-private path that assembles one autonomy result from a validated request."""
+
+    def assemble_result(
+        self,
+        request: ProactiveDriveRequest,
+        config: AutonomyConfig,
+    ) -> AutonomyResult:
+        """Return one deterministic autonomy result from validated inputs."""
+
+        ...
 
 
 def _read_float(summary: dict[str, object] | object, key: str) -> float:
@@ -36,20 +196,6 @@ def _read_bool(summary: dict[str, object] | object, key: str) -> bool:
     if not isinstance(value, bool):
         raise AutonomyError(f"Autonomy summary field '{key}' must be boolean")
     return value
-
-
-@runtime_checkable
-class AutonomyPath(Protocol):
-    """Owner-private path that assembles one autonomy result from a validated request."""
-
-    def assemble_result(
-        self,
-        request: ProactiveDriveRequest,
-        config: AutonomyConfig,
-    ) -> AutonomyResult:
-        """Return one deterministic autonomy result from validated inputs."""
-
-        ...
 
 
 @dataclass(frozen=True)
@@ -315,7 +461,7 @@ class FirstVersionAutonomyPath:
         exploratory_drive = retrieval_pull + (temporal_pressure * 0.5)
         outward_drive = continuation_pressure + temporal_pressure + identity_unresolved
         combined_pressure = continuation_pressure + retrieval_pull + temporal_pressure + identity_unresolved
-        proactive_action_requested = outward_drive >= 1.6
+        proactive_action_requested = outward_drive >= OUTWARD_ACTION_THRESHOLD
         carry_snapshot = self._carry_forward_records(
             request.prior_deferred_records,
             request_id=request.request_id,

@@ -79,6 +79,42 @@ class AutonomyConfig:
 
 
 @dataclass(frozen=True)
+class ProactiveCognitionFacts:
+    """Immutable raw cognition facts the autonomy owner projects into its drive inputs.
+
+    Owner: subjective autonomy and proactive evolution.
+
+    Purpose:
+        Carry the bounded set of already-published upstream cognition facts (whether the
+        thought path activated, whether it produced an action proposal, whether it requested
+        continuation, whether continuation is active, whether it proposed self-revision, the
+        planner status, and the retrieval hit count) so the `18` owner can derive its drive
+        inputs from them. Composition forwards these raw facts; the owner owns the mapping
+        from facts to drive-input pressures (see `AutonomyDriveInputProjection`).
+
+    Failure semantics:
+        Construction raises `AutonomyError` on an empty `planner_status` or a negative
+        `retrieval_hit_count`.
+    """
+
+    activated: bool
+    has_action_proposal: bool
+    continuation_requested: bool
+    continuation_active: bool
+    has_self_revision: bool
+    planner_status: str
+    retrieval_hit_count: int
+
+    def __post_init__(self) -> None:
+        if not self.planner_status:
+            raise AutonomyError("ProactiveCognitionFacts must declare a non-empty planner_status")
+        if not isinstance(self.retrieval_hit_count, int) or self.retrieval_hit_count < 0:
+            raise AutonomyError(
+                "ProactiveCognitionFacts retrieval_hit_count must be a non-negative integer"
+            )
+
+
+@dataclass(frozen=True)
 class ProactiveDriveRequest:
     """Immutable request contract for one proactive-drive integration cycle."""
 

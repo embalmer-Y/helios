@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R55 (`09` gate `temporal_signal` + `dmn_available` grounded in a real temporal/rest-state source: new owner `helios_v2.temporal`, rest→DMN and elapsed-rest→spontaneous-thought pacing accumulate/reset, opt-in). Test baseline: 702 passed. HEAD-era: R55. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R59 (external-afferent honesty: `RuntimeProfile.external_signal_source` makes a real external `SensorySource` injectable in place of the constant placeholder; the first-version `SequenceExternalSignalSource` only replays caller-supplied real signals and never fabricates; the default placeholder is documented as NON-REAL; mutually exclusive with `channel_cli`; opt-in, default-off). Test baseline: 728 passed. HEAD-era: R59. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -47,7 +47,7 @@ flowchart TD
     classDef infra fill:#cfe2f3,stroke:#1c4587,color:#0b3d91
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
-    EXT([External stimulus: CLI bound now / QQ / voice future]):::base
+    EXT([External stimulus: real source injectable (R59 external_signal_source) / CLI bound / QQ voice future]):::base
     BODY["Internal body signal - interoceptive source: R50 producer delivered (helios_v2.interoception, compute/runtime pressure, opt-in); R51 05 consumes it to shape feeling"]:::base
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
@@ -489,6 +489,68 @@ flowchart TD
   gate/appraisal/feeling/neuromodulation owner. Opt-in (`assemble_runtime(temporal_source=...)`);
   deterministic; default/recency/semantic/channel-bound/interoceptive assemblies keep `0.4`/`True`
   byte-for-byte when no source is wired. 690 -> 702 tests green and network-free.
+- Owner-boundary recovery (R56): the mislocated `04` neuromodulator drive mapping is recovered out
+  of composition into the `04` owner (no runtime behavior change). R36's
+  `AppraisalDerivedNeuromodulatorUpdatePath` (with `reward_to_dopamine`/`threat_to_cortisol`-style
+  sensitivity coefficients and `level = clamp(tonic_baseline + sum(sensitivity_k * salience_k))` —
+  which salience drives which neuromodulator channel and how strongly, the `04` owner's defining
+  cognitive policy) was defined in the assembly-only `composition/bridges.py`, violating
+  `ARCHITECTURE_BOUNDARIES.md` §4.5 / `ARCHITECTURE_PHILOSOPHY` §3.2/§7.1, while its R43
+  dual-timescale decay wrapper already lived in the `04` owner package. R56 relocates the drive
+  policy (and its private `_aggregate_salience`/`_AggregatedSalience` helper) into the `04` owner
+  package `helios_v2.neuromodulation` (reusing the owner's existing `_clamp`); composition now only
+  constructs/injects/wraps it via the unchanged `NeuromodulatorUpdatePath` protocol. A new guard
+  (`tests/test_composition_owner_boundary_guard.py`) fails if a `<salience>_to_<channel>` sensitivity
+  coefficient reappears under `helios_v2/composition` (with a positive-control assertion so it is not
+  vacuous). Behavior-preserving: identical neuromodulator levels for any batch/config and every
+  assembly (default/recency/semantic/channel-bound/interoceptive/temporal/checkpoint) — a pure
+  relocation, not a policy change. Accepted owner-neutral glue explicitly kept in composition: the
+  constant first-version shim paths (`FirstVersion*`) and the pure projection bridges (which forward
+  a published owner field with no scoring weight). `test_neuromodulator_engine.py` now imports the
+  path from the `04` owner. No contract change; no new logging mechanism; 702 -> 704 tests green and
+  network-free (+2 guard tests).
+- Owner-boundary recovery (R57): the mislocated `18` autonomy drive-input mapping is recovered out
+  of composition into the `18` owner (no runtime behavior change; the autonomy analog of R56 and
+  deeper, because it coupled to the consumer owner's threshold). Previously
+  `FirstVersionAutonomyRequestBridge` tuned the pressure constants (`_ACTION_CONTINUATION_PRESSURE=0.9`,
+  etc.), owned the planner executed/blocked classification and the retrieval `/4.0` normalization,
+  and — per its own docstring — reverse-engineered the `18` owner's `outward_drive >= 1.6` action
+  threshold inside the assembly glue. "How strong a proactive drive a cognition outcome produces,
+  relative to my own action threshold" is the `18` owner's defining judgment (violating §4.5 /
+  `ARCHITECTURE_PHILOSOPHY` §7.1/§3.3). R57 adds an `18`-owned `ProactiveCognitionFacts` raw-fact
+  input contract and an `18`-owned `AutonomyDriveInputProjection.derive_drive_inputs(facts)` that
+  produces the five existing drive-input summaries (transcribing the mapping verbatim), and names the
+  threshold as the owner constant `OUTWARD_ACTION_THRESHOLD = 1.6` (reused by
+  `FirstVersionAutonomyPath`). The composition bridge is reduced to extracting raw facts, forwarding
+  provenance ids, and calling the owner projection. `ProactiveDriveRequest` is unchanged in shape
+  (existing autonomy/contract/stage-chain tests unaffected). The owner-boundary guard is extended to
+  fail on an autonomy drive-pressure constant (`*_(CONTINUATION|TEMPORAL|IDENTITY)_PRESSURE = <num>`)
+  or an `outward_drive >=` / `OUTWARD_ACTION_THRESHOLD =` reference under composition (positive-control
+  asserted; scoped so it does not flag the legitimate `09` gate `workload_pressure` projection).
+  Behavior-preserving: field-for-field identical `ProactiveDriveRequest` and byte-for-byte identical
+  autonomy disposition for every fact combination (fired±action, continue, concluded, self-revision,
+  each planner status, no-fire) and every assembly. No contract shape change; no new logging
+  mechanism; 704 -> 716 tests green and network-free (+12 tests).
+- P3 external-afferent honesty (R59): makes the external stimulus source a first-class injectable
+  capability and stops counting the fabricated constant as a real signal. `02 -> 03` appraises the
+  whole batch, so a varying external stimulus genuinely drives `03 -> 04 -> 05 -> 07`; but the
+  default/semantic assemblies registered a constant `FirstVersionSensorySource` (fixed
+  `content="hello runtime"` every tick), a composition-injected constant masquerading as input
+  (violating FG-1), and because the content never changed the real `03` novelty collapsed to a
+  fixed value after the first store write. R59 adds an opt-in `RuntimeProfile.external_signal_source`
+  (conforming to the `02` `SensorySource` protocol); when provided it replaces the placeholder, and
+  it is mutually exclusive with `channel_cli` (both-set is a `CompositionError`, validated in
+  `RuntimeProfile.__post_init__`). The first-version `SequenceExternalSignalSource` replays
+  caller-supplied tick-varying real `RawSignal`s and emits an explicitly empty batch when exhausted
+  — it fabricates no content (honoring `ARCHITECTURE_PHILOSOPHY` §4.3/§8, no prompt theater); an
+  empty afferent closes through the existing no-fire/internal-only path. A semantic-assembly test
+  proves a varying external stimulus produces different `03` novelty and `04` state across ticks — a
+  second FG-2 causal chain (external afferent) alongside R51's interoceptive one. The default
+  placeholder is now documented as NON-REAL; R59 does not make the default real (that needs a real
+  deployed source, network `wave_C`), it makes a real source injectable and retires the
+  constant-as-real-afferent. Opt-in, default-off: default/recency/semantic/checkpoint/interoceptive/
+  temporal assemblies byte-for-byte unchanged when off. No contract change; no new logging mechanism;
+  721 -> 728 tests green and network-free (+7 tests).
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real

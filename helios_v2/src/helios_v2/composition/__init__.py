@@ -31,9 +31,11 @@ from .runtime_assembly import (
     CompositionConfig,
     CompositionError,
     RuntimeHandle,
+    RuntimeProfile,
     assemble_runtime,
     default_composition_config,
 )
+from .bridges import SequenceExternalSignalSource
 
 __all__ = [
     "CANONICAL_STAGE_ORDER",
@@ -53,6 +55,8 @@ __all__ = [
     "LlmReadinessDependencyProvider",
     "RUNTIME_COGNITION_BASELINE",
     "RuntimeHandle",
+    "RuntimeProfile",
+    "SequenceExternalSignalSource",
     "assemble_runtime",
     "channel_critical_dependency_spec",
     "continuity_checkpoint_critical_dependency_spec",

@@ -2685,3 +2685,182 @@ def test_r55_elapsed_rest_accumulates_across_no_fire_ticks_end_to_end() -> None:
     assert t1 == pytest.approx(0.0)
     assert t2 == pytest.approx(0.2)
     assert t3 == pytest.approx(0.4)
+
+
+# --- Requirement 58: RuntimeProfile capability bundle ---
+
+
+from helios_v2.composition import RuntimeProfile
+
+
+def test_default_profile_matches_default_capability_set() -> None:
+    profile = RuntimeProfile()
+    assert profile.deterministic_thought is False
+    assert profile.channel_cli is False
+    assert profile.experience_store is None
+    assert profile.embedding_gateway is None
+    assert profile.embedding_profile_name == "experience-embedding"
+    assert profile.continuity_checkpoint is None
+    assert profile.interoceptive_sampler is None
+    assert profile.temporal_source is None
+    assert profile.semantic_memory_enabled is False
+
+
+def test_profile_embedding_without_store_raises() -> None:
+    with pytest.raises(CompositionError, match="durable experience store"):
+        RuntimeProfile(embedding_gateway=_embedding_gateway())
+
+
+def test_profile_semantic_memory_enabled_requires_both() -> None:
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    assert RuntimeProfile(experience_store=store).semantic_memory_enabled is False
+    profile = RuntimeProfile(experience_store=store, embedding_gateway=_embedding_gateway())
+    assert profile.semantic_memory_enabled is True
+
+
+def test_profile_and_loose_kwarg_together_raise() -> None:
+    profile = RuntimeProfile(deterministic_thought=True)
+    with pytest.raises(CompositionError, match="overlapping loose keyword arguments"):
+        assemble_runtime(profile=profile, deterministic_thought=True)
+
+
+def test_profile_path_and_loose_kwarg_path_are_equivalent() -> None:
+    # Deterministic offline assembly via both routes must produce an equivalent runtime.
+    via_kwargs = assemble_runtime(deterministic_thought=True)
+    via_profile = assemble_runtime(profile=RuntimeProfile(deterministic_thought=True))
+
+    kwargs_specs = {spec.name for spec in via_kwargs.kernel.dependency_specs}
+    profile_specs = {spec.name for spec in via_profile.kernel.dependency_specs}
+    assert kwargs_specs == profile_specs
+    # The offline deterministic assembly omits the LLM readiness dependency in both routes.
+    assert LLM_PROFILES_READY not in profile_specs
+
+    via_kwargs.startup()
+    via_profile.startup()
+    assert via_kwargs.tick().tick_id == via_profile.tick().tick_id
+
+
+# --- Requirement 59: injectable external afferent source ---
+
+
+from helios_v2.composition import RuntimeProfile, SequenceExternalSignalSource
+from helios_v2.sensory import RawSignal as _RawSignal
+
+
+def _external_batch(signal_id: str, content: str) -> tuple[_RawSignal, ...]:
+    return (
+        _RawSignal(
+            signal_id=signal_id,
+            source_name="external",
+            signal_type="text",
+            content=content,
+            channel="external",
+            metadata={"turn_id": signal_id},
+        ),
+    )
+
+
+def _appraised_contents(result) -> tuple[str, ...]:
+    return tuple(
+        stimulus.content
+        for stimulus in result.stage_results["sensory_ingress"].batch.stimuli
+    )
+
+
+def test_injected_external_source_replaces_constant_placeholder() -> None:
+    source = SequenceExternalSignalSource(
+        batches=(_external_batch("e1", "a real external observation"),)
+    )
+    handle = _assemble(external_signal_source=source)
+    handle.startup()
+
+    result = handle.tick()
+
+    contents = _appraised_contents(result)
+    assert "a real external observation" in contents
+    # The fabricated constant placeholder is not registered when a real source is injected.
+    assert "hello runtime" not in contents
+
+
+def test_external_source_and_channel_cli_are_mutually_exclusive() -> None:
+    source = SequenceExternalSignalSource(batches=(_external_batch("e1", "x"),))
+    with pytest.raises(CompositionError, match="external afferent"):
+        assemble_runtime(external_signal_source=source, channel_cli=True)
+
+
+def test_external_source_mutual_exclusion_on_profile() -> None:
+    source = SequenceExternalSignalSource(batches=(_external_batch("e1", "x"),))
+    with pytest.raises(CompositionError, match="external afferent"):
+        RuntimeProfile(external_signal_source=source, channel_cli=True)
+
+
+def test_varying_external_stimulus_drives_appraisal_and_affect_across_ticks() -> None:
+    # FG-2 (external branch): a real external source whose content varies across ticks produces
+    # measurably different `03` novelty and a different `04` neuromodulator state across ticks,
+    # under the semantic assembly. This is a second FG-2 causal chain alongside R51's interoceptive
+    # one, driven by the external afferent rather than internal pressure.
+    source = SequenceExternalSignalSource(
+        batches=(
+            _external_batch("e1", "first distinct external content alpha"),
+            _external_batch("e2", "second wholly different external content omega zeta"),
+        )
+    )
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        external_signal_source=source,
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+    )
+    handle.startup()
+
+    first = handle.tick()
+    second = handle.tick()
+
+    # The external content actually reached appraisal on each tick.
+    assert "first distinct external content alpha" in _appraised_contents(first)
+    assert "second wholly different external content omega zeta" in _appraised_contents(second)
+
+    # The real novelty dimension differs across the two ticks (the external stimulus drives `03`),
+    # and the difference propagates into the `04` neuromodulator state.
+    assert _appraisal_novelty(first) != pytest.approx(_appraisal_novelty(second))
+    first_levels = _neuromodulator_levels(first)
+    second_levels = _neuromodulator_levels(second)
+    assert (
+        first_levels.norepinephrine != pytest.approx(second_levels.norepinephrine)
+        or first_levels.dopamine != pytest.approx(second_levels.dopamine)
+    )
+
+
+def test_empty_external_afferent_completes_the_tick() -> None:
+    # Honest absence: an injected source that emits nothing must not crash the tick. With no
+    # external stimulus the batch is empty and the chain still closes (no-fire / internal-only).
+    source = SequenceExternalSignalSource(batches=())
+    handle = _assemble(external_signal_source=source)
+    handle.startup()
+
+    result = handle.tick()
+
+    assert _appraised_contents(result) == ()
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+
+
+def test_sequence_source_exhaustion_yields_empty_then_no_crash() -> None:
+    # The first tick replays the one supplied batch; the second tick is past the end and emits
+    # an empty batch (honest absence), never a fabricated constant.
+    source = SequenceExternalSignalSource(batches=(_external_batch("e1", "only one batch"),))
+    handle = _assemble(external_signal_source=source)
+    handle.startup()
+
+    first = handle.tick()
+    second = handle.tick()
+
+    assert "only one batch" in _appraised_contents(first)
+    assert _appraised_contents(second) == ()
+
+
+def test_default_assembly_unchanged_without_external_source() -> None:
+    # Regression guard: with no external source the default constant placeholder is registered.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    assert "hello runtime" in _appraised_contents(result)

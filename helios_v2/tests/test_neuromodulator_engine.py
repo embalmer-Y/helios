@@ -212,7 +212,7 @@ def test_engine_fails_explicitly_when_required_update_capability_is_unavailable(
 # --- Requirement 36: appraisal-derived neuromodulation ---
 
 
-from helios_v2.composition.bridges import AppraisalDerivedNeuromodulatorUpdatePath
+from helios_v2.neuromodulation import AppraisalDerivedNeuromodulatorUpdatePath
 
 
 def _batch_with(*, threat=0.0, reward=0.0, novelty=0.0, social=0.0, uncertainty=0.0) -> RapidAppraisalBatch:
