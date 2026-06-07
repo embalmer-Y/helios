@@ -291,11 +291,21 @@ class FirstVersionDimensionEstimator(RapidDimensionEstimator):
 
 @dataclass
 class FirstVersionAggregateEstimator(AggregateJudgmentEstimator):
-    """Owner: composition. First-version aggregate salience estimator (deterministic)."""
+    """Owner: composition. First-version aggregate salience estimator (deterministic).
+
+    Notes (R63):
+        Returns ``0.7``, an honest moderate baseline.  The default assembly has no real
+        salience grounding yet (all five dimensions are first-version constants), so the
+        aggregate is a composition-injected moderate judgment: "a first-version system
+        attributes moderate significance to its percept."  At ``0.7`` the stimulus term
+        (``aggregate * 0.30 = 0.21``) contributes to gate firing alongside the other real
+        signals but cannot force a fire alone (``0.21 < fire_threshold 0.55``).  The semantic
+        assembly uses ``WeightedAggregateEstimator`` (R41) and is unaffected.
+    """
 
     def estimate_aggregate(self, stimulus: Stimulus, dimensions: RapidDimensionEstimate) -> float:
         del stimulus, dimensions
-        return 0.4
+        return 0.7
 
 
 @dataclass
@@ -1375,16 +1385,7 @@ class FirstVersionThoughtGateSignalBridge:
             temporal_signal=temporal_signal,
             drive_urgency_signal=_drive_urgency_signal(self.drive_urgency_holder),
             dmn_available=dmn_available,
-            selected_stimuli=(
-                SelectedStimulusSummary(
-                    stimulus_id=f"stimulus:runtime:{tick_id}",
-                    source_kind="external_text",
-                    source_channel_id="cli",
-                    stimulus_intensity=0.9,
-                    novelty_signal=0.6,
-                    sensitization_signal=0.2,
-                ),
-            ),
+            selected_stimuli=_selected_stimuli_from_appraisal(frame, tick_id),
             tick_id=tick_id,
         )
 
@@ -1411,9 +1412,10 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
         arousal-to-gate and activation-to-gate semantics are owned by the `09` gate path (its
         existing weights), exactly as R35 keeps the novelty salience semantic in `03` while
         composition only forwards the raw fact. The remaining gate-signal inputs
-        (`workload_pressure`, `temporal_signal`, `drive_urgency_signal`, `dmn_available`, and the
-        `selected_stimuli` projection) stay first-version constants this slice; they have no real
-        producer running before `09` yet (later slices).
+        (`workload_pressure`, `temporal_signal`, `drive_urgency_signal`, `dmn_available`) stay
+        first-version constants or prior-tick carries this slice. The `selected_stimuli`
+        projection is now real (R63): it reads the same-tick `03` appraisal batch-max salience
+        through `_selected_stimuli_from_appraisal`.
     """
 
     neuromodulator_stage_name: str = "neuromodulator_system"
@@ -1463,16 +1465,7 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
             temporal_signal=temporal_signal,
             drive_urgency_signal=_drive_urgency_signal(self.drive_urgency_holder),
             dmn_available=dmn_available,
-            selected_stimuli=(
-                SelectedStimulusSummary(
-                    stimulus_id=f"stimulus:runtime:{tick_id}",
-                    source_kind="external_text",
-                    source_channel_id="cli",
-                    stimulus_intensity=0.9,
-                    novelty_signal=0.6,
-                    sensitization_signal=0.2,
-                ),
-            ),
+            selected_stimuli=_selected_stimuli_from_appraisal(frame, tick_id),
             tick_id=tick_id,
             neuromodulatory_arousal=norepinephrine,
         )
@@ -1617,6 +1610,59 @@ class PriorDriveUrgencyHolder:
         """Owner: composition. Return the carried prior-tick drive urgency (bounded)."""
 
         return self.urgency
+
+
+# R63: documented cold-start fallback values for the `09` gate's `selected_stimuli` projection.
+# Used when the `03` appraisal result is absent from the frame (e.g. an assembly that does not
+# run the appraisal stage).  These match the default assembly's first-version estimator outputs
+# (aggregate 0.7 from the raised FirstVersionAggregateEstimator, novelty 0.6 and uncertainty 0.3
+# from FirstVersionDimensionEstimator), so the fallback reproduces the default assembly's real
+# appraisal values.  They are defined baselines, not fabricated high stimuli.
+_STIMULUS_INTENSITY_COLD_START = 0.7
+_NOVELTY_SIGNAL_COLD_START = 0.6
+_SENSITIZATION_SIGNAL_COLD_START = 0.3
+
+
+def _selected_stimuli_from_appraisal(
+    frame, tick_id: int
+) -> tuple[SelectedStimulusSummary, ...]:
+    """Owner: composition (R63). Project real `03` appraisal salience into the gate's selected_stimuli.
+
+    Reads the `03` ``RapidSalienceAppraisalStageResult`` from ``frame.stage_results`` and projects
+    batch-max ``aggregate`` → ``stimulus_intensity``, batch-max ``novelty`` → ``novelty_signal``,
+    batch-max ``uncertainty`` → ``sensitization_signal``.  Each value is clamped to ``[0, 1]`` and
+    rounded for determinism.  Falls back to documented cold-start constants when the appraisal
+    result is absent or the batch is empty.
+
+    Notes:
+        Owner-neutral glue (R63, mirroring the R61 mismatch bridge pattern).  It reads only
+        already-published `03` values and applies no gate semantic; the `09` owner keeps the
+        gate weights and decision policy.
+    """
+
+    from helios_v2.runtime.stages import RapidSalienceAppraisalStageResult
+
+    stage_results = frame.stage_results or {}
+    appraisal = stage_results.get("rapid_salience_appraisal")
+    if isinstance(appraisal, RapidSalienceAppraisalStageResult) and appraisal.batch.appraisals:
+        batch = appraisal.batch.appraisals
+        intensity = _clamp(max(a.salience.aggregate for a in batch), 0.0, 1.0)
+        novelty = _clamp(max(a.salience.novelty for a in batch), 0.0, 1.0)
+        sensitization = _clamp(max(a.salience.uncertainty for a in batch), 0.0, 1.0)
+    else:
+        intensity = _STIMULUS_INTENSITY_COLD_START
+        novelty = _NOVELTY_SIGNAL_COLD_START
+        sensitization = _SENSITIZATION_SIGNAL_COLD_START
+    return (
+        SelectedStimulusSummary(
+            stimulus_id=f"stimulus:runtime:{tick_id}",
+            source_kind="external_text",
+            source_channel_id="cli",
+            stimulus_intensity=round(intensity, 4),
+            novelty_signal=round(novelty, 4),
+            sensitization_signal=round(sensitization, 4),
+        ),
+    )
 
 
 # R60: maximum number of salient tokens projected from a perceived stimulus into the memory

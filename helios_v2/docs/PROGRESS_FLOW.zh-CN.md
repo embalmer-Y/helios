@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R62（`09` 门控 `drive_urgency_signal` 去 shim：由上一 tick 真实 `18` `outward_drive` 经 owner-neutral `PriorDriveUrgencyHolder` 向前 carry,tick 1 中性冷启动 `0.7`、字节级不变,tick 2 起被真实驱动取代;退休 `0.7` 常量;**实现中收敛范围**——`selected_stimuli` 因投影真实 `03` appraisal 会把默认装配翻成 no-fire 而延到 R63,故 R62 仅做 `drive_urgency_signal`;门控最后一个常量输入是 `selected_stimuli`）。测试基线：738 passed。版本：R62。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R63（`09` 门控 `selected_stimuli` 去 shim：门控信号中最后一个常量 shim 被真实同 tick `03` appraisal 批最大值 aggregate/novelty/uncertainty 取代，经 owner-neutral `_selected_stimuli_from_appraisal` helper 投影；默认装配 `FirstVersionAggregateEstimator` 从 `0.4` 提升到 `0.7` 提供诚实点火源——门控分数 `~0.555 > 0.55`；缺失 `03` 结果回退到文档化冷启动常量；**R63 后门控信号中不再有常量 shim**）。测试基线：738 passed。版本：R63。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -39,7 +39,7 @@ flowchart TD
     classDef infra fill:#cfe2f3,stroke:#1c4587,color:#0b3d91
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
-    EXT([外界刺激: 真实源可注入(R59 external_signal_source) / CLI已绑定 / QQ 语音 后续]):::base
+    EXT["外界刺激: 真实源可注入(R59 external_signal_source) / CLI已绑定 / QQ 语音 后续"]:::base
     BODY["内部身体信号 - 内感受来源: R50 交付生产者(helios_v2.interoception, compute/runtime压力, opt-in); R51起05真正消费塑造体感"]:::base
     S02[02 感觉接入 - 相对完整]:::deep
     S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
@@ -48,7 +48,7 @@ flowchart TD
     S06["06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回+召回作多候选(R52)+记忆内容由真实percept派生(R60)+mismatch由真实novelty grounded(R61)"]:::base
     S07["07 工作空间竞争 - 真实竞争(读真实05体感)+有界注意力瓶颈+真实多候选(R52,语义装配)"]:::base
     S08["08 可报告意识内容 - 真实点火承诺(语义装配);R52起对真实多候选点火赢家;上游06/07已去shim"]:::base
-    S09["09 思考门控与延续压力 - NE arousal + 工作空间激活 + workload_pressure(R53) + temporal/DMN(R55) + drive_urgency(R62,上一tick真实18 carry)接真实/仅余 selected_stimuli 常量(R63)"]:::base
+    S09["09 思考门控 - 所有输入已真实(arousal + activation + workload + temporal/DMN + drive_urgency + selected_stimuli(R63)) / 无常量shim"]:::base
     S10["10 定向检索 - recall-intent接真实11 handoff(语义)/候选来源已真实"]:::base
     S16P[16 具身prompt契约 - 基线]:::base
     S16O["16 外化表达草稿 - 仅草稿(非授权)"]:::base

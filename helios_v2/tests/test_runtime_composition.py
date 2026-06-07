@@ -1495,8 +1495,9 @@ def test_default_assembly_keeps_constant_aggregate() -> None:
     handle = _assemble()
     handle.startup()
     result = handle.tick()
-    # No semantic memory -> the first-version constant aggregate estimator.
-    assert _appraisal_aggregate(result) == pytest.approx(0.4)
+    # No semantic memory -> the first-version aggregate estimator returns the R63 moderate
+    # baseline (0.7, raised from the original 0.4 to provide honest default-assembly ignition).
+    assert _appraisal_aggregate(result) == pytest.approx(0.7)
 
 
 def test_semantic_assembly_derives_aggregate_from_dimensions() -> None:
@@ -3129,3 +3130,68 @@ def test_gate_drive_urgency_is_bounded_projection_of_prior_drive() -> None:
     handle.startup()
     for result in handle.run_ticks(3):
         assert 0.0 <= _gate_drive_urgency(result) <= 1.0
+
+
+# --- Requirement 63: real selected-stimuli projection and default-assembly ignition source ---
+
+
+def _gate_selected_stimuli(result):
+    return result.stage_results[
+        "thought_gating_and_continuation_pressure"
+    ].result.selected_stimuli
+
+
+def _gate_stimulus_signal(result) -> float:
+    return result.stage_results[
+        "thought_gating_and_continuation_pressure"
+    ].result.contributing_signals["stimulus_signal"]
+
+
+def test_r63_default_assembly_selected_stimuli_from_real_appraisal() -> None:
+    # Under the default assembly, selected_stimuli carries the real 03 appraisal salience
+    # (batch-max aggregate/novelty/uncertainty), not the pre-R63 hardcoded constants.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    stimuli = _gate_selected_stimuli(result)
+    assert len(stimuli) == 1
+    # The real 03 appraisal aggregate from FirstVersionAggregateEstimator (R63: raised to 0.7).
+    assert stimuli[0].stimulus_intensity == pytest.approx(0.7)
+    # The real 03 novelty from FirstVersionDimensionEstimator (constant 0.6).
+    assert stimuli[0].novelty_signal == pytest.approx(0.6)
+    # The real 03 uncertainty from FirstVersionDimensionEstimator (constant 0.3).
+    assert stimuli[0].sensitization_signal == pytest.approx(0.3)
+    # The gate's stimulus_signal matches the projected aggregate.
+    assert _gate_stimulus_signal(result) == pytest.approx(0.7)
+
+
+def test_r63_selected_stimuli_fallback_on_absent_appraisal() -> None:
+    # When the 03 appraisal result is absent from the frame, the helper falls back to
+    # documented cold-start constants (not a crash, not a fabricated high stimulus).
+    from types import SimpleNamespace
+
+    from helios_v2.composition.bridges import (
+        _STIMULUS_INTENSITY_COLD_START,
+        _NOVELTY_SIGNAL_COLD_START,
+        _SENSITIZATION_SIGNAL_COLD_START,
+        _selected_stimuli_from_appraisal,
+    )
+
+    frame = SimpleNamespace(stage_results={}, tick_id=1)
+    stimuli = _selected_stimuli_from_appraisal(frame, 1)
+    assert len(stimuli) == 1
+    assert stimuli[0].stimulus_intensity == pytest.approx(_STIMULUS_INTENSITY_COLD_START)
+    assert stimuli[0].novelty_signal == pytest.approx(_NOVELTY_SIGNAL_COLD_START)
+    assert stimuli[0].sensitization_signal == pytest.approx(_SENSITIZATION_SIGNAL_COLD_START)
+
+
+def test_r63_default_assembly_gate_fires_with_raised_aggregate() -> None:
+    # The default assembly's gate fires on tick 1 with the raised FirstVersionAggregateEstimator
+    # (0.7): the real appraisal aggregate plus the other signals exceed the 0.55 fire threshold.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    gate = _gate_result(result)
+    assert gate.decision == "fire"
+    # Gate score ~0.555: just above the 0.55 fire threshold.
+    assert gate.gate_score >= 0.55
