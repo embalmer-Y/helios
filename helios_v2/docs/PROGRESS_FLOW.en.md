@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R60 (`06` memory-content de-shim: the binding-context content is derived from the real `02` percept, retiring the `("hello","novelty")` constant; an empty percept binds an honest no-percept marker anchored to the real `05` feeling state; the default assembly's memory-content change is documented). Test baseline: 732 passed. HEAD-era: R60. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R61 (`06` prediction-mismatch de-shim: the surprise/mismatch evidence is grounded in the real `03` novelty, retiring the `0.8` constant; real novelty drives consolidation salience and the autobiographical/episodic family; a familiar percept yields None -> episodic; honest novelty-as-surprise caveat, not a predictive-coding error). Test baseline: 735 passed. HEAD-era: R61. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -53,7 +53,7 @@ flowchart TD
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
     S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick; R51 consumes real interoceptive pressure to shape feeling"]:::base
-    S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall + recalled affect-memory as multi-candidate (R52) + memory content from real percept (R60)"]:::base
+    S06["06 Memory Affect and Replay - formation de-shimmed + durable/semantic recall + recalled as multi-candidate (R52) + content from real percept (R60) + mismatch grounded in real novelty (R61)"]:::base
     S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
     S09["09 Thought Gating - NE arousal + workspace activation + workload_pressure(R53) + temporal/DMN(R55) real/drive_urgency still shim"]:::base
@@ -573,6 +573,24 @@ flowchart TD
   ("hello runtime" -> tokens `("hello","runtime")`) rather than a separate constant. The `06`
   affect tag, salience gate, durability, and recalled replay are unchanged in mechanism. 728 -> 732
   tests green and network-free (+4 tests).
+- P3 mismatch/surprise de-shim (R61): the `06` salience gate's second input — the
+  prediction-mismatch (surprise) evidence — was a composition constant (`mismatch_score=0.8`,
+  making every memory autobiographical and always raising the consolidation floor), so surprise
+  was asserted, not measured — the next fabricated position after R59/R60 made the percept and
+  memory content real. R61 grounds it in the real `03` novelty already in the frame (`1 - max
+  cosine similarity` to stored experience, the functional surprise core in a memory-grounded
+  system): the bridge reads the batch-max real novelty/uncertainty and projects
+  `mismatch_score=clamp(novelty)`, `anomaly_score=clamp(novelty)`, `confidence=clamp(1-uncertainty)`;
+  below `_MISMATCH_NOVELTY_THRESHOLD` (0.5, a composition projection cut-point) a familiar/expected
+  percept yields `None` (no surprise -> the `06` owner forms an episodic, not autobiographical,
+  memory). The bridge computes no `06` gate/family policy and invents no forward-model prediction.
+  Honest grounding (`B_functional_inspiration`): novelty-as-surprise, NOT a true predictive-coding
+  forward-model error (a later P5 concern), recorded and not over-claimed. Default-on
+  correctness/honesty change (not opt-in): default/recency assemblies (constant novelty `0.6` >=
+  threshold) emit a `0.6`-derived mismatch (autobiographical) rather than the retired `0.8`
+  constant; the semantic assembly tracks real memory-grounded novelty (cold/dissimilar ->
+  autobiographical, similar -> episodic). The `06` salience gate, family mapping, durability, and
+  recalled replay are unchanged in mechanism. 732 -> 735 tests green and network-free (+3 tests).
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real

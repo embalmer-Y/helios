@@ -1303,21 +1303,49 @@ class FirstVersionPredictionMismatchEvidenceBridge:
     """Owner: composition.
 
     Purpose:
-        Build explicit prediction-mismatch evidence for one tick from the feeling result.
+        Build prediction-mismatch (surprise) evidence for one tick from the real `03` appraisal
+        novelty, so genuinely novel/surprising percepts raise the `06` consolidation salience and
+        bias memory toward the autobiographical family, while familiar/expected percepts produce
+        low or no surprise.
 
     Notes:
-        Owner-neutral glue. It preserves the upstream feeling-state id as the source
-        reference and does not decide memory replay policy.
+        Owner-neutral glue (R61). It reads the real `03` `RapidSalienceAppraisalStageResult` in the
+        frame and projects the batch-max `novelty` (the surprise core: `1 - max cosine similarity`
+        to stored experience, "unlike anything remembered") and `uncertainty` into the `06`
+        `PredictionMismatchEvidence` contract. It computes no `06` consolidation/family policy
+        (those stay in the `06` owner) and invents no forward-model prediction. Below
+        `_MISMATCH_NOVELTY_THRESHOLD` (a familiar/expected percept) it returns `None`, so `06`
+        treats the tick as a non-surprising episodic memory. **Honest grounding
+        (`B_functional_inspiration`): this is novelty-as-surprise in a memory-grounded system, not
+        a true predictive-coding forward-model error (a later P5 concern); it must not be
+        over-claimed.** In the default/recency assemblies `03` novelty is the first-version
+        constant `0.6` (>= the threshold), so those assemblies still emit a `0.6`-derived mismatch
+        rather than the retired `0.8` constant.
     """
 
     def build_mismatch_evidence(self, frame, feeling_result) -> PredictionMismatchEvidence | None:
-        tick_id = frame.tick_id
+        from helios_v2.runtime.stages import RapidSalienceAppraisalStageResult
+
+        stage_results = frame.stage_results or {}
+        appraisal = stage_results.get("rapid_salience_appraisal")
+        if not isinstance(appraisal, RapidSalienceAppraisalStageResult):
+            return None
+        appraisals = appraisal.batch.appraisals
+        if not appraisals:
+            return None
+        # The dominant percept's real surprise: the most unlike-anything-remembered stimulus drives
+        # mismatch (batch-max novelty), with its retrieval ambiguity as the confidence inverse.
+        novelty = max(a.salience.novelty for a in appraisals)
+        uncertainty = max(a.salience.uncertainty for a in appraisals)
+        if novelty < _MISMATCH_NOVELTY_THRESHOLD:
+            # Familiar/expected percept: no surprise evidence -> `06` forms an episodic memory.
+            return None
         return PredictionMismatchEvidence(
-            evidence_id=f"mismatch:runtime:{tick_id}",
+            evidence_id=f"mismatch:runtime:{frame.tick_id}",
             source_reference_id=feeling_result.state.state_id,
-            mismatch_score=0.8,
-            anomaly_score=0.85,
-            confidence=0.9,
+            mismatch_score=_clamp(novelty, 0.0, 1.0),
+            anomaly_score=_clamp(novelty, 0.0, 1.0),
+            confidence=_clamp(1.0 - uncertainty, 0.0, 1.0),
         )
 
 
@@ -1526,6 +1554,13 @@ def _interoceptive_workload_pressure(frame, default: float = 0.1) -> float:
 # R55: stimulus modalities that are internal (not an external task). DMN engages at rest (no
 # external stimulus) and is suppressed when an external stimulus is present.
 _INTERNAL_MODALITIES = frozenset({"body", "interoceptive", "background"})
+
+
+# R61: below this real `03` novelty level a percept is familiar/expected and yields no
+# prediction-mismatch (surprise) evidence, so the `06` owner forms an episodic (not
+# autobiographical) memory. First-version projection cut-point (composition glue, not a `06`
+# policy weight).
+_MISMATCH_NOVELTY_THRESHOLD = 0.5
 
 
 # R60: maximum number of salient tokens projected from a perceived stimulus into the memory

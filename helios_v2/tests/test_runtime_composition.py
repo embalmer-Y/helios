@@ -1245,8 +1245,14 @@ def test_semantic_assembly_couples_neuromodulatory_arousal_into_gate() -> None:
     assert second_gate.result.contributing_signals["neuromodulatory_arousal"] == pytest.approx(
         second_arousal
     )
-    # The arousal-driven difference is real (not a constant) and moves the gate score with it.
-    assert first_gate.result.gate_score >= second_gate.result.gate_score
+    # The arousal-driven difference is real (not a constant): the lower tick-2 arousal yields a
+    # lower arousal CONTRIBUTION to the gate. (The total gate_score also reflects other real
+    # signals now — e.g. the R48 workspace activation rises on tick 2 as the consolidated tick-1
+    # memory is recalled into the workspace — so we compare the arousal contribution itself, not
+    # the composite score, which is the signal this test is about.)
+    first_arousal_contribution = first_gate.result.contributing_signals["neuromodulatory_arousal"]
+    second_arousal_contribution = second_gate.result.contributing_signals["neuromodulatory_arousal"]
+    assert first_arousal_contribution > second_arousal_contribution
 
 
 # --- Requirement 38: neuromodulator-derived feeling ---
@@ -1730,16 +1736,21 @@ def test_affect_memory_survives_restart(tmp_path) -> None:
     assert all(r.embedding is not None for r in persisted)
 
 
-def test_low_salience_first_tick_persists_no_affect_memory_but_writeback_co_persists() -> None:
-    # The very first tick's feeling has not yet built up momentum, so the salience gate is below
-    # threshold and no affect-memory is persisted; the 15 continuity record still persists.
+def test_novel_first_tick_persists_autobiographical_affect_memory() -> None:
+    # The very first tick against a cold store is maximally novel (real `03` novelty = 1.0 with
+    # nothing to compare to), so R61 grounds a high prediction-mismatch (surprise) from that real
+    # novelty: the salience gate consolidates and the formed memory is autobiographical. The 15
+    # continuity record co-persists. (Before R61 a constant mismatch made every memory
+    # autobiographical regardless of novelty; now it is the real cold-store novelty that drives it.)
     store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
     handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
     handle.startup()
 
     handle.tick()
 
-    assert _affect_memory_records(store) == []
+    affect = _affect_memory_records(store)
+    assert affect, "a maximally-novel cold-store first tick should consolidate an affect-memory"
+    assert all(r.continuity_kind == "autobiographical" for r in affect)
     assert _writeback_records(store)
 
 
@@ -2951,3 +2962,115 @@ def test_default_percept_flows_into_memory_content_no_separate_constant() -> Non
     assert content.content_kind == "perceived-stimulus-summary"
     assert "hello" in content.salient_tokens
     assert "runtime" in content.salient_tokens
+
+
+# --- Requirement 61: prediction-mismatch evidence grounded in real appraisal novelty ---
+
+
+def _appraisal_mismatch_evidence(handle, result):
+    # Reconstruct what the mismatch bridge produced this tick from the real 03 result, to assert
+    # the bridge's novelty-grounded behavior (the bridge has no stage result of its own).
+    from helios_v2.composition.bridges import FirstVersionPredictionMismatchEvidenceBridge
+
+    class _Frame:
+        def __init__(self, stage_results, tick_id):
+            self.stage_results = stage_results
+            self.tick_id = tick_id
+
+    feeling_result = result.stage_results["interoceptive_feeling_layer"]
+    frame = _Frame(result.stage_results, result.tick_id)
+    return FirstVersionPredictionMismatchEvidenceBridge().build_mismatch_evidence(frame, feeling_result)
+
+
+def _formed_family(result):
+    items = result.stage_results["memory_affect_and_replay"].state.memory_items
+    assert items
+    return items[0].family
+
+
+def _seed_store_with(store, gateway, content: str) -> None:
+    from helios_v2.persistence import PersistedExperienceRecord
+
+    vector = gateway.embed(
+        _EmbeddingRequest(
+            request_id="seed:r61", target_profile="experience-embedding", input_text=content
+        )
+    ).vector
+    store.append_records(
+        (
+            PersistedExperienceRecord(
+                record_id="experience:seed:r61",
+                tick_id=1,
+                continuity_kind="external_action",
+                outcome_class="world_changed",
+                source_outcome_kind="planner_bridge",
+                source_outcome_id="planner-bridge-result:seed",
+                writeback_status="written",
+                summary=content,
+                requested_effect_summary="reply",
+                applied_effect_summary="replied",
+                reason_trace=("seeded",),
+                linkage={"source_request_id": "planner-bridge-result:seed"},
+                embedding=vector,
+            ),
+        )
+    )
+
+
+def test_novel_percept_yields_high_mismatch_and_autobiographical_memory() -> None:
+    # A cold store -> maximal real novelty -> R61 grounds a high mismatch from it, so the formed
+    # memory is autobiographical and the mismatch score tracks the real novelty (not the 0.8 shim).
+    source = SequenceExternalSignalSource(batches=(_external_batch("e1", "an utterly unfamiliar event"),))
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        external_signal_source=source,
+        experience_store=store,
+        embedding_gateway=_embedding_gateway(),
+    )
+    handle.startup()
+
+    result = handle.tick()
+    evidence = _appraisal_mismatch_evidence(handle, result)
+    novelty = _appraisal_novelty(result)
+
+    assert evidence is not None
+    assert evidence.mismatch_score == pytest.approx(novelty)
+    assert evidence.mismatch_score != pytest.approx(0.8)  # not the retired constant
+    assert _formed_family(result) == "autobiographical"
+
+
+def test_familiar_percept_yields_no_mismatch_and_episodic_memory() -> None:
+    # A percept highly similar to stored experience -> low real novelty (< threshold) -> R61
+    # produces no mismatch evidence, so the formed memory is episodic, not autobiographical.
+    content = "the quarterly report is due on tuesday"
+    source = SequenceExternalSignalSource(batches=(_external_batch("e1", content),))
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    gateway = _embedding_gateway()
+    _seed_store_with(store, gateway, content)
+    handle = _assemble(
+        external_signal_source=source,
+        experience_store=store,
+        embedding_gateway=gateway,
+    )
+    handle.startup()
+
+    result = handle.tick()
+    novelty = _appraisal_novelty(result)
+    evidence = _appraisal_mismatch_evidence(handle, result)
+
+    assert novelty < 0.5  # familiar percept: real novelty below the mismatch threshold
+    assert evidence is None
+    assert _formed_family(result) == "episodic"
+
+
+def test_default_assembly_mismatch_derives_from_constant_novelty_not_old_constant() -> None:
+    # The default assembly's 03 novelty is the first-version constant 0.6 (>= the 0.5 threshold),
+    # so the mismatch is derived from 0.6, not the retired 0.8 mismatch constant.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+
+    evidence = _appraisal_mismatch_evidence(handle, result)
+    assert evidence is not None
+    assert evidence.mismatch_score == pytest.approx(0.6)
+    assert evidence.mismatch_score != pytest.approx(0.8)
