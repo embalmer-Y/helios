@@ -1290,12 +1290,12 @@ class FirstVersionMemoryBindingContextBridge:
                     salient_tokens=_tokens_from(primary.content),
                 ),
             )
-        # Honest absence: the tick perceived nothing. We do not fabricate external content. The
-        # pre-gate `02-08` chain currently requires a memory to form each tick (the workspace owner
-        # needs at least one replay candidate; a zero-percept pre-gate closure is a separate future
-        # requirement), so we bind an explicit no-percept context anchored to the REAL feeling state
-        # this tick. It carries no invented tokens or summary content — only the honest marker that
-        # there was no perceived stimulus, plus the real feeling-state provenance.
+        # Honest absence: the tick perceived nothing. We do not fabricate external content.
+        # R65: after zero-percept pre-gate closure, the runtime stage adapter short-circuits `06`
+        # before calling this bridge when the `02` batch is empty, so this path is now a defensive
+        # fallback unreachable from the standard runtime path. It is preserved for non-runtime
+        # callers (e.g. future composition variants) that may still reach this bridge directly.
+        # It binds an explicit no-percept context anchored to the REAL feeling state this tick.
         return MemoryBindingContext(
             context_id=f"binding:runtime:{tick_id}",
             source_kind="no_perceived_stimulus",

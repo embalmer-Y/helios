@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R64 (P3 exit evaluation: automated assessment tests `tests/test_p3_exit_evaluation.py` formally validate the P3 exit signal — FG-1 de-shim coverage (stages 03-10 each consume real signals), FG-2.1 emotion evolves cross-tick, FG-2.2 external causal chain (varying stimulus → 03 → 04 → 05 → 09) and internal causal chain (machine pressure → 05 → 07 → 09), structured `P3ExitVerdict` pass/fail report; honest record of out-of-scope remaining shims. Test baseline: 746 passed). R63 (`09` gate `selected_stimuli` de-shim — the last constant shim in the gate signal replaced by real same-tick `03` appraisal; **after R63 no constant shim remains in the gate signal**). HEAD-era: R64. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R65 (zero-percept pre-gate closure: when the `02` sensory batch is empty, the `06`/`07`/`08` pre-gate chain returns `activated=False` inactive results without invoking owner engines; `09` gate consumes inactive consciousness → `no_fire`; the pre-gate mirror of R54's post-gate no-fire closure; R60 no-percept marker path annotated as a defensive fallback). Test baseline: 744 passed. HEAD-era: R65. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -47,7 +47,7 @@ flowchart TD
     classDef infra fill:#cfe2f3,stroke:#1c4587,color:#0b3d91
     classDef gap fill:#f4cccc,stroke:#990000,color:#660000,stroke-dasharray: 5 5
 
-    EXT["External stimulus: real source injectable (R59 external_signal_source) / CLI bound / QQ voice future"]:::base
+    EXT["External stimulus: real source injectable - R59 external_signal_source / CLI bound / QQ voice future"]:::base
     BODY["Internal body signal - interoceptive source: R50 producer delivered (helios_v2.interoception, compute/runtime pressure, opt-in); R51 05 consumes it to shape feeling"]:::base
     S02[02 Sensory Ingress - relatively complete]:::deep
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
@@ -56,7 +56,7 @@ flowchart TD
     S06["06 Memory Affect and Replay - formation de-shimmed + durable/semantic recall + recalled as multi-candidate (R52) + content from real percept (R60) + mismatch grounded in real novelty (R61)"]:::base
     S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
-    S09["09 Thought Gating - all inputs real (arousal + activation + workload + temporal/DMN + drive_urgency + selected_stimuli(R63)) / no constant shim remains"]:::base
+    S09["09 Thought Gating - all inputs real - arousal + activation + workload + temporal/DMN + drive_urgency + selected_stimuli(R63) / no constant shim remains"]:::base
     S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
