@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: helios_v2
+title: Helios v2 类脑认知运行时
+scope:
+    - helios_v2/
+source_files: []
+depends_on: []
+related_to: []
