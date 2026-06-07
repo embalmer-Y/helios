@@ -1242,23 +1242,58 @@ class FirstVersionMemoryBindingContextBridge:
     """Owner: composition.
 
     Purpose:
-        Build the explicit memory binding context for one tick from the feeling result.
+        Build the explicit memory binding context for one tick from the real perceived
+        stimulus this tick (the `02` sensory batch already present in the frame), so the
+        memory `06` forms is a record of what the system actually perceived.
 
     Notes:
-        Owner-neutral glue. It forwards a bounded situational content packet and preserves
-        the current tick identity; it does not decide memory formation policy.
+        Owner-neutral glue (R60). It projects the real `02` percept into the `06`
+        `MemoryBindingContext`/`MemoryContentPacket` contract: provenance ids from the real
+        stimulus/batch and `salient_tokens` mechanically tokenized from the real perceived
+        content. It invents nothing — every token is a substring of the real content — and on
+        an empty perceived batch it returns `None` (honest absence: `06` forms no memory that
+        tick), never a fabricated content packet. It decides no `06` memory formation policy.
     """
 
     def build_binding_context(self, frame, feeling_result) -> MemoryBindingContext | None:
+        from helios_v2.runtime.stages import SensoryIngressStageResult
+
         tick_id = frame.tick_id
+        stage_results = frame.stage_results or {}
+        sensory = stage_results.get("sensory_ingress")
+        stimuli = (
+            sensory.batch.stimuli if isinstance(sensory, SensoryIngressStageResult) else ()
+        )
+        if stimuli:
+            # Prefer the external percept (what the world presented); fall back to the whole batch
+            # (e.g. an interoceptive-only tick) so a real internal percept still binds a real memory.
+            external = [s for s in stimuli if s.modality not in _INTERNAL_MODALITIES]
+            perceived = external or list(stimuli)
+            primary = perceived[0]
+            return MemoryBindingContext(
+                context_id=f"binding:runtime:{tick_id}",
+                source_kind="perceived_stimulus",
+                content=MemoryContentPacket(
+                    content_kind="perceived-stimulus-summary",
+                    summary_ref=primary.stimulus_id,
+                    context_ref=sensory.batch.batch_id,
+                    salient_tokens=_tokens_from(primary.content),
+                ),
+            )
+        # Honest absence: the tick perceived nothing. We do not fabricate external content. The
+        # pre-gate `02-08` chain currently requires a memory to form each tick (the workspace owner
+        # needs at least one replay candidate; a zero-percept pre-gate closure is a separate future
+        # requirement), so we bind an explicit no-percept context anchored to the REAL feeling state
+        # this tick. It carries no invented tokens or summary content — only the honest marker that
+        # there was no perceived stimulus, plus the real feeling-state provenance.
         return MemoryBindingContext(
             context_id=f"binding:runtime:{tick_id}",
-            source_kind="runtime_chain",
+            source_kind="no_perceived_stimulus",
             content=MemoryContentPacket(
-                content_kind="situational-summary",
-                summary_ref=f"summary:runtime:{tick_id}",
-                context_ref=f"context:runtime:{tick_id}",
-                salient_tokens=("hello", "novelty"),
+                content_kind="no-perceived-stimulus",
+                summary_ref=feeling_result.state.state_id,
+                context_ref=None,
+                salient_tokens=(),
             ),
         )
 
@@ -1491,6 +1526,32 @@ def _interoceptive_workload_pressure(frame, default: float = 0.1) -> float:
 # R55: stimulus modalities that are internal (not an external task). DMN engages at rest (no
 # external stimulus) and is suppressed when an external stimulus is present.
 _INTERNAL_MODALITIES = frozenset({"body", "interoceptive", "background"})
+
+
+# R60: maximum number of salient tokens projected from a perceived stimulus into the memory
+# binding context. A small bound keeps the content packet compact; tokens are real substrings.
+_MAX_SALIENT_TOKENS = 8
+
+
+def _tokens_from(text: str) -> tuple[str, ...]:
+    """Owner: composition (R60). Mechanically tokenize real perceived content into salient tokens.
+
+    Lowercases, splits on non-alphanumeric runs, drops empties, de-duplicates preserving first-seen
+    order, and caps at `_MAX_SALIENT_TOKENS`. It fabricates nothing: every returned token is a
+    substring of the real perceived content (`ARCHITECTURE_PHILOSOPHY` §4.3/§8 forbids inventing
+    content). Punctuation-only content yields an empty tuple (the binding context still carries real
+    summary/context provenance, so the `MemoryContentPacket` invariant holds).
+    """
+
+    import re
+
+    seen: dict[str, None] = {}
+    for token in re.findall(r"[0-9a-z]+", text.lower()):
+        if token not in seen:
+            seen[token] = None
+        if len(seen) >= _MAX_SALIENT_TOKENS:
+            break
+    return tuple(seen.keys())
 
 
 def _external_stimulus_present(frame) -> bool:

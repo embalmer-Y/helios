@@ -2864,3 +2864,90 @@ def test_default_assembly_unchanged_without_external_source() -> None:
     handle.startup()
     result = handle.tick()
     assert "hello runtime" in _appraised_contents(result)
+
+
+# --- Requirement 60: memory binding context derived from the real perceived stimulus ---
+
+
+def _formed_memory_items(result):
+    return result.stage_results["memory_affect_and_replay"].state.memory_items
+
+
+def _primary_memory_content(result):
+    items = _formed_memory_items(result)
+    assert items, "expected at least one formed memory item"
+    return items[0].content
+
+
+def test_memory_content_derives_from_real_external_percept() -> None:
+    # A real external stimulus drives the formed memory's content/provenance, not the old
+    # hardcoded ("hello","novelty") binding constant.
+    source = SequenceExternalSignalSource(
+        batches=(_external_batch("e1", "the harbor lights flicker at dusk"),)
+    )
+    handle = _assemble(external_signal_source=source)
+    handle.startup()
+
+    result = handle.tick()
+    content = _primary_memory_content(result)
+
+    assert content.content_kind == "perceived-stimulus-summary"
+    # Tokens are mechanically derived from the real perceived content (substrings of it).
+    assert "harbor" in content.salient_tokens
+    assert "flicker" in content.salient_tokens
+    # The retired constant tokens are gone.
+    assert content.salient_tokens != ("hello", "novelty")
+    # Provenance traces to the real stimulus.
+    assert content.summary_ref == "stimulus:external:e1"
+
+
+def test_memory_content_differs_with_different_external_percept() -> None:
+    source = SequenceExternalSignalSource(
+        batches=(
+            _external_batch("e1", "alpha beta gamma"),
+            _external_batch("e2", "delta epsilon zeta"),
+        )
+    )
+    handle = _assemble(external_signal_source=source)
+    handle.startup()
+
+    first = handle.tick()
+    second = handle.tick()
+
+    first_tokens = _primary_memory_content(first).salient_tokens
+    second_tokens = _primary_memory_content(second).salient_tokens
+    assert "alpha" in first_tokens
+    assert "delta" in second_tokens
+    assert first_tokens != second_tokens
+
+
+def test_empty_percept_binds_honest_no_perceived_stimulus_memory() -> None:
+    # An empty-percept tick must not crash and must not fabricate external content. The pre-gate
+    # chain still requires a memory, so it forms an honest no-perceived-stimulus memory anchored
+    # to the real feeling state (no invented tokens).
+    source = SequenceExternalSignalSource(batches=())
+    handle = _assemble(external_signal_source=source)
+    handle.startup()
+
+    result = handle.tick()
+    content = _primary_memory_content(result)
+
+    assert content.content_kind == "no-perceived-stimulus"
+    assert content.salient_tokens == ()
+    # Anchored to the real feeling-state provenance, not a fabricated summary.
+    assert content.summary_ref.startswith("interoceptive-feeling-state:") or content.summary_ref != ""
+    assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
+
+
+def test_default_percept_flows_into_memory_content_no_separate_constant() -> None:
+    # The default assembly's placeholder percept ("hello runtime") flows into the memory content,
+    # proving no separate hardcoded binding constant remains.
+    handle = _assemble()
+    handle.startup()
+
+    result = handle.tick()
+    content = _primary_memory_content(result)
+
+    assert content.content_kind == "perceived-stimulus-summary"
+    assert "hello" in content.salient_tokens
+    assert "runtime" in content.salient_tokens

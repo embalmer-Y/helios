@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R59 (external-afferent honesty: `RuntimeProfile.external_signal_source` makes a real external `SensorySource` injectable in place of the constant placeholder; the first-version `SequenceExternalSignalSource` only replays caller-supplied real signals and never fabricates; the default placeholder is documented as NON-REAL; mutually exclusive with `channel_cli`; opt-in, default-off). Test baseline: 728 passed. HEAD-era: R59. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R60 (`06` memory-content de-shim: the binding-context content is derived from the real `02` percept, retiring the `("hello","novelty")` constant; an empty percept binds an honest no-percept marker anchored to the real `05` feeling state; the default assembly's memory-content change is documented). Test baseline: 732 passed. HEAD-era: R60. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -53,7 +53,7 @@ flowchart TD
     S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
     S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
     S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick; R51 consumes real interoceptive pressure to shape feeling"]:::base
-    S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall + recalled affect-memory as multi-candidate (R52, semantic)"]:::base
+    S06["06 Memory Affect and Replay - formation de-shimmed + affect-memory durable/semantic recall + recalled affect-memory as multi-candidate (R52) + memory content from real percept (R60)"]:::base
     S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
     S09["09 Thought Gating - NE arousal + workspace activation + workload_pressure(R53) + temporal/DMN(R55) real/drive_urgency still shim"]:::base
@@ -551,6 +551,28 @@ flowchart TD
   constant-as-real-afferent. Opt-in, default-off: default/recency/semantic/checkpoint/interoceptive/
   temporal assemblies byte-for-byte unchanged when off. No contract change; no new logging mechanism;
   721 -> 728 tests green and network-free (+7 tests).
+- P3 memory-content de-shim (R60): the **content** of the memory `06` forms came from the
+  composition binding-context bridge, which returned a hardcoded constant in every assembly
+  (`content_kind="situational-summary"`, `salient_tokens=("hello","novelty")`, `summary:runtime`
+  refs); `AffectGroundedMemoryFormationPath` copies it verbatim, so the durably-persisted (R45)
+  and recalled (R52) memory was *about* a constant unrelated to the real percept — the next
+  fabricated position after R59 made a real varying stimulus reach `02`/`03`, violating FG-1. R60
+  rewrites the bridge to derive the content from the real `02` percept already in the frame
+  (prefer external, fall back to the whole batch for interoceptive-only ticks; primary stimulus ->
+  `content_kind="perceived-stimulus-summary"`, `summary_ref`=real stimulus id, `context_ref`=real
+  batch id, `salient_tokens`=an owner-neutral mechanical tokenization of the real perceived content
+  — every token a substring, capped at 8, never invented). Surfaced constraint (recorded
+  honestly): the pre-gate `02-08` chain requires a memory every tick (the `07` workspace owner
+  raises on zero replay candidates; R54's no-fire closure only covers post-gate stages), so a
+  completely empty percept (no external and no interoceptive — R59 empty source / channel
+  no-input) binds an honest no-percept marker anchored to the real `05` feeling state
+  (`content_kind="no-perceived-stimulus"`, empty tokens, `summary_ref`=real feeling-state id)
+  rather than `None` or fabricated content; a genuine zero-percept pre-gate closure is a separate
+  future requirement. Default-on correctness/honesty change (not opt-in); the default assembly's
+  memory content now derives from the `FirstVersionSensorySource` placeholder percept
+  ("hello runtime" -> tokens `("hello","runtime")`) rather than a separate constant. The `06`
+  affect tag, salience gate, durability, and recalled replay are unchanged in mechanism. 728 -> 732
+  tests green and network-free (+4 tests).
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real
