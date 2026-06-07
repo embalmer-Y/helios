@@ -2933,20 +2933,22 @@ def test_memory_content_differs_with_different_external_percept() -> None:
 
 
 def test_empty_percept_binds_honest_no_perceived_stimulus_memory() -> None:
-    # An empty-percept tick must not crash and must not fabricate external content. The pre-gate
-    # chain still requires a memory, so it forms an honest no-perceived-stimulus memory anchored
-    # to the real feeling state (no invented tokens).
+    # R65: an empty-percept tick now short-circuits the pre-gate chain. The `06` memory stage
+    # returns `activated=False` without forming a memory, and the tick completes through the
+    # `09` gate no-fire path. The R60 no-percept marker path in the binding-context bridge is
+    # now a defensive fallback unreachable from the standard runtime path.
     source = SequenceExternalSignalSource(batches=())
     handle = _assemble(external_signal_source=source)
     handle.startup()
 
     result = handle.tick()
-    content = _primary_memory_content(result)
 
-    assert content.content_kind == "no-perceived-stimulus"
-    assert content.salient_tokens == ()
-    # Anchored to the real feeling-state provenance, not a fabricated summary.
-    assert content.summary_ref.startswith("interoceptive-feeling-state:") or content.summary_ref != ""
+    memory_result = result.stage_results["memory_affect_and_replay"]
+    assert memory_result.activated is False
+    assert memory_result.state.memory_items == ()
+    assert memory_result.state.replay_candidates == ()
+    gate_result = result.stage_results["thought_gating_and_continuation_pressure"]
+    assert gate_result.result.decision == "no_fire"
     assert tuple(result.stage_results.keys()) == CANONICAL_STAGE_ORDER
 
 

@@ -114,6 +114,7 @@ from helios_v2.appraisal import (
 from helios_v2.feeling import (
     InteroceptiveFeelingAPI,
     InteroceptiveFeelingState,
+    InteroceptiveFeelingVector,
     PublishInteroceptiveFeelingStateOp,
     UpdateInteroceptiveFeelingOp,
     validate_internal_body_signal,
@@ -245,32 +246,135 @@ class InteroceptiveFeelingStageResult:
 class MemoryAffectReplayStageResult:
     """Structured runtime-visible result emitted by the memory affect and replay stage adapter."""
 
-    record_op: RecordMemoryOp
+    record_op: RecordMemoryOp | None
     state: MemoryFormationState
-    publish_replay_candidates_op: PublishReplayCandidatesOp
-    publish_state_op: PublishMemoryFormationStateOp
+    publish_replay_candidates_op: PublishReplayCandidatesOp | None
+    publish_state_op: PublishMemoryFormationStateOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "MemoryAffectReplayStageResult":
+        """Owner: runtime (R65). The not-activated result for a zero-percept tick (no owner call)."""
+
+        return cls(
+            record_op=None,
+            state=MemoryFormationState(
+                state_id=f"memory-formation-inactive:{tick_id if tick_id is not None else 'na'}",
+                source_feeling_state_id="inactive",
+                memory_items=(),
+                replay_candidates=(),
+                tick_id=tick_id,
+            ),
+            publish_replay_candidates_op=None,
+            publish_state_op=None,
+            activated=False,
+            inactive_id=f"memory-affect-no-percept:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
 class WorkspaceCompetitionStageResult:
     """Structured runtime-visible result emitted by the workspace competition stage adapter."""
 
-    run_op: RunWorkspaceCompetitionOp
+    run_op: RunWorkspaceCompetitionOp | None
     candidate_set: WorkspaceCandidateSet
     working_state: WorkingStateSnapshot
-    publish_candidate_set_op: PublishWorkspaceCandidateSetOp
-    publish_working_state_op: PublishWorkingStateOp
+    publish_candidate_set_op: PublishWorkspaceCandidateSetOp | None
+    publish_working_state_op: PublishWorkingStateOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "WorkspaceCompetitionStageResult":
+        """Owner: runtime (R65). The not-activated result for a zero-percept tick (no owner call)."""
+
+        inactive_set_id = f"workspace-candidate-set-inactive:{tick_id if tick_id is not None else 'na'}"
+        return cls(
+            run_op=None,
+            candidate_set=WorkspaceCandidateSet(
+                set_id=inactive_set_id,
+                source_feeling_state_id="inactive",
+                candidates=(),
+                tick_id=tick_id,
+            ),
+            working_state=WorkingStateSnapshot(
+                state_id=f"working-state-inactive:{tick_id if tick_id is not None else 'na'}",
+                source_candidate_set_id=inactive_set_id,
+                retained_candidate_ids=(),
+                tick_id=tick_id,
+            ),
+            publish_candidate_set_op=None,
+            publish_working_state_op=None,
+            activated=False,
+            inactive_id=f"workspace-competition-no-percept:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
 class ConsciousContentStageResult:
     """Structured runtime-visible result emitted by the reportable conscious-content stage adapter."""
 
-    commit_op: CommitConsciousContentOp
+    commit_op: CommitConsciousContentOp | None
     material_set: ConsciousContentMaterialSet
     state: ConsciousState
-    publish_state_op: PublishConsciousStateOp
+    publish_state_op: PublishConsciousStateOp | None
     publish_reportable_content_op: PublishReportableConsciousContentOp | None
+    activated: bool = True
+    inactive_id: str | None = None
+
+    @classmethod
+    def inactive(cls, tick_id: int | None) -> "ConsciousContentStageResult":
+        """Owner: runtime (R65). The not-activated result for a zero-percept tick (no owner call)."""
+
+        inactive_ws_set_id = "inactive"
+        inactive_working_state_id = "inactive"
+        inert_affect_tag = InteroceptiveFeelingVector(
+            valence=0.5, arousal=0.0, tension=0.0, comfort=0.5,
+            fatigue=0.0, pain_like=0.0, social_safety=0.5,
+        )
+        inert_material_id = f"conscious-material-inactive:{tick_id if tick_id is not None else 'na'}"
+        return cls(
+            commit_op=None,
+            material_set=ConsciousContentMaterialSet(
+                set_id=inert_material_id,
+                source_workspace_candidate_set_id=inactive_ws_set_id,
+                source_working_state_id=inactive_working_state_id,
+                materials=(
+                    ConsciousContentMaterial(
+                        material_id=inert_material_id,
+                        source_workspace_candidate_id="inactive",
+                        source_memory_candidate_id="inactive",
+                        source_memory_id="inactive",
+                        source_feeling_state_id="inactive",
+                        content_kind="inactive-no-percept",
+                        material_summary="no percept",
+                        summary_ref=None,
+                        context_ref=None,
+                        salient_tokens=(),
+                        affect_tag=inert_affect_tag,
+                        forced_consolidation=False,
+                        workspace_score_hint=None,
+                        priority_hint=None,
+                    ),
+                ),
+                tick_id=tick_id,
+            ),
+            state=ConsciousState(
+                state_id=f"conscious-state-inactive:{tick_id if tick_id is not None else 'na'}",
+                commit_status="no_commit",
+                source_workspace_candidate_set_id=inactive_ws_set_id,
+                source_working_state_id=inactive_working_state_id,
+                focal_content=None,
+                supporting_context=(),
+                no_commit_reason="context_not_reportable",
+                tick_id=tick_id,
+            ),
+            publish_state_op=None,
+            publish_reportable_content_op=None,
+            activated=False,
+            inactive_id=f"conscious-content-no-percept:{tick_id if tick_id is not None else 'na'}",
+        )
 
 
 @dataclass(frozen=True)
@@ -1071,6 +1175,14 @@ class MemoryAffectReplayRuntimeStage(RuntimeStage):
     def run(self, frame: RuntimeFrame) -> MemoryAffectReplayStageResult:
         """Execute memory affect/replay against the declared upstream feeling stage result."""
 
+        # R65: zero-percept detection — skip memory formation when the 02 batch is empty.
+        # Only short-circuit when sensory_ingress IS present but has no stimuli; a missing
+        # sensory_ingress stage is a configuration error that must fall through to the existing
+        # _require_stage_result path (which raises the appropriate upstream-missing error).
+        sensory = frame.stage_results.get("sensory_ingress")
+        if isinstance(sensory, SensoryIngressStageResult) and not sensory.batch.stimuli:
+            return MemoryAffectReplayStageResult.inactive(frame.tick_id)
+
         feeling_result = _require_stage_result(frame, self.upstream_stage_name, InteroceptiveFeelingStageResult)
         binding_context = None
         if self.binding_context_provider is not None:
@@ -1117,6 +1229,9 @@ class WorkspaceCompetitionRuntimeStage(RuntimeStage):
         """Execute workspace competition against declared upstream memory and feeling stage results."""
 
         memory_result = _require_stage_result(frame, self.memory_stage_name, MemoryAffectReplayStageResult)
+        # R65: upstream inactive check — skip workspace when memory did not activate.
+        if not memory_result.activated:
+            return WorkspaceCompetitionStageResult.inactive(frame.tick_id)
         feeling_result = _require_stage_result(frame, self.feeling_stage_name, InteroceptiveFeelingStageResult)
         run_op = self.workspace_layer.build_run_competition_op(
             memory_result.state.replay_candidates,
@@ -1164,6 +1279,9 @@ class ReportableConsciousContentRuntimeStage(RuntimeStage):
             self.workspace_stage_name,
             WorkspaceCompetitionStageResult,
         )
+        # R65: upstream inactive check — skip consciousness when workspace did not activate.
+        if not workspace_result.activated:
+            return ConsciousContentStageResult.inactive(frame.tick_id)
         memory_result = _require_stage_result(frame, self.memory_stage_name, MemoryAffectReplayStageResult)
         feeling_result = _require_stage_result(frame, self.feeling_stage_name, InteroceptiveFeelingStageResult)
         material_set = self.material_provider.build_material_set(
@@ -1241,11 +1359,29 @@ class ThoughtGatingRuntimeStage(RuntimeStage):
         """Execute thought gating against the declared upstream conscious stage result."""
 
         conscious_result = _require_stage_result(frame, self.upstream_stage_name, ConsciousContentStageResult)
-        signal_snapshot = self.signal_provider.build_signal_snapshot(frame, conscious_result)
-        if signal_snapshot.source_conscious_state_id != conscious_result.state.state_id:
-            raise RuntimeStageExecutionError(
-                "Thought-gate signal snapshots must preserve the upstream conscious-state provenance"
+
+        # R65: inactive consciousness (zero-percept pre-gate closure) — build a minimal zero-signal
+        # snapshot and let the gate engine evaluate naturally. The engine's commit_status check
+        # produces no_fire with reason "conscious_content_not_eligible".
+        if not conscious_result.activated:
+            signal_snapshot = ThoughtGateSignalSnapshot(
+                snapshot_id=f"gate-snapshot:zero-percept:{frame.tick_id}",
+                source_conscious_state_id=conscious_result.state.state_id,
+                workload_pressure=0.0,
+                global_activation_level=0.0,
+                temporal_signal=0.0,
+                drive_urgency_signal=0.0,
+                dmn_available=False,
+                selected_stimuli=(),
+                tick_id=frame.tick_id,
             )
+        else:
+            signal_snapshot = self.signal_provider.build_signal_snapshot(frame, conscious_result)
+            if signal_snapshot.source_conscious_state_id != conscious_result.state.state_id:
+                raise RuntimeStageExecutionError(
+                    "Thought-gate signal snapshots must preserve the upstream conscious-state provenance"
+                )
+
         evaluate_op = self.thought_gating_layer.build_evaluate_op(
             conscious_result.state,
             signal_snapshot,

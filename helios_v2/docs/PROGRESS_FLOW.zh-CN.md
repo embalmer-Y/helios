@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R62（`09` 门控 `drive_urgency_signal` 去 shim：由上一 tick 真实 `18` `outward_drive` 经 owner-neutral `PriorDriveUrgencyHolder` 向前 carry,tick 1 中性冷启动 `0.7`、字节级不变,tick 2 起被真实驱动取代;退休 `0.7` 常量;**实现中收敛范围**——`selected_stimuli` 因投影真实 `03` appraisal 会把默认装配翻成 no-fire 而延到 R63,故 R62 仅做 `drive_urgency_signal`;门控最后一个常量输入是 `selected_stimuli`）。测试基线：738 passed。版本：R62。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R65（零-percept gate 前收口：当 `02` sensory batch 为空时,`06`/`07`/`08` pre-gate 链返回 `activated=False` inactive result,不调动 owner engine;`09` gate 消费 inactive consciousness → `no_fire`;R54 post-gate 收口的 pre-gate 镜像;R60 no-percept marker 路径标注为防御性 fallback）。测试基线：744 passed。版本：R65。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的

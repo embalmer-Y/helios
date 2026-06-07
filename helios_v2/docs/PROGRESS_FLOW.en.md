@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R62 (`09` gate `drive_urgency_signal` de-shim: grounded in the prior tick's real `18` `outward_drive` carried forward through an owner-neutral `PriorDriveUrgencyHolder`, neutral cold-start `0.7` on tick 1 — byte-for-byte unchanged — superseded by the real prior drive from tick 2; retired the `0.7` constant; **scope converged during implementation** — `selected_stimuli` deferred to R63 because projecting the real `03` appraisal flips the default assembly to no-fire, so R62 does `drive_urgency_signal` only; the gate's last remaining constant input is `selected_stimuli`). Test baseline: 738 passed. HEAD-era: R62. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R65 (zero-percept pre-gate closure: when the `02` sensory batch is empty, the `06`/`07`/`08` pre-gate chain returns `activated=False` inactive results without invoking owner engines; `09` gate consumes inactive consciousness → `no_fire`; the pre-gate mirror of R54's post-gate no-fire closure; R60 no-percept marker path annotated as a defensive fallback). Test baseline: 744 passed. HEAD-era: R65. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
