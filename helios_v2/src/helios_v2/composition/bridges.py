@@ -2311,7 +2311,11 @@ class FirstVersionAutonomyRequestBridge:
             source_retrieval_bundle_id=bundle.bundle_id,
             source_thought_cycle_result_id=internal_thought_result.result.result_id,
             source_planner_bridge_result_id=planner_bridge_result.result.result_id,
-            source_identity_governance_result_id=identity_governance_result.result.result_id,
+            source_identity_governance_result_id=(
+                identity_governance_result.result.result_id
+                if identity_governance_result.activated
+                else (identity_governance_result.inactive_id or f"inactive-identity-governance:{tick_id}")
+            ),
             source_writeback_result_ids=tuple(
                 result.result_id for result in experience_writeback_result.results
             ),
@@ -2418,7 +2422,6 @@ class FirstVersionEvaluationRequestBridge:
         else:
             thought_result = internal_thought_result.result
             action_result = action_externalization_result.result
-            governance_result = identity_governance_result.result
             thought_evidence = (
                 {
                     "evidence_id": thought_result.result_id,
@@ -2433,13 +2436,22 @@ class FirstVersionEvaluationRequestBridge:
                     "normalized_proposal_present": action_result.normalized_proposal is not None,
                 },
             )
-            governance_evidence = (
-                {
-                    "evidence_id": governance_result.result_id,
-                    "status": governance_result.revision_decision.status,
-                    "pressure_level": governance_result.pressure_state.pressure_level,
-                },
-            )
+            if identity_governance_result.activated:
+                governance_result = identity_governance_result.result
+                governance_evidence = (
+                    {
+                        "evidence_id": governance_result.result_id,
+                        "status": governance_result.revision_decision.status,
+                        "pressure_level": governance_result.pressure_state.pressure_level,
+                    },
+                )
+            else:
+                governance_evidence = (
+                    {
+                        "evidence_id": identity_governance_result.inactive_id or f"inactive-identity-governance:{tick_label}",
+                        "activated": False,
+                    },
+                )
             prompt_evidence = tuple(
                 {
                     "evidence_id": contract.contract_id,

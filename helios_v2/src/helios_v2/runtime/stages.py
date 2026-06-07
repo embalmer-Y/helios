@@ -1725,6 +1725,8 @@ class ActionExternalizationRuntimeStage(RuntimeStage):
         if not internal_thought_result.activated:
             # No-fire tick (R54): no thought cycle ran, so there is no proposal to externalize.
             return ActionExternalizationStageResult.inactive(frame.tick_id)
+        if internal_thought_result.result.execution_status != "completed":
+            return self._run_non_completed_thought(frame, internal_thought_result)
         request = self.request_provider.build_request(frame, internal_thought_result)
         if request.source_thought_cycle_result_id != internal_thought_result.result.result_id:
             raise RuntimeStageExecutionError(
@@ -1747,6 +1749,41 @@ class ActionExternalizationRuntimeStage(RuntimeStage):
             result=result,
             publish_externalization_op=publish_externalization_op,
             publish_rejection_op=publish_rejection_op,
+        )
+
+    def _run_non_completed_thought(
+        self,
+        frame: RuntimeFrame,
+        internal_thought_result: InternalThoughtStageResult,
+    ) -> ActionExternalizationStageResult:
+        """Close an activated but non-completed thought cycle without invoking the owner.
+
+        The `12` owner contract intentionally accepts only completed thought results. When `11`
+        publishes an explicit non-success result, runtime preserves provenance through the
+        request contract and publishes an owner-neutral `no_externalization` marker so the
+        existing planner internal-only path can close the tick.
+        """
+
+        request = self.request_provider.build_request(frame, internal_thought_result)
+        if request.source_thought_cycle_result_id != internal_thought_result.result.result_id:
+            raise RuntimeStageExecutionError(
+                "Thought-externalization requests must preserve the upstream thought-cycle result provenance"
+            )
+        result = ThoughtExternalizationResult(
+            result_id=f"thought-externalization-result:{request.request_id}",
+            source_request_id=request.request_id,
+            status="no_externalization",
+            normalized_proposal=None,
+            bridge_rejection_reason=None,
+            equivalent_evidence=None,
+            tick_id=frame.tick_id,
+        )
+        return ActionExternalizationStageResult(
+            request_op=None,
+            request=request,
+            result=result,
+            publish_externalization_op=None,
+            publish_rejection_op=None,
         )
 
 
@@ -1963,6 +2000,18 @@ class IdentityGovernanceRuntimeStage(RuntimeStage):
         if not internal_thought_result.activated:
             # No-fire tick (R54): no thought cycle ran, so there is no self-revision to govern.
             return IdentityGovernanceStageResult.inactive(frame.tick_id)
+        if internal_thought_result.result.execution_status != "completed":
+            tick_label = frame.tick_id if frame.tick_id is not None else "na"
+            return IdentityGovernanceStageResult(
+                evaluate_op=None,
+                request=None,
+                result=None,
+                publish_pressure_op=None,
+                publish_revision_decision_op=None,
+                publish_applied_identity_state_op=None,
+                activated=False,
+                inactive_id=f"identity-governance-non-completed-thought:{tick_label}",
+            )
         request = self.request_provider.build_request(frame, internal_thought_result)
         if request.source_thought_cycle_result_id != internal_thought_result.result.result_id:
             raise RuntimeStageExecutionError(
@@ -2219,7 +2268,12 @@ class AutonomyRuntimeStage(RuntimeStage):
                 raise RuntimeStageExecutionError(
                     "Autonomy requests must preserve the upstream outward-expression externalization draft provenance"
                 )
-            if request.source_identity_governance_result_id != identity_governance_result.result.result_id:
+            expected_governance_id = (
+                identity_governance_result.result.result_id
+                if identity_governance_result.activated
+                else identity_governance_result.inactive_id
+            )
+            if request.source_identity_governance_result_id != expected_governance_id:
                 raise RuntimeStageExecutionError(
                     "Autonomy requests must preserve the upstream identity-governance result provenance"
                 )

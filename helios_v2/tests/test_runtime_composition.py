@@ -85,6 +85,24 @@ class RaisingThoughtProvider:
         raise RuntimeError("transport boom")
 
 
+@dataclass
+class MalformedStructuredThoughtProvider:
+    """Provider double that returns a live-like malformed structured response."""
+
+    def complete(self, profile, request, api_key) -> ProviderCompletion:
+        del profile, request, api_key
+        return ProviderCompletion(
+            output_text=(
+                "<think>internal reasoning leaked by provider</think>"
+                '{"thought":"reply to the user","sufficiency":0.9,'
+                '"wants_to_continue":false,"continue_reason":"",'
+                '"proposed_action":{"intends_action":true,"summary":"reply"},'
+                '"self_revision":{"intends_revision":false,"summary":""}}'
+            ),
+            finish_reason="stop",
+        )
+
+
 def _ready_gateway(
     config: CompositionConfig | None = None,
     provider=None,
@@ -534,6 +552,44 @@ def test_no_action_but_complete_tick_also_closes_internally() -> None:
 
     planner_result = result.stage_results["planner_executor_feedback_bridge"].result
     assert planner_result.status == "no_actionable_proposal"
+
+    artifact = result.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
+    assert artifact.gap_summary["consequence_path_outcome"] == "internal_only_decision"
+
+
+def test_malformed_structured_thought_closes_as_internal_only_tick() -> None:
+    handle = _assemble(gateway=_ready_gateway(provider=MalformedStructuredThoughtProvider()))
+    handle.startup()
+
+    result = handle.tick()
+
+    thought_stage = result.stage_results["internal_thought_loop_owner"]
+    assert thought_stage.result.execution_status == "insufficient_generation"
+    assert thought_stage.result.continuation_reason == "malformed_structured_thought"
+    assert thought_stage.result.thought is None
+
+    action_stage = result.stage_results["action_proposal_externalization_contract"]
+    assert action_stage.activated is True
+    assert action_stage.request_op is None
+    assert action_stage.request is not None
+    assert action_stage.request.source_thought_cycle_result_id == thought_stage.result.result_id
+    assert action_stage.result.status == "no_externalization"
+    assert action_stage.publish_externalization_op is None
+    assert action_stage.publish_rejection_op is None
+
+    governance_stage = result.stage_results["identity_governance_self_revision_integration"]
+    assert governance_stage.activated is False
+    assert governance_stage.inactive_id == "identity-governance-non-completed-thought:1"
+
+    planner_result = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner_result.status == "no_actionable_proposal"
+
+    writeback_stage = result.stage_results["execution_writeback_and_autobiographical_consolidation"]
+    statuses = {writeback_result.status for writeback_result in writeback_stage.results}
+    assert "written_internal_only" in statuses
+
+    autonomy_request = result.stage_results["subjective_autonomy_and_proactive_evolution"].request
+    assert autonomy_request.source_identity_governance_result_id == governance_stage.inactive_id
 
     artifact = result.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
     assert artifact.gap_summary["consequence_path_outcome"] == "internal_only_decision"
