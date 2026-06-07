@@ -3074,3 +3074,58 @@ def test_default_assembly_mismatch_derives_from_constant_novelty_not_old_constan
     assert evidence is not None
     assert evidence.mismatch_score == pytest.approx(0.6)
     assert evidence.mismatch_score != pytest.approx(0.8)
+
+
+# --- Requirement 62: thought-gate drive_urgency_signal from the prior-tick autonomy drive ---
+
+
+def _gate_drive_urgency(result) -> float:
+    return result.stage_results[
+        "thought_gating_and_continuation_pressure"
+    ].result.contributing_signals["drive_urgency_signal"]
+
+
+def test_first_tick_gate_uses_cold_start_drive_urgency() -> None:
+    # On the first tick there is no prior 18 drive, so the gate uses the documented neutral
+    # cold-start baseline (0.7), not a fabricated value.
+    handle = _assemble()
+    handle.startup()
+
+    first = handle.tick()
+    assert _gate_drive_urgency(first) == pytest.approx(0.7)
+
+
+def test_gate_drive_urgency_reflects_prior_tick_autonomy_drive() -> None:
+    # From tick 2 onward the gate's drive_urgency_signal is the bounded prior-tick 18
+    # proactive-drive (outward_drive) carried forward, not the constant. An externalizing prior
+    # tick has a high outward_drive (>= the 1.6 action threshold, clamped to 1.0), so tick 2's
+    # gate drive_urgency rises above the tick-1 cold start.
+    provider = FakeThoughtProvider(
+        thought_text="acting now",
+        sufficiency=0.9,
+        wants_to_continue=False,
+        intends_action=True,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    results = handle.run_ticks(2)
+    # Tick 1 externalizes -> high outward_drive; verify the autonomy drive was indeed high.
+    first_drive = results[0].stage_results[
+        "subjective_autonomy_and_proactive_evolution"
+    ].result.drive_state.pressure_components["outward_drive"]
+    assert first_drive >= 1.6  # action threshold reached
+
+    # Tick 2's gate drive_urgency is the clamped prior-tick outward_drive (1.0), above cold start.
+    assert _gate_drive_urgency(results[0]) == pytest.approx(0.7)  # tick 1 cold start
+    assert _gate_drive_urgency(results[1]) == pytest.approx(1.0)  # carried clamped prior drive
+    assert _gate_drive_urgency(results[1]) > _gate_drive_urgency(results[0])
+
+
+def test_gate_drive_urgency_is_bounded_projection_of_prior_drive() -> None:
+    # The carried drive_urgency is always a bounded [0,1] projection of the prior-tick 18 drive,
+    # never an unclamped sum.
+    handle = _assemble()
+    handle.startup()
+    for result in handle.run_ticks(3):
+        assert 0.0 <= _gate_drive_urgency(result) <= 1.0

@@ -1362,6 +1362,7 @@ class FirstVersionThoughtGateSignalBridge:
     """
 
     temporal_source: object | None = None
+    drive_urgency_holder: object | None = None
 
     def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
         tick_id = frame.tick_id
@@ -1372,7 +1373,7 @@ class FirstVersionThoughtGateSignalBridge:
             workload_pressure=_interoceptive_workload_pressure(frame),
             global_activation_level=0.9,
             temporal_signal=temporal_signal,
-            drive_urgency_signal=0.7,
+            drive_urgency_signal=_drive_urgency_signal(self.drive_urgency_holder),
             dmn_available=dmn_available,
             selected_stimuli=(
                 SelectedStimulusSummary(
@@ -1418,6 +1419,7 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
     neuromodulator_stage_name: str = "neuromodulator_system"
     workspace_stage_name: str = "workspace_competition_and_working_state"
     temporal_source: object | None = None
+    drive_urgency_holder: object | None = None
 
     def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
         from helios_v2.runtime.stages import (
@@ -1459,7 +1461,7 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
             workload_pressure=_interoceptive_workload_pressure(frame),
             global_activation_level=global_activation_level,
             temporal_signal=temporal_signal,
-            drive_urgency_signal=0.7,
+            drive_urgency_signal=_drive_urgency_signal(self.drive_urgency_holder),
             dmn_available=dmn_available,
             selected_stimuli=(
                 SelectedStimulusSummary(
@@ -1561,6 +1563,60 @@ _INTERNAL_MODALITIES = frozenset({"body", "interoceptive", "background"})
 # autobiographical) memory. First-version projection cut-point (composition glue, not a `06`
 # policy weight).
 _MISMATCH_NOVELTY_THRESHOLD = 0.5
+
+
+# R62: the documented first-tick neutral baseline for the `09` gate's `drive_urgency_signal`.
+# Before any `18` proactive drive exists (tick 1), the gate uses this neutral value (the same
+# value the pre-R62 constant used); from tick 2 onward the real prior-tick `18` drive supersedes
+# it through the carry holder. It is a defined cold-start baseline, not a fabricated high signal.
+_DRIVE_URGENCY_COLD_START = 0.7
+
+
+def _drive_urgency_signal(holder: object | None) -> float:
+    """Owner: composition (R62). Return the `09` gate `drive_urgency_signal` from the carry holder.
+
+    When a `PriorDriveUrgencyHolder` is wired, returns the bounded prior-tick `18` proactive-drive
+    urgency it carries (the neutral cold-start value until the first `18` drive exists); otherwise
+    returns the documented cold-start baseline. Owner-neutral: the `09` owner keeps the gate weight.
+    """
+
+    if holder is None:
+        return _DRIVE_URGENCY_COLD_START
+    return holder.current()
+
+
+@dataclass
+class PriorDriveUrgencyHolder:
+    """Owner: composition (R62).
+
+    Purpose:
+        Carry the prior tick's real `18` proactive-drive urgency forward into the next tick's `09`
+        gate signal, since `18` runs after `09` in the tick. Mirrors the R49 recall-directive and
+        R55 temporal cross-tick carry seams.
+
+    Notes:
+        Owner-neutral carry. `set_from_drive_state` projects the `18` owner's already-published
+        `outward_drive` (a bounded raw fact, clamped into the gate's `[0,1]` input range, exactly
+        as R48 clamps the published `07` activation); it computes no `18` disposition. `current()`
+        returns the carried value, defaulting to the documented neutral cold-start until the first
+        `18` drive exists.
+    """
+
+    urgency: float = _DRIVE_URGENCY_COLD_START
+
+    def set_from_drive_state(self, drive_state) -> None:
+        """Owner: composition. Set the carried urgency from a published `18` `ProactiveDriveState`."""
+
+        components = getattr(drive_state, "pressure_components", None) or {}
+        outward_drive = components.get("outward_drive", 0.0)
+        if isinstance(outward_drive, bool) or not isinstance(outward_drive, (int, float)):
+            return
+        self.urgency = _clamp(float(outward_drive), 0.0, 1.0)
+
+    def current(self) -> float:
+        """Owner: composition. Return the carried prior-tick drive urgency (bounded)."""
+
+        return self.urgency
 
 
 # R60: maximum number of salient tokens projected from a perceived stimulus into the memory

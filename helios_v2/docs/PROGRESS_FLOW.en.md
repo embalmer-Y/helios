@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R61 (`06` prediction-mismatch de-shim: the surprise/mismatch evidence is grounded in the real `03` novelty, retiring the `0.8` constant; real novelty drives consolidation salience and the autobiographical/episodic family; a familiar percept yields None -> episodic; honest novelty-as-surprise caveat, not a predictive-coding error). Test baseline: 735 passed. HEAD-era: R61. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R62 (`09` gate `drive_urgency_signal` de-shim: grounded in the prior tick's real `18` `outward_drive` carried forward through an owner-neutral `PriorDriveUrgencyHolder`, neutral cold-start `0.7` on tick 1 — byte-for-byte unchanged — superseded by the real prior drive from tick 2; retired the `0.7` constant; **scope converged during implementation** — `selected_stimuli` deferred to R63 because projecting the real `03` appraisal flips the default assembly to no-fire, so R62 does `drive_urgency_signal` only; the gate's last remaining constant input is `selected_stimuli`). Test baseline: 738 passed. HEAD-era: R62. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -56,7 +56,7 @@ flowchart TD
     S06["06 Memory Affect and Replay - formation de-shimmed + durable/semantic recall + recalled as multi-candidate (R52) + content from real percept (R60) + mismatch grounded in real novelty (R61)"]:::base
     S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
     S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
-    S09["09 Thought Gating - NE arousal + workspace activation + workload_pressure(R53) + temporal/DMN(R55) real/drive_urgency still shim"]:::base
+    S09["09 Thought Gating - NE arousal + workspace activation + workload_pressure(R53) + temporal/DMN(R55) + drive_urgency(R62, prior-tick real 18 carry) real/only selected_stimuli constant remains (R63)"]:::base
     S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::base
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
@@ -591,6 +591,23 @@ flowchart TD
   constant; the semantic assembly tracks real memory-grounded novelty (cold/dissimilar ->
   autobiographical, similar -> episodic). The `06` salience gate, family mapping, durability, and
   recalled replay are unchanged in mechanism. 732 -> 735 tests green and network-free (+3 tests).
+- P3 `09` gate drive-urgency de-shim (R62): the `09` gate's `drive_urgency_signal` (weight `* 0.10`)
+  was the constant `0.7`; it is meant to be the proactive drive's urgency, owned by `18` autonomy
+  which runs *after* `09`, so the gate could only ever see a constant. R62 carries the prior tick's
+  real `18` `ProactiveDriveState.outward_drive` (clamped to `[0,1]`) forward through an owner-neutral
+  `PriorDriveUrgencyHolder` advanced post-tick (the R49/R55 carry pattern) and read by the gate-signal
+  bridge next tick; the `09` owner keeps the `* 0.10` weight. The first tick uses a documented neutral
+  cold-start equal to the prior constant (`0.7`), so tick 1 of every assembly is byte-for-byte
+  unchanged and the real prior drive supersedes it only from tick 2 (e.g. an externalizing prior tick
+  with `outward_drive >= 1.6` makes the next tick's gate `drive_urgency_signal = 1.0`). No fabricated
+  urgency; an absent `18` result leaves the carry unchanged. **Scope converged during implementation:**
+  R62 originally bundled `selected_stimuli`, but projecting the real `03` appraisal drops the default
+  (non-semantic) assembly's stimulus signal from `0.9` to the first-version aggregate `0.4`, pushing
+  the default gate below the `0.55` fire threshold and flipping it to no-fire (17 fired-path tests
+  depend on the default firing). That flip is honest but exposes a deeper "default-assembly has no real
+  high-salience ignition source" problem that deserves its own requirement rather than being forced
+  through by a weak constant or by patching the `09` threshold — so `selected_stimuli` is deferred to
+  R63 and is the gate's last remaining constant input. 735 -> 738 tests green and network-free (+3 tests).
 - Premotor-preparation vs execution (16 labels): the `16` outward-expression and externalization
   nodes produce NON-AUTHORITATIVE drafts, the functional analog of premotor/SMA motor preparation
   and internal rehearsal, NOT execution. The real go/no-go authority is `13` planner and the real

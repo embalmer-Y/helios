@@ -192,6 +192,7 @@ from .bridges import (
     FirstVersionWorkingStateRetentionPath,
     FirstVersionWorkspaceCompetitionPath,
     PriorThoughtRecallHolder,
+    PriorDriveUrgencyHolder,
     ThoughtDirectedRetrievalRequestBridge,
     EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
@@ -577,6 +578,7 @@ class RuntimeHandle:
     experience_record_bridge: ExperienceRecordBridge | None = None
     memory_record_bridge: "MemoryRecordBridge | None" = None
     prior_thought_recall_holder: "PriorThoughtRecallHolder | None" = None
+    drive_urgency_holder: "PriorDriveUrgencyHolder | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     temporal_source: "TemporalSource | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
@@ -642,6 +644,7 @@ class RuntimeHandle:
         self._carry_consequence_claim(result)
         self._carry_recall_directive(result)
         self._carry_temporal(result)
+        self._carry_drive_urgency(result)
         self._persist_experience(result)
         self._persist_memory(result)
         self._checkpoint_continuity(result)
@@ -725,6 +728,24 @@ class RuntimeHandle:
         if decision is None:
             return
         self.temporal_source.observe_tick(fired=(decision == "fire"))
+
+    def _carry_drive_urgency(self, result: RuntimeTickResult) -> None:
+        """Advance the prior-tick `18` drive-urgency carry from this tick's autonomy result (R62).
+
+        Owner-neutral carry: it reads the published `18` `ProactiveDriveState` from the autonomy
+        stage result and stores its bounded `outward_drive` projection in the holder, so the next
+        tick's `09` gate signal reflects the real proactive-drive urgency (since `18` runs after
+        `09`). It computes no `18` disposition. A no-op when no holder is wired or the autonomy
+        result is absent.
+        """
+
+        if self.drive_urgency_holder is None:
+            return
+        stage_result = result.stage_results.get("subjective_autonomy_and_proactive_evolution")
+        autonomy_result = getattr(stage_result, "result", None)
+        drive_state = getattr(autonomy_result, "drive_state", None)
+        if drive_state is not None:
+            self.drive_urgency_holder.set_from_drive_state(drive_state)
 
     def _persist_experience(self, result: RuntimeTickResult) -> None:
         """Durably append the just-completed tick's `15` continuity records when enabled.
@@ -1433,6 +1454,12 @@ def assemble_runtime(
         PriorThoughtRecallHolder() if semantic_memory_enabled else None
     )
 
+    # Owner-neutral carry for the prior-tick `18` proactive-drive urgency (R62). `18` runs after
+    # `09` in the tick, so the gate can only see the prior tick's drive; this holder is updated
+    # post-tick from the `18` result and read by the gate-signal bridge next tick. Default-on
+    # (the gate-signal bridge is in every assembly); cold-starts at the neutral baseline.
+    drive_urgency_holder = PriorDriveUrgencyHolder()
+
     kernel = RuntimeKernel(
         dependency_specs=resolved_specs,
         dependency_provider=resolved_provider,
@@ -1453,9 +1480,15 @@ def assemble_runtime(
         ThoughtGatingRuntimeStage(
             thought_gating_layer=thought_gating,
             signal_provider=(
-                NeuromodulatorAwareThoughtGateSignalBridge(temporal_source=temporal_source)
+                NeuromodulatorAwareThoughtGateSignalBridge(
+                    temporal_source=temporal_source,
+                    drive_urgency_holder=drive_urgency_holder,
+                )
                 if semantic_memory_enabled
-                else FirstVersionThoughtGateSignalBridge(temporal_source=temporal_source)
+                else FirstVersionThoughtGateSignalBridge(
+                    temporal_source=temporal_source,
+                    drive_urgency_holder=drive_urgency_holder,
+                )
             ),
         ),
         DirectedRetrievalRuntimeStage(
@@ -1585,6 +1618,7 @@ def assemble_runtime(
             MemoryRecordBridge() if semantic_memory_enabled else None
         ),
         prior_thought_recall_holder=prior_thought_recall_holder,
+        drive_urgency_holder=drive_urgency_holder,
         embed_record=_embed_text if embedding_gateway is not None else None,
         temporal_source=temporal_source,
         continuity_checkpoint=continuity_checkpoint,
