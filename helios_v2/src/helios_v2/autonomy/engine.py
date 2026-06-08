@@ -221,8 +221,15 @@ class FirstVersionAutonomyPath:
         return reason
 
     @classmethod
-    def _continuity_key(cls, origin_ref: str, carry_reason: str) -> str:
-        return f"{origin_ref}:{cls._base_reason(carry_reason)}"
+    def _continuity_key(cls, carry_reason: str) -> str:
+        """Derive a tick-stable continuity key from the carry reason only.
+
+        The key is the base reason stripped of any carry-forward/merge prefix,
+        making it identical across ticks for the same deferral motive. The
+        tick-specific provenance reference lives on ``origin_ref`` separately.
+        """
+
+        return cls._base_reason(carry_reason)
 
     def _build_deferred_record(
         self,
@@ -484,7 +491,6 @@ class FirstVersionAutonomyPath:
                     request_id=request.request_id,
                     suffix="blocked-outward",
                     continuity_key=self._continuity_key(
-                        request.source_planner_bridge_result_id,
                         "blocked_outward_externalization",
                     ),
                     origin_ref=request.source_planner_bridge_result_id,
@@ -518,7 +524,6 @@ class FirstVersionAutonomyPath:
                         request_id=request.request_id,
                         suffix="carry-forward",
                         continuity_key=self._continuity_key(
-                            request.source_thought_cycle_result_id,
                             "insufficient_outward_readiness",
                         ),
                         origin_ref=request.source_thought_cycle_result_id,

@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R65 (zero-percept pre-gate closure: when the `02` sensory batch is empty, the `06`/`07`/`08` pre-gate chain returns `activated=False` inactive results without invoking owner engines; `09` gate consumes inactive consciousness → `no_fire`; the pre-gate mirror of R54's post-gate no-fire closure; R60 no-percept marker path annotated as a defensive fallback). Test baseline: 744 passed. HEAD-era: R65. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R67 (stable continuity thread key: `18` autonomy's `_continuity_key` derives from `carry_reason` only, dropping tick-specific `origin_ref`, so the same deferral motive always maps to the same thread across ticks and record-expiry gaps, enabling genuine long-horizon reinforcement). Test baseline: 755 passed. HEAD-era: R67. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose

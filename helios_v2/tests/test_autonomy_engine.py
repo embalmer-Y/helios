@@ -268,6 +268,50 @@ def test_recurring_tendency_reinforces_its_thread_across_ticks() -> None:
     assert second_thread.thread_strength >= first_thread.thread_strength
 
 
+def test_stable_key_reinforces_thread_after_record_expiry() -> None:
+    """R67: a fresh record with the same carry_reason reinforces a prior thread even
+    when no prior deferred records are carried (simulating record expiry gap).
+
+    With the old tick-specific key, a fresh record on a later tick would get a different
+    key (different source_thought_cycle_result_id) and the prior thread would NOT be
+    reinforced. With the stable key (derived from carry_reason only), the fresh record
+    matches the prior thread and reinforcement succeeds.
+    """
+
+    path = FirstVersionAutonomyPath()
+    engine = AutonomyEngine(config=_build_config(), autonomy_path=path)
+
+    # Tick 1: blocked outward → form thread.
+    first = engine.evaluate(
+        _build_request(
+            outward_ready=True,
+            externalization_blocked=True,
+            request_id="autonomy-request:gap-t1",
+        )
+    )
+    first_thread = first.long_horizon_state.threads[0]
+    assert first_thread.reinforcement_count == 0
+    assert first_thread.age_ticks == 1
+
+    # Tick 3 (gap: no prior records carried, but prior threads survive).
+    # A new blocked-outward request creates a fresh record with the same stable key.
+    third = engine.evaluate(
+        _build_request(
+            outward_ready=True,
+            externalization_blocked=True,
+            request_id="autonomy-request:gap-t3",
+            prior_deferred_records=(),  # records expired, not carried
+            prior_continuity_threads=first.long_horizon_state.threads,
+        )
+    )
+    third_thread = third.long_horizon_state.threads[0]
+    # The stable key matches the prior thread → reinforcement succeeds.
+    assert third_thread.reinforcement_count >= 1
+    assert third_thread.age_ticks >= 2
+    assert third_thread.continuity_key == first_thread.continuity_key
+    assert third_thread.continuity_key == "blocked_outward_externalization"
+
+
 def test_no_deferred_continuity_yields_empty_long_horizon_state() -> None:
     engine = AutonomyEngine(config=_build_config(), autonomy_path=FirstVersionAutonomyPath())
 

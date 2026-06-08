@@ -689,6 +689,37 @@ def test_repeated_deferring_ticks_persist_continuity_thread() -> None:
     assert max(ages) >= 2
 
 
+def test_consecutive_deferring_ticks_reinforce_single_thread() -> None:
+    """R67: stable continuity key enables multi-tick reinforcement beyond record expiry.
+
+    With the tick-specific key scheme, each tick produced a different key so only the
+    carry-forward chain (which preserves the old key) could reinforce. With the stable
+    key, every tick's deferral maps to the same thread, yielding reinforcement_count
+    that grows monotonically across 5 consecutive deferring ticks.
+    """
+
+    provider = FakeThoughtProvider(
+        thought_text="resolved, nothing to do",
+        sufficiency=0.95,
+        wants_to_continue=False,
+        intends_action=False,
+    )
+    handle = _assemble(gateway=_ready_gateway(provider=provider))
+    handle.startup()
+
+    results = handle.run_ticks(5)
+    autonomies = [_autonomy(r) for r in results]
+    # Every tick defers with the same motive.
+    assert all(a.drive_state.dominant_disposition == "defer" for a in autonomies)
+    # Exactly one thread (same stable key) persists and strengthens.
+    last = autonomies[-1]
+    assert last.long_horizon_state.active_thread_count == 1
+    thread = last.long_horizon_state.threads[0]
+    assert thread.reinforcement_count >= 2
+    assert thread.age_ticks >= 3
+    assert thread.continuity_key == "insufficient_outward_readiness"
+
+
 # --- Requirement 31: CLI channel driver + channel-bound assembly wiring ---
 
 
