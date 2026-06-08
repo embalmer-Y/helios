@@ -364,6 +364,53 @@ class IdentityGovernanceResult:
 
 
 @dataclass(frozen=True)
+class GovernanceCarryState:
+    """Immutable cross-tick carry state for identity governance.
+
+    Owner: identity governance and self-revision integration.
+
+    Encapsulates the evolved identity-state snapshot and a bounded governance
+    trace history so subsequent ticks can build on prior governance activity.
+    Constructed by the runtime stage after each tick's evaluation; consumed by
+    the composition bridge (owner-neutral injection) and the governance owner.
+
+    Failure semantics:
+        Construction raises ``IdentityGovernanceError`` on negative counts or
+        trace-history entries with empty keys.
+    """
+
+    identity_state_snapshot: Mapping[str, object]
+    recent_governance_trace_history: tuple[Mapping[str, object], ...]
+    accepted_revision_count: int
+    rejected_revision_count: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.accepted_revision_count, int) or self.accepted_revision_count < 0:
+            raise IdentityGovernanceError(
+                "GovernanceCarryState accepted_revision_count must be a non-negative integer"
+            )
+        if not isinstance(self.rejected_revision_count, int) or self.rejected_revision_count < 0:
+            raise IdentityGovernanceError(
+                "GovernanceCarryState rejected_revision_count must be a non-negative integer"
+            )
+        history: list[Mapping[str, object]] = []
+        for entry in self.recent_governance_trace_history:
+            proxy = MappingProxyType(dict(entry))
+            for key in proxy:
+                if not key:
+                    raise IdentityGovernanceError(
+                        "GovernanceCarryState trace-history entries must not contain empty keys"
+                    )
+            history.append(proxy)
+        object.__setattr__(self, "recent_governance_trace_history", tuple(history))
+        object.__setattr__(
+            self,
+            "identity_state_snapshot",
+            MappingProxyType(dict(self.identity_state_snapshot)),
+        )
+
+
+@dataclass(frozen=True)
 class EvaluateIdentityGovernanceOp:
     """Runtime-visible request op for one governance evaluation cycle."""
 

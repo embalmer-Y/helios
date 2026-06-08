@@ -3,6 +3,7 @@
 from .contracts import (
     AppliedIdentityState,
     EvaluateIdentityGovernanceOp,
+    GovernanceCarryState,
     GovernancePressureLevel,
     GovernancePressureState,
     GovernanceRejectionReason,
@@ -25,6 +26,7 @@ __all__ = [
     "AppliedIdentityState",
     "EvaluateIdentityGovernanceOp",
     "FirstVersionIdentityGovernancePath",
+    "GovernanceCarryState",
     "GovernancePressureLevel",
     "GovernancePressureState",
     "GovernanceRejectionReason",

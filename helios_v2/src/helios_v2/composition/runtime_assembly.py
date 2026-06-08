@@ -587,6 +587,7 @@ class RuntimeHandle:
     autonomy_stage: "AutonomyRuntimeStage | None" = None
     neuromodulator_stage: "NeuromodulatorRuntimeStage | None" = None
     feeling_stage: "InteroceptiveFeelingRuntimeStage | None" = None
+    identity_governance_stage: "IdentityGovernanceRuntimeStage | None" = None
     _reconstructor: ExecutionTimelineReconstructor = field(
         default_factory=ExecutionTimelineReconstructor
     )
@@ -1460,6 +1461,13 @@ def assemble_runtime(
     # (the gate-signal bridge is in every assembly); cold-starts at the neutral baseline.
     drive_urgency_holder = PriorDriveUrgencyHolder()
 
+    # Owner-neutral carry for the prior-tick `14` governance state (R68). The bridge reads
+    # the stage's prior carry state at request-build time; the stage advances it post-tick.
+    # The lambda captures `governance_stage_ref` by closure — assigned before the first tick.
+    governance_request_bridge = FirstVersionIdentityGovernanceRequestBridge(
+        carry_state_provider=lambda: governance_stage_ref.prior_carry_state,
+    )
+
     kernel = RuntimeKernel(
         dependency_specs=resolved_specs,
         dependency_provider=resolved_provider,
@@ -1528,7 +1536,7 @@ def assemble_runtime(
         ),
         IdentityGovernanceRuntimeStage(
             identity_governance_layer=identity_governance,
-            request_provider=FirstVersionIdentityGovernanceRequestBridge(),
+            request_provider=governance_request_bridge,
         ),
         ExperienceWritebackRuntimeStage(
             experience_writeback_layer=experience_writeback,
@@ -1604,6 +1612,14 @@ def assemble_runtime(
             stage for stage in stages if stage.stage_name == "interoceptive_feeling_layer"
         )
 
+    # R68: bind the `14` stage ref so the governance bridge's carry-state provider
+    # (a closure over this name) resolves to the live stage at request-build time.
+    governance_stage_ref = next(
+        stage
+        for stage in stages
+        if stage.stage_name == "identity_governance_self_revision_integration"
+    )
+
     return RuntimeHandle(
         kernel=kernel,
         ingress=ingress,
@@ -1627,6 +1643,7 @@ def assemble_runtime(
         autonomy_stage=autonomy_stage_ref,
         neuromodulator_stage=neuromodulator_stage_ref,
         feeling_stage=feeling_stage_ref,
+        identity_governance_stage=governance_stage_ref,
     )
 
 

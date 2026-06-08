@@ -57,7 +57,7 @@ from helios_v2.feeling import (
     InteroceptiveFeelingState,
     InteroceptiveFeelingVector,
 )
-from helios_v2.identity_governance import IdentityGovernanceRequest
+from helios_v2.identity_governance import GovernanceCarryState, IdentityGovernanceRequest
 from helios_v2.internal_thought import InternalThoughtRequest
 from helios_v2.memory import (
     AffectTaggedMemoryItem,
@@ -2079,7 +2079,55 @@ class FirstVersionIdentityGovernanceRequestBridge:
         forwards bounded proposal and identity-state snapshots; it does not decide the
         revision outcome. When no self-revision proposal is present, it returns a
         proposal-absent request so governance can still run.
+
+        When a ``carry_state_provider`` is wired by composition, the bridge reads the
+        current ``GovernanceCarryState`` at request-build time and injects its identity
+        snapshot and trace history into the request. When no provider is set (or the
+        provider returns ``None``), the bridge falls back to the cold-start bootstrap
+        constant so the first tick is byte-for-byte identical to the pre-carry behavior.
     """
+
+    def __init__(
+        self,
+        carry_state_provider: Callable[[], GovernanceCarryState | None] | None = None,
+    ) -> None:
+        self.carry_state_provider = carry_state_provider
+
+    def _resolve_carry_state(self) -> GovernanceCarryState | None:
+        if self.carry_state_provider is None:
+            return None
+        return self.carry_state_provider()
+
+    def _build_identity_state_snapshot(self, carry_state: GovernanceCarryState | None) -> dict:
+        if carry_state is not None:
+            return dict(carry_state.identity_state_snapshot)
+        return {
+            "self_definition": "runtime identity definition",
+            "personality_baseline": {"openness": 1.0, "agreeableness": 1.0},
+            "identity_metadata": {},
+            "current_revision": "bootstrap",
+            "revision_history_length": 0,
+        }
+
+    def _build_governance_trace_summary(self, carry_state: GovernanceCarryState | None) -> dict:
+        if carry_state is None or not carry_state.recent_governance_trace_history:
+            return {}
+        history = carry_state.recent_governance_trace_history
+        status_counts: dict[str, int] = {}
+        for entry in history:
+            status = str(entry.get("revision_status", "unknown"))
+            status_counts[status] = status_counts.get(status, 0) + 1
+        return {
+            "total_ticks_observed": len(history),
+            "revision_status_counts": status_counts,
+            "accepted_revision_count": carry_state.accepted_revision_count,
+            "rejected_revision_count": carry_state.rejected_revision_count,
+        }
+
+    def _build_recent_trace_history(self, carry_state: GovernanceCarryState | None) -> tuple:
+        if carry_state is not None:
+            return tuple(carry_state.recent_governance_trace_history)
+        return ()
 
     def build_request(self, frame, internal_thought_result) -> IdentityGovernanceRequest:
         tick_id = frame.tick_id
@@ -2096,21 +2144,16 @@ class FirstVersionIdentityGovernanceRequestBridge:
             }
         else:
             proposal_snapshot = {}
+        carry_state = self._resolve_carry_state()
         return IdentityGovernanceRequest(
             request_id=f"identity-governance-request:runtime:{tick_id}",
             source_thought_cycle_result_id=internal_thought_result.result.result_id,
             source_proposal_id=proposal_id,
             proposal_present=proposal_present,
             proposal_snapshot=proposal_snapshot,
-            identity_state_snapshot={
-                "self_definition": "runtime identity definition",
-                "personality_baseline": {"openness": 1.0, "agreeableness": 1.0},
-                "identity_metadata": {},
-                "current_revision": "bootstrap",
-                "revision_history_length": 0,
-            },
-            governance_trace_summary={},
-            recent_governance_trace_history=(),
+            identity_state_snapshot=self._build_identity_state_snapshot(carry_state),
+            governance_trace_summary=self._build_governance_trace_summary(carry_state),
+            recent_governance_trace_history=self._build_recent_trace_history(carry_state),
             tick_id=tick_id,
         )
 

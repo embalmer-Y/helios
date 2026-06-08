@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R67（稳定 continuity thread key：`18` 的 `_continuity_key` 仅从 `carry_reason` 派生 key，去除 tick-specific `origin_ref`，使同一延迟动机跨 tick/跨 record 过期窗口始终映射同一线程，支持真正的长程强化）。测试基线：755 passed。版本：R67。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R68（`14` identity cross-tick governance carry state：`GovernanceCarryState` 封装 identity_state_snapshot、bounded trace history、accepted/rejected 计数；`IdentityGovernanceRuntimeStage` 每 tick 后续推进 carry state；`FirstVersionIdentityGovernanceRequestBridge` 通过 `carry_state_provider` 注入 carry 数据，无 provider 时保持冷启动常量字节一致）。测试基线：762 passed。版本：R68。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的

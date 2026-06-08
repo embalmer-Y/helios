@@ -5,6 +5,7 @@ import pytest
 from helios_v2.directed_retrieval import RetrievalSelectionTrace, ThoughtWindowBundle, ThoughtWindowHit
 from helios_v2.identity_governance import (
     FirstVersionIdentityGovernancePath,
+    GovernanceCarryState,
     IdentityGovernanceConfig,
     IdentityGovernanceEngine,
     IdentityGovernanceError,
@@ -287,3 +288,111 @@ def test_engine_requires_explicit_governance_capability() -> None:
                 }
             ),
         )
+
+
+# --- R68: bridge carry-state injection unit tests ---
+
+
+from types import SimpleNamespace
+
+from helios_v2.composition.bridges import FirstVersionIdentityGovernanceRequestBridge
+
+
+def _fake_frame(tick_id: int = 1):
+    return SimpleNamespace(tick_id=tick_id)
+
+
+def _fake_internal_thought_result():
+    thought_result = _thought_result()
+    return SimpleNamespace(result=thought_result)
+
+
+def test_bridge_cold_start_produces_bootstrap_snapshot() -> None:
+    """R68: without a carry-state provider the bridge emits the bootstrap constant."""
+
+    bridge = FirstVersionIdentityGovernanceRequestBridge()
+    request = bridge.build_request(_fake_frame(), _fake_internal_thought_result())
+
+    assert request.identity_state_snapshot == {
+        "self_definition": "runtime identity definition",
+        "personality_baseline": {"openness": 1.0, "agreeableness": 1.0},
+        "identity_metadata": {},
+        "current_revision": "bootstrap",
+        "revision_history_length": 0,
+    }
+    assert request.governance_trace_summary == {}
+    assert request.recent_governance_trace_history == ()
+
+
+def test_bridge_injects_evolved_carry_state_snapshot() -> None:
+    """R68: when the provider returns a carry state, the bridge uses its snapshot and trace."""
+
+    evolved_snapshot = {
+        "self_definition": "Evolved self definition after revision",
+        "personality_baseline": {"openness": 1.2, "agreeableness": 0.9},
+        "identity_metadata": {"last_revision": "accepted"},
+        "current_revision": "revision-001",
+        "revision_history_length": 3,
+    }
+    trace = (
+        {"pressure_level": "none", "revision_status": "accepted", "tick_id": 1},
+        {"pressure_level": "monitor", "revision_status": "accepted_with_monitoring", "tick_id": 2},
+    )
+    carry = GovernanceCarryState(
+        identity_state_snapshot=evolved_snapshot,
+        recent_governance_trace_history=trace,
+        accepted_revision_count=2,
+        rejected_revision_count=0,
+    )
+
+    bridge = FirstVersionIdentityGovernanceRequestBridge(
+        carry_state_provider=lambda: carry,
+    )
+    request = bridge.build_request(_fake_frame(tick_id=3), _fake_internal_thought_result())
+
+    assert request.identity_state_snapshot["self_definition"] == "Evolved self definition after revision"
+    assert request.identity_state_snapshot["current_revision"] == "revision-001"
+    assert request.recent_governance_trace_history == trace
+    assert request.governance_trace_summary["total_ticks_observed"] == 2
+    assert request.governance_trace_summary["accepted_revision_count"] == 2
+    assert request.governance_trace_summary["rejected_revision_count"] == 0
+
+
+def test_bridge_provider_returning_none_falls_back_to_bootstrap() -> None:
+    """R68: when the provider returns None (cold-start tick), the bridge uses the bootstrap constant."""
+
+    bridge = FirstVersionIdentityGovernanceRequestBridge(
+        carry_state_provider=lambda: None,
+    )
+    request = bridge.build_request(_fake_frame(), _fake_internal_thought_result())
+
+    assert request.identity_state_snapshot["current_revision"] == "bootstrap"
+    assert request.governance_trace_summary == {}
+    assert request.recent_governance_trace_history == ()
+
+
+def test_bridge_trace_summary_counts_revision_statuses() -> None:
+    """R68: governance_trace_summary aggregates status counts from the trace history."""
+
+    trace = (
+        {"pressure_level": "none", "revision_status": "invalid_proposal", "tick_id": 1},
+        {"pressure_level": "none", "revision_status": "invalid_proposal", "tick_id": 2},
+        {"pressure_level": "none", "revision_status": "accepted", "tick_id": 3},
+        {"pressure_level": "monitor", "revision_status": "rejected", "tick_id": 4},
+    )
+    carry = GovernanceCarryState(
+        identity_state_snapshot=_identity_state_snapshot(),
+        recent_governance_trace_history=trace,
+        accepted_revision_count=1,
+        rejected_revision_count=1,
+    )
+    bridge = FirstVersionIdentityGovernanceRequestBridge(
+        carry_state_provider=lambda: carry,
+    )
+    request = bridge.build_request(_fake_frame(tick_id=5), _fake_internal_thought_result())
+
+    summary = request.governance_trace_summary
+    assert summary["total_ticks_observed"] == 4
+    assert summary["revision_status_counts"]["invalid_proposal"] == 2
+    assert summary["revision_status_counts"]["accepted"] == 1
+    assert summary["revision_status_counts"]["rejected"] == 1

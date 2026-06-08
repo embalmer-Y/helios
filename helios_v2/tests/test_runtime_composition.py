@@ -3284,3 +3284,92 @@ def test_r63_default_assembly_gate_fires_with_raised_aggregate() -> None:
     assert gate.decision == "fire"
     # Gate score ~0.555: just above the 0.55 fire threshold.
     assert gate.gate_score >= 0.55
+
+
+# --- Requirement 68: identity cross-tick governance carry state ---
+
+
+def test_r68_identity_governance_carry_state_accumulates_trace_history() -> None:
+    """R68: multi-tick governance activity accumulates trace history in the carry state.
+
+    The default assembly fires internal thought each tick but emits no self-revision proposal,
+    so every governance tick records `invalid_proposal`. After 5 ticks, the carry state's
+    `recent_governance_trace_history` must contain exactly 5 entries, each with the correct
+    `revision_status`. The bootstrap identity snapshot is preserved (no revision applied).
+    """
+
+    handle = _assemble()
+    handle.startup()
+    handle.run_ticks(5)
+
+    gov_stage = handle.identity_governance_stage
+    assert gov_stage is not None
+    carry = gov_stage.prior_carry_state
+    assert carry is not None
+    assert len(carry.recent_governance_trace_history) == 5
+    # Every entry must have revision_status=invalid_proposal (no proposal emitted).
+    for entry in carry.recent_governance_trace_history:
+        assert entry["revision_status"] == "invalid_proposal"
+    # No revision accepted; rejected counter grew.
+    assert carry.accepted_revision_count == 0
+    assert carry.rejected_revision_count == 5
+    # Identity snapshot is still the bootstrap constant (no revision applied).
+    assert carry.identity_state_snapshot["current_revision"] == "bootstrap"
+
+
+def test_r68_identity_governance_bridge_cold_start_is_byte_identical() -> None:
+    """R68: the first tick's governance request is byte-for-byte identical to the pre-carry behavior.
+
+    With `carry_state=None` (cold start), the bridge produces the same bootstrap snapshot and
+    empty trace that it produced before R68. Verified by inspecting the governance request on
+    tick 1 before any carry state has been advanced.
+    """
+    from helios_v2.composition.bridges import FirstVersionIdentityGovernanceRequestBridge
+
+    bridge = FirstVersionIdentityGovernanceRequestBridge()
+    # No provider set: carry_state_provider is None, so carry state resolves to None.
+    # The bridge is not called directly here (it needs a frame and thought result);
+    # instead we verify the cold-start contract via the runtime stage's first tick.
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+
+    gov_stage_result = result.stage_results["identity_governance_self_revision_integration"]
+    # The request is stored on the stage result.
+    request = gov_stage_result.request
+    assert request is not None
+    assert request.identity_state_snapshot == {
+        "self_definition": "runtime identity definition",
+        "personality_baseline": {"openness": 1.0, "agreeableness": 1.0},
+        "identity_metadata": {},
+        "current_revision": "bootstrap",
+        "revision_history_length": 0,
+    }
+    assert request.governance_trace_summary == {}
+    assert request.recent_governance_trace_history == ()
+
+
+def test_r68_identity_governance_second_tick_reads_carry_state() -> None:
+    """R68: the second tick's governance request carries the first tick's trace entry.
+
+    After tick 1, the carry state has one trace entry. On tick 2, the bridge reads that carry
+    state and injects it into the request. The governance request's `recent_governance_trace_history`
+    must have 1 entry, and `governance_trace_summary` must be non-empty.
+    """
+
+    handle = _assemble()
+    handle.startup()
+    # Tick 1: produces carry state with 1 trace entry.
+    handle.tick()
+    # Tick 2: bridge reads the carry state from tick 1.
+    result2 = handle.tick()
+
+    gov_result = result2.stage_results["identity_governance_self_revision_integration"]
+    request = gov_result.request
+    assert request is not None
+    # The request carries tick 1's trace entry.
+    assert len(request.recent_governance_trace_history) == 1
+    assert request.recent_governance_trace_history[0]["revision_status"] == "invalid_proposal"
+    # governance_trace_summary is non-empty when trace history is present.
+    assert request.governance_trace_summary != {}
+    assert request.governance_trace_summary["total_ticks_observed"] == 1

@@ -43,6 +43,7 @@ from helios_v2.planner_bridge import (
 )
 from helios_v2.identity_governance import (
     EvaluateIdentityGovernanceOp,
+    GovernanceCarryState,
     IdentityGovernanceAPI,
     IdentityGovernanceRequest,
     IdentityGovernanceResult,
@@ -1986,12 +1987,30 @@ class IdentityGovernanceRuntimeStage(RuntimeStage):
     identity_governance_layer: IdentityGovernanceAPI
     request_provider: IdentityGovernanceRequestProvider
     upstream_stage_name: str = "internal_thought_loop_owner"
+    _trace_history_window: int = field(default=10, init=False, repr=False)
+    _prior_carry_state: GovernanceCarryState | None = field(default=None, init=False, repr=False)
 
     @property
     def stage_name(self) -> str:
         """Stable runtime stage name for identity-governance execution."""
 
         return "identity_governance_self_revision_integration"
+
+    @property
+    def prior_carry_state(self) -> GovernanceCarryState | None:
+        """The cross-tick carry state produced by the prior tick, or ``None`` on cold start."""
+
+        return self._prior_carry_state
+
+    def seed_prior_carry_state(self, carry_state: GovernanceCarryState | None) -> None:
+        """One-shot composition-time seed for the cross-tick identity carry state.
+
+        Mirrors the ``seed_prior_continuity`` pattern on the autonomy stage.
+        Composition calls this at assembly time to restore checkpoint state;
+        the stage advances it post-tick from each governance result.
+        """
+
+        self._prior_carry_state = carry_state
 
     def run(self, frame: RuntimeFrame) -> IdentityGovernanceStageResult:
         """Execute identity governance against the declared upstream internal-thought stage result."""
@@ -2031,6 +2050,7 @@ class IdentityGovernanceRuntimeStage(RuntimeStage):
             publish_applied_identity_state_op = self.identity_governance_layer.build_publish_applied_identity_state_op(
                 result.applied_identity_state,
             )
+        self._advance_carry_state(result, frame.tick_id)
         return IdentityGovernanceStageResult(
             evaluate_op=evaluate_op,
             request=request,
@@ -2038,6 +2058,58 @@ class IdentityGovernanceRuntimeStage(RuntimeStage):
             publish_pressure_op=publish_pressure_op,
             publish_revision_decision_op=publish_revision_decision_op,
             publish_applied_identity_state_op=publish_applied_identity_state_op,
+        )
+
+    def _advance_carry_state(
+        self,
+        result: IdentityGovernanceResult,
+        tick_id: int | None,
+    ) -> None:
+        """Compute the next cross-tick carry state from the current result and prior state."""
+
+        if result.applied_identity_state is not None:
+            identity_snapshot = dict(result.applied_identity_state.identity_state_snapshot)
+        elif self._prior_carry_state is not None:
+            identity_snapshot = dict(self._prior_carry_state.identity_state_snapshot)
+        else:
+            identity_snapshot = {
+                "self_definition": "runtime identity definition",
+                "personality_baseline": {"openness": 1.0, "agreeableness": 1.0},
+                "identity_metadata": {},
+                "current_revision": "bootstrap",
+                "revision_history_length": 0,
+            }
+
+        trace_entry = {
+            "pressure_level": result.pressure_state.pressure_level,
+            "revision_status": result.revision_decision.status,
+            "tick_id": tick_id,
+        }
+        prior_history = (
+            list(self._prior_carry_state.recent_governance_trace_history)
+            if self._prior_carry_state is not None
+            else []
+        )
+        prior_history.append(trace_entry)
+        if len(prior_history) > self._trace_history_window:
+            prior_history = prior_history[-self._trace_history_window:]
+
+        accepted = 0
+        rejected = 0
+        if self._prior_carry_state is not None:
+            accepted = self._prior_carry_state.accepted_revision_count
+            rejected = self._prior_carry_state.rejected_revision_count
+        status = result.revision_decision.status
+        if status in {"accepted", "accepted_with_monitoring"}:
+            accepted += 1
+        elif status in {"rejected", "invalid_proposal"}:
+            rejected += 1
+
+        self._prior_carry_state = GovernanceCarryState(
+            identity_state_snapshot=identity_snapshot,
+            recent_governance_trace_history=tuple(prior_history),
+            accepted_revision_count=accepted,
+            rejected_revision_count=rejected,
         )
 
 
