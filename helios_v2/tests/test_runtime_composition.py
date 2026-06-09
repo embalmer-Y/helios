@@ -122,6 +122,8 @@ def _assemble(**kwargs) -> RuntimeHandle:
 
     if "gateway" not in kwargs:
         kwargs["gateway"] = _ready_gateway(kwargs.get("config"))
+    if "default_signal_mode" not in kwargs:
+        kwargs["default_signal_mode"] = "legacy_constant"
     return assemble_runtime(**kwargs)
 
 
@@ -731,6 +733,8 @@ def _assemble_channel(sink, **kwargs):
 
     if "gateway" not in kwargs:
         kwargs["gateway"] = _ready_gateway(kwargs.get("config"))
+    if "default_signal_mode" not in kwargs:
+        kwargs["default_signal_mode"] = "legacy_constant"
     return assemble_runtime(channel_cli=True, cli_output_sink=sink, **kwargs)
 
 

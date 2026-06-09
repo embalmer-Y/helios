@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R68 (`14` identity cross-tick governance carry state: `GovernanceCarryState` wraps identity_state_snapshot, bounded trace history, accepted/rejected revision counts; `IdentityGovernanceRuntimeStage` advances carry state post-tick; `FirstVersionIdentityGovernanceRequestBridge` injects carry data via `carry_state_provider`, falls back to bootstrap constant byte-identical when no provider). Test baseline: 762 passed. HEAD-era: R68. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R69 (semantic assembly as default runtime: `DeterministicHashEmbeddingProvider` shipped in `helios_v2.embedding`; `RuntimeProfile.default_signal_mode` field (`"semantic"` new default vs `"legacy_constant"` escape hatch); `assemble_runtime()` with no arguments auto-provisions `InMemoryExperienceStoreBackend` + `DeterministicHashEmbeddingProvider`, `semantic_memory_enabled == True`). Test baseline: 775 passed. HEAD-era: R69. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose

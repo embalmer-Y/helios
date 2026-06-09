@@ -13,7 +13,7 @@ result, and it provides no degraded or fallback assembly path.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Mapping
 
 from helios_v2.action_externalization import (
@@ -138,12 +138,20 @@ from helios_v2.appraisal import (
     WeightedAggregateEstimator,
 )
 from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
-from helios_v2.embedding import EmbeddingGatewayAPI, EmbeddingRequest
+from helios_v2.embedding import (
+    DeterministicHashEmbeddingProvider,
+    EmbeddingGateway,
+    EmbeddingGatewayAPI,
+    EmbeddingProfile,
+    EmbeddingProfileRegistry,
+    EmbeddingRequest,
+)
 from helios_v2.continuity_checkpoint import ContinuityCheckpointStore
 from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
 from helios_v2.temporal import TemporalSource
 from helios_v2.persistence import (
     ExperienceStore,
+    InMemoryExperienceStoreBackend,
     SemanticStoreBackedDirectedMemoryCandidateProvider,
     StoreBackedDirectedMemoryCandidateProvider,
 )
@@ -884,6 +892,7 @@ _RUNTIME_PROFILE_FIELD_NAMES: tuple[str, ...] = (
     "interoceptive_sampler",
     "temporal_source",
     "external_signal_source",
+    "default_signal_mode",
 )
 
 
@@ -926,8 +935,16 @@ class RuntimeProfile:
     interoceptive_sampler: "RuntimePressureSampler | None" = None
     temporal_source: "TemporalSource | None" = None
     external_signal_source: "SensorySource | None" = None
+    default_signal_mode: str = "semantic"
 
     def __post_init__(self) -> None:
+        # Validate the signal mode is a known value; unknown modes are a composition error
+        # rather than a silent fallback to the wrong assembly path.
+        if self.default_signal_mode not in ("semantic", "legacy_constant"):
+            raise CompositionError(
+                f"default_signal_mode must be 'semantic' or 'legacy_constant', "
+                f"got '{self.default_signal_mode}'"
+            )
         # Semantic memory (`34`) requires durable persistence (`33`): an embedding gateway
         # without an experience store is a composition error, not a silent no-op.
         if self.embedding_gateway is not None and self.experience_store is None:
@@ -1013,6 +1030,7 @@ def assemble_runtime(
     interoceptive_sampler: "RuntimePressureSampler | None | object" = _UNSET,
     temporal_source: "TemporalSource | None | object" = _UNSET,
     external_signal_source: "SensorySource | None | object" = _UNSET,
+    default_signal_mode: str | object = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1071,6 +1089,7 @@ def assemble_runtime(
         ("interoceptive_sampler", interoceptive_sampler),
         ("temporal_source", temporal_source),
         ("external_signal_source", external_signal_source),
+        ("default_signal_mode", default_signal_mode),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1098,6 +1117,51 @@ def assemble_runtime(
     interoceptive_sampler = resolved_profile.interoceptive_sampler
     temporal_source = resolved_profile.temporal_source
     external_signal_source = resolved_profile.external_signal_source
+
+    # R69 auto-provisioning: when default_signal_mode is "semantic" and the caller did not
+    # inject an experience store and/or embedding gateway, create fresh in-memory backends so
+    # the semantic assembly (the de-shimmed 03-10 chain) is the default behavior. Explicit
+    # caller-provided capabilities always take precedence.
+    if resolved_profile.default_signal_mode == "semantic":
+        _auto_store = experience_store
+        _auto_embedding = embedding_gateway
+        if _auto_store is None and _auto_embedding is None:
+            _auto_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+            _auto_store.initialize()
+            _auto_profile = EmbeddingProfile(
+                profile_name=embedding_profile_name,
+                model="deterministic-hash",
+                api_key_env="HELIOS_AUTO_EMBEDDING_KEY",
+                base_url="http://localhost",
+            )
+            _auto_embedding = EmbeddingGateway(
+                provider=DeterministicHashEmbeddingProvider(),
+                registry=EmbeddingProfileRegistry(profiles=(_auto_profile,)),
+                env={"HELIOS_AUTO_EMBEDDING_KEY": "auto-provisioned"},
+            )
+        elif _auto_store is None:
+            _auto_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+            _auto_store.initialize()
+        elif _auto_embedding is None:
+            _auto_profile = EmbeddingProfile(
+                profile_name=embedding_profile_name,
+                model="deterministic-hash",
+                api_key_env="HELIOS_AUTO_EMBEDDING_KEY",
+                base_url="http://localhost",
+            )
+            _auto_embedding = EmbeddingGateway(
+                provider=DeterministicHashEmbeddingProvider(),
+                registry=EmbeddingProfileRegistry(profiles=(_auto_profile,)),
+                env={"HELIOS_AUTO_EMBEDDING_KEY": "auto-provisioned"},
+            )
+        experience_store = _auto_store
+        embedding_gateway = _auto_embedding
+        # Rebuild the frozen profile so semantic_memory_enabled reflects the provisioned state.
+        resolved_profile = replace(
+            resolved_profile,
+            experience_store=experience_store,
+            embedding_gateway=embedding_gateway,
+        )
 
     resolved_config = config if config is not None else default_composition_config()
     thought_profile_name = resolved_config.llm.thought_profile_name

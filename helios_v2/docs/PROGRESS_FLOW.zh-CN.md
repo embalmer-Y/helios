@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R68（`14` identity cross-tick governance carry state：`GovernanceCarryState` 封装 identity_state_snapshot、bounded trace history、accepted/rejected 计数；`IdentityGovernanceRuntimeStage` 每 tick 后续推进 carry state；`FirstVersionIdentityGovernanceRequestBridge` 通过 `carry_state_provider` 注入 carry 数据，无 provider 时保持冷启动常量字节一致）。测试基线：762 passed。版本：R68。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R69（语义装配为默认装配：`DeterministicHashEmbeddingProvider` ship 在 `helios_v2.embedding` 包中；`RuntimeProfile.default_signal_mode` 字段（`"semantic"` 新默认 vs `"legacy_constant"` 逃逸口）；`assemble_runtime()` 无参数调用时自动配置 `InMemoryExperienceStoreBackend` + `DeterministicHashEmbeddingProvider`，`semantic_memory_enabled == True`）。测试基线：775 passed。版本：R69。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的

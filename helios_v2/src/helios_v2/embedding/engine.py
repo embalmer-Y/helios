@@ -397,3 +397,56 @@ def _extract_usage(response: object):
         prompt_tokens=getattr(usage, "prompt_tokens", None),
         total_tokens=getattr(usage, "total_tokens", None),
     )
+
+
+@dataclass(frozen=True)
+class DeterministicHashEmbeddingProvider:
+    """Owner: embedding inference gateway (default no-network provider).
+
+    Purpose:
+        Produce deterministic, fixed-dimension embedding vectors from input text using a
+        character-hash-to-bucket algorithm. No network, no model, no randomness.
+
+    Failure semantics:
+        Never raises for valid inputs. Never fabricates a vector to mask a failure (the
+        protocol rule applies to provider-level failures; this provider has none).
+
+    Notes:
+        Similar texts produce similar vectors because shared characters at shared positions
+        contribute to the same buckets. The embedding quality is intentionally minimal — it
+        provides a meaningful cosine-similarity ordering for the default assembly's novelty
+        and retrieval computations, but is not a substitute for a real embedding model.
+        Callers who need higher-quality embeddings inject an `OpenAICompatibleEmbeddingProvider`
+        or a custom `EmbeddingProvider` through the existing `embedding_gateway` seam.
+    """
+
+    dimensions: int = 16
+
+    def embed(
+        self,
+        profile: EmbeddingProfile,
+        request: EmbeddingRequest,
+        api_key: str,
+    ) -> ProviderEmbedding:
+        """Owner: embedding inference gateway (default no-network provider).
+
+        Purpose:
+            Build a deterministic, fixed-dimension vector from the request input text using
+            a character-hash-to-bucket algorithm. The same input text always produces the
+            same vector, regardless of the profile or api key.
+
+        Inputs:
+            `profile` - the resolved target profile (ignored; no network call is made).
+            `request` - the neutral embedding request whose `input_text` is hashed.
+            `api_key` - the resolved api key (ignored; no authentication is needed).
+
+        Returns:
+            A `ProviderEmbedding` with a deterministic `dimensions`-length vector.
+        """
+
+        buckets = [0.0] * self.dimensions
+        for index, char in enumerate(request.input_text):
+            buckets[(ord(char) + index) % self.dimensions] += 1.0
+        if not any(buckets):
+            buckets[0] = 1.0
+        return ProviderEmbedding(vector=tuple(buckets), dimensions=self.dimensions)

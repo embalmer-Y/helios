@@ -18,12 +18,14 @@ from .contracts import (
     ProviderEmbedding,
 )
 from .engine import (
+    DeterministicHashEmbeddingProvider,
     EmbeddingGateway,
     EmbeddingProfileRegistry,
     OpenAICompatibleEmbeddingProvider,
 )
 
 __all__ = [
+    "DeterministicHashEmbeddingProvider",
     "EmbeddingError",
     "EmbeddingGateway",
     "EmbeddingGatewayAPI",

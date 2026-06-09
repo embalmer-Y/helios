@@ -71,14 +71,14 @@ def _autonomy_prior(handle):
 
 def test_checkpoint_enabled_registers_dependency_spec() -> None:
     store = ContinuityCheckpointStore(backend=InMemoryCheckpointBackend())
-    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store)
+    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store, default_signal_mode="legacy_constant")
     spec_names = {spec.name for spec in handle.kernel.dependency_specs}
     assert CONTINUITY_CHECKPOINT_READY in spec_names
 
 
 def test_cold_checkpoint_store_starts_inert() -> None:
     store = ContinuityCheckpointStore(backend=InMemoryCheckpointBackend())
-    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store)
+    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store, default_signal_mode="legacy_constant")
     handle.startup()
 
     prior = _thought_gating_prior(handle)
@@ -91,7 +91,7 @@ def test_cold_checkpoint_store_starts_inert() -> None:
 
 def test_checkpoint_saves_latest_snapshot_after_tick() -> None:
     store = ContinuityCheckpointStore(backend=InMemoryCheckpointBackend())
-    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store)
+    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store, default_signal_mode="legacy_constant")
     handle.startup()
     handle.run_ticks(3)
 
@@ -107,7 +107,7 @@ def test_restart_resumes_prior_continuity_by_provenance(tmp_path) -> None:
 
     # Session A: run ticks against a fresh checkpoint file, then drop the handle.
     store_a = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=db_path))
-    handle_a = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_a)
+    handle_a = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_a, default_signal_mode="legacy_constant")
     handle_a.startup()
     handle_a.run_ticks(3)
     saved = store_a.load_latest()
@@ -116,7 +116,7 @@ def test_restart_resumes_prior_continuity_by_provenance(tmp_path) -> None:
     # Session B (simulated restart): a brand-new runtime against the same file must resume the
     # prior cross-tick state, verified by provenance (seeded state equals the saved snapshot).
     store_b = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=db_path))
-    handle_b = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_b)
+    handle_b = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_b, default_signal_mode="legacy_constant")
     handle_b.startup()
 
     resumed_continuation = _thought_gating_prior(handle_b)
@@ -132,7 +132,7 @@ def test_restart_resumed_state_actually_feeds_first_tick(tmp_path) -> None:
     db_path = str(tmp_path / "continuity_checkpoint.sqlite3")
 
     store_a = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=db_path))
-    handle_a = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_a)
+    handle_a = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_a, default_signal_mode="legacy_constant")
     handle_a.startup()
     handle_a.run_ticks(3)
     saved = store_a.load_latest()
@@ -142,7 +142,7 @@ def test_restart_resumed_state_actually_feeds_first_tick(tmp_path) -> None:
     # The restarted runtime's first tick reinforces the restored threads rather than starting
     # the thread layer from zero, proving the seeded state is actually consumed.
     store_b = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=db_path))
-    handle_b = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_b)
+    handle_b = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store_b, default_signal_mode="legacy_constant")
     handle_b.startup()
     first = handle_b.tick()
     autonomy_result = first.stage_results[
@@ -156,7 +156,7 @@ def test_unwritable_checkpoint_backend_fails_fast_at_startup(tmp_path) -> None:
     blocker.write_text("not a directory", encoding="utf-8")
     db_path = str(blocker / "nested" / "continuity_checkpoint.sqlite3")
     store = ContinuityCheckpointStore(backend=SqliteCheckpointBackend(db_path=db_path))
-    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store)
+    handle = assemble_runtime(gateway=_continue_gateway(), continuity_checkpoint=store, default_signal_mode="legacy_constant")
 
     with pytest.raises(RuntimeStartupError):
         handle.startup()
@@ -164,7 +164,7 @@ def test_unwritable_checkpoint_backend_fails_fast_at_startup(tmp_path) -> None:
 
 def test_default_assembly_has_no_checkpoint_state() -> None:
     # Without continuity_checkpoint, the handle carries no checkpoint and the dependency is absent.
-    handle = assemble_runtime(gateway=_continue_gateway())
+    handle = assemble_runtime(gateway=_continue_gateway(), default_signal_mode="legacy_constant")
     spec_names = {spec.name for spec in handle.kernel.dependency_specs}
     assert CONTINUITY_CHECKPOINT_READY not in spec_names
     assert handle.continuity_checkpoint is None
