@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R69（语义装配为默认装配：`DeterministicHashEmbeddingProvider` ship 在 `helios_v2.embedding` 包中；`RuntimeProfile.default_signal_mode` 字段（`"semantic"` 新默认 vs `"legacy_constant"` 逃逸口）；`assemble_runtime()` 无参数调用时自动配置 `InMemoryExperienceStoreBackend` + `DeterministicHashEmbeddingProvider`，`semantic_memory_enabled == True`）。测试基线：775 passed。版本：R69。文档澄清（R41 后）：16 外化执行标注为非授权的前运动预备草案。
+> 最近同步：R70（Prompt-to-Thought 真实状态桥：`SemanticEmbodiedPromptRequestBridge` 和 `SemanticInternalThoughtRequestBridge` 在语义装配下从 frame 的真实 `02`/`03`/`04`/`05`/`09`/`10` owner 状态投影有界英文文本，替代 `FirstVersion*Bridge` 的硬编码常量字符串；`legacy_constant` 模式字节不变；LLM 思想循环现在接收大脑的真实情感/显著性/感受状态）。测试基线：775 passed。版本：R70。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -26,8 +26,7 @@
 - 留白·尚无 owner（红·虚线）：一个被一致引用、但从未分配 owner 的一等概念。
 
 > 口径说明：本图颜色反映"是否由真实信号驱动"，与 `index.md` 的"owner 边界成熟度"是两个不同视角。
-> `08` 即此差异点——按 owner 边界口径它在 `index.md` 中是 `relatively_complete`（owner 语义相对完整，
-> 上游缺失不下调其自身成熟度），但按本图"真实信号驱动"口径，其上游 06/07 与承诺路径仍是首版 shim，故标黄。
+> R69 起语义装配为默认，03-10 去 shim 链默认激活，故按"真实信号驱动"口径已计入深度真实（绿）。
 > 两份文档各自正确，不视为冲突。
 
 ## 3. 流程图
@@ -42,14 +41,14 @@ flowchart TD
     EXT["外界刺激: 真实源可注入 - R59 external_signal_source / CLI已绑定 / QQ 语音 后续"]:::base
     BODY["内部身体信号 - 内感受来源: R50 交付生产者(helios_v2.interoception, compute/runtime压力, opt-in); R51起05真正消费塑造体感"]:::base
     S02[02 感觉接入 - 相对完整]:::deep
-    S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::base
-    S04["04 神经调质系统 - appraisal推导+双时间尺度(语义)/跨tick演化"]:::base
-    S05["05 内感受体感层 - 神经调质推导+双时间尺度(语义)/跨tick演化; R51起消费真实内感受压力塑造体感"]:::base
-    S06["06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回+召回作多候选(R52)+记忆内容由真实percept派生(R60)+mismatch由真实novelty grounded(R61)"]:::base
-    S07["07 工作空间竞争 - 真实竞争(读真实05体感)+有界注意力瓶颈+真实多候选(R52,语义装配)"]:::base
-    S08["08 可报告意识内容 - 真实点火承诺(语义装配);R52起对真实多候选点火赢家;上游06/07已去shim"]:::base
-    S09["09 思考门控 - 所有输入已真实 - arousal + activation + workload + temporal/DMN + drive_urgency + selected_stimuli(R63) / 无常量shim"]:::base
-    S10["10 定向检索 - recall-intent接真实11 handoff(语义)/候选来源已真实"]:::base
+    S03["03 快速显著性评估 - 完全真实(语义): 五维 + 聚合"]:::deep
+    S04["04 神经调质系统 - appraisal推导+双时间尺度(语义)/跨tick演化"]:::deep
+    S05["05 内感受体感层 - 神经调质推导+双时间尺度(语义)/跨tick演化; R51起消费真实内感受压力塑造体感"]:::deep
+    S06["06 记忆情感与重放 - 形成已去shim+情感记忆耐久/语义召回+召回作多候选(R52)+记忆内容由真实percept派生(R60)+mismatch由真实novelty grounded(R61)"]:::deep
+    S07["07 工作空间竞争 - 真实竞争(读真实05体感)+有界注意力瓶颈+真实多候选(R52,语义装配)"]:::deep
+    S08["08 可报告意识内容 - 真实点火承诺(语义装配);R52起对真实多候选点火赢家;上游06/07已去shim"]:::deep
+    S09["09 思考门控 - 所有输入已真实 - arousal + activation + workload + temporal/DMN + drive_urgency + selected_stimuli(R63) / 无常量shim"]:::deep
+    S10["10 定向检索 - recall-intent接真实11 handoff(语义)/候选来源已真实"]:::deep
     S16P[16 具身prompt契约 - 基线]:::base
     S16O["16 外化表达草稿 - 仅草稿(非授权)"]:::base
     S16E["16 外化执行草稿 - 非授权的前运动预备草案(执行权在 planner 13 + channel 30)"]:::base
@@ -105,10 +104,10 @@ flowchart TD
 
 ## 4. 状态小结
 
-- 认知主链（02 到 17）端到端贯通；560 测试全绿、离线，外加真实 LLM 冒烟。
-- 深度真实 owner：02 感觉接入、11 内部思考（真实 LLM 驱动的认知核心）、
-  18 主动性（已接真实认知），加基础设施（01、21、22、23、24、25、33、34、42）。
-  （注：08 可报告意识 owner 语义相对完整,但其上游 06/07 与承诺路径仍是首版 shim,故按 03-07 同一口径标黄,不再计入深度真实。）
+- 认知主链（02 到 17）端到端贯通；775 测试全绿、离线，外加真实 LLM 冒烟。
+- 深度真实 owner：02-10 链（R69 起语义装配为默认，03-10 去 shim 链默认激活）、
+  11 内部思考（真实 LLM 驱动的认知核心）、18 主动性（已接真实认知），
+  加基础设施（01、21、22、23、24、25、33、34、42）。
 - P3 已开始（R35）：`03` 评估 owner 的 novelty 维在语义记忆装配下已是真实信号（novelty =
   1 - 刺激对已存经验的最大余弦相似度，经 34 embedding 底座 + 33 store），是 embedding 底座的
   首个认知消费者。`03` 拥有 novelty 显著性映射；composition 注入 owner-neutral 的相似度事实源，
@@ -160,9 +159,9 @@ flowchart TD
   诚实标注：权重是首版占位分配（P5 可学）,且聚合继承输入 grounding（threat/reward 仍是 R40 的
   C_engineering_hypothesis 锚点）。默认/recency/离线保持常量聚合 0.4;五维不变。03 下一步：P5 权重/系数学习与
   模型辅助整体评估。
-- 基线 owner（占大头）：03-07、09-10、12-17（13 的 planner 判断本身是真实的）——owner 真实、
-  含契约与测试，但**输入仍是 composition 注入的确定性 shim**；默认装配里 13 的 channel 描述符/状态
-  快照仍是 shim 注入,opt-in channel-bound 装配里则来自 `30` 的真实 channel-state 快照。
+- 基线 owner：12-16（16 族仍为非授权草案标注）、17（基线，输入仍为 composition 注入的
+  确定性 shim，但对账逻辑本身真实）。13 的 planner 判断本身是真实的；opt-in channel-bound
+  装配里 13 的 channel 状态来自 `30` 的真实快照。
 - wave_A 行为真相已在基线收口（R32）：17 评估 owner 现在把上一 tick 的自报后果结论与该 tick 的
   21 执行时间线对账，发布 `corroborated`/`discrepant`/`unverifiable_no_timeline` 判定，矛盾升级为
   `consequence_discrepancy` 告警。因果链现在可被执行真相证伪，而非仅凭自报。17 仍是基线（其输入仍是
@@ -288,6 +287,20 @@ flowchart TD
   预备与内部预演,**不是执行**。真正的 go/no-go 在 `13` planner,真正的传输在 `30`/`31` channel。草案带显式的
   `forbidden_capabilities` / `final_authorities` / `execution_boundary_summary`；"草稿"绝不可读作"执行"
   （见 `gap_premotor_preparation_vs_execution`）。
+- 零感知门控前收口（R65）：当 `02` 批次为空（无外部刺激且无内感受）时，`06`/`07`/`08` 门控前链
+  返回 `activated=False` 惰性结果，tick 经 `09` 门控 no-fire 路径关闭（R54 的门控前镜像）。
+  默认-on 正确性修正；非零感知 tick 字节级不变。
+- 稳定连续性线程键（R67）：`18` 连续性线程键现仅从 `carry_reason` 的 `_base_reason` 派生
+  （剥离 tick 级的 `source_thought_cycle_result_id`/`source_planner_bridge_result_id`），
+  同一延期动机在记录过期后重新出现时仍映射到同一线程（不再重置 age/reinforcement_count）。
+- 身份治理跨 tick 携带（R68）：`14` 新增 `GovernanceCarryState` 冻结数据类
+  （identity_state_snapshot + recent_governance_trace_history + accepted/rejected_revision_count）。
+  stage 在 tick 后推进状态，bridge 经闭包读取。冷启动退化为引导常量。
+- 语义装配为默认（R69）：`RuntimeProfile.default_signal_mode` 新增 `"semantic"`（新默认）与
+  `"legacy_constant"`（逃逸口）。调用方未注入 experience_store/embedding_gateway 时自动配置
+  `InMemoryExperienceStoreBackend` + `DeterministicHashEmbeddingProvider`；`assemble_runtime()`
+  无参数调用产出 `semantic_memory_enabled == True`，03-10 去 shim 链默认激活。P3 退出条件
+  （R64 PASS）在默认装配下现自动满足。
 
 ## 5. 更新约束
 

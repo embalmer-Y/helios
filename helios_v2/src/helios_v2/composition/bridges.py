@@ -1933,6 +1933,320 @@ class FirstVersionInternalThoughtRequestBridge:
         )
 
 
+# ---------------------------------------------------------------------------
+# R70: Prompt-to-thought real-state bridges (semantic assembly).
+# Under semantic_memory_enabled, these bridges read the real 02-10 owner state
+# from the tick frame and project it into bounded English text, replacing the
+# constant-shim strings in FirstVersion*Bridge. Owner-neutral: they forward
+# bounded raw facts only and derive no cognitive policy.
+# ---------------------------------------------------------------------------
+
+
+def _present_field_text(frame) -> str:
+    """Owner: composition (R70). Project the real `02` sensory batch into present_field text.
+
+    Reads the `02` sensory batch and returns a bounded English sentence describing the
+    external stimulus content when present, or an honest "no external stimulus" marker when
+    absent. Owner-neutral glue: it forwards a raw situational fact; prompt-contract policy
+    is owned by `16`.
+    """
+
+    from helios_v2.runtime.stages import SensoryIngressStageResult
+
+    stage_results = frame.stage_results or {}
+    sensory = stage_results.get("sensory_ingress")
+    if not isinstance(sensory, SensoryIngressStageResult) or not sensory.batch.stimuli:
+        return "No external stimulus this cycle; only internal body signals present."
+    external = [s for s in sensory.batch.stimuli if s.modality not in _INTERNAL_MODALITIES]
+    if not external:
+        return "No external stimulus this cycle; only internal body signals present."
+    primary = external[0]
+    # Truncate content to keep the text bounded (under 200 chars total).
+    content_preview = primary.content[:80]
+    return f"External stimulus present: '{content_preview}' (modality: {primary.modality})."
+
+
+def _affective_summary_text(frame) -> str:
+    """Owner: composition (R70). Project the real `05` feeling vector into affective_summary text.
+
+    Reads the `05` InteroceptiveFeelingStageResult and returns a bounded English sentence
+    naming the dominant feeling dimensions with their real [0,1] values. Owner-neutral glue:
+    it forwards bounded raw facts; affective interpretation is owned by `05`.
+    """
+
+    from helios_v2.runtime.stages import InteroceptiveFeelingStageResult
+
+    stage_results = frame.stage_results or {}
+    feeling_result = stage_results.get("interoceptive_feeling")
+    if not isinstance(feeling_result, InteroceptiveFeelingStageResult):
+        return "Affect baseline; no computed feeling state."
+    feeling = feeling_result.state.feeling
+    # Identify dominant dimensions (above a meaningful threshold).
+    dims = {
+        "arousal": feeling.arousal,
+        "valence": feeling.valence,
+        "tension": feeling.tension,
+        "comfort": feeling.comfort,
+        "fatigue": feeling.fatigue,
+        "pain_like": feeling.pain_like,
+        "social_safety": feeling.social_safety,
+    }
+    # Sort by value descending, take top 3 significant dimensions.
+    ranked = sorted(dims.items(), key=lambda item: item[1], reverse=True)
+    significant = [(name, val) for name, val in ranked if val >= 0.1]
+    top = significant[:3]
+    if not top:
+        return "Affect baseline; all dimensions near zero."
+    parts = [f"{name} {val:.2f}" for name, val in top]
+    dominant = top[0][0]
+    return f"{', '.join(parts)}; dominant: {dominant}."
+
+
+def _continuation_summary_text(frame, thought_gating_result) -> str:
+    """Owner: composition (R70). Project the real `09` gate/continuation state into continuation_summary text.
+
+    Reads the `09` ThoughtGatingStageResult continuation_state and the gate decision to
+    produce a bounded English sentence. Owner-neutral glue: it forwards raw facts; gate
+    decision semantics are owned by `09`.
+    """
+
+    continuation_active = thought_gating_result.continuation_state.active
+    decision = thought_gating_result.result.decision
+    if continuation_active:
+        return f"Continuation pressure active; gate decision: {decision}."
+    return f"No continuation pressure; gate decision: {decision}."
+
+
+def _retrieval_context_text(frame, directed_retrieval_result) -> str:
+    """Owner: composition (R70). Project the real `10` retrieval bundle into retrieval_context text.
+
+    Reads the `10` DirectedRetrievalStageResult bundle tier counts and returns a bounded
+    English sentence describing which memory tiers are present. Owner-neutral glue: it
+    forwards raw tier-presence facts; retrieval policy is owned by `10`.
+    """
+
+    bundle = directed_retrieval_result.bundle
+    if bundle is None:
+        return "No retrieval context available."
+    st_count = len(bundle.short_term_context)
+    mt_count = len(bundle.mid_term_hits)
+    ab_count = len(bundle.autobiographical_hits)
+    parts = []
+    if st_count > 0:
+        parts.append(f"short-term context ({st_count})")
+    if mt_count > 0:
+        parts.append(f"{mt_count} mid-term hit(s)")
+    if ab_count > 0:
+        parts.append(f"{ab_count} autobiographical anchor(s)")
+    if not parts:
+        return "Retrieval context empty; no memory tiers available."
+    return f"Retrieval context: {'; '.join(parts)}."
+
+
+def _continuity_context_text(directed_retrieval_result) -> str:
+    """Owner: composition (R70). Project the real `10` retrieval bundle content into continuity_context text.
+
+    Reads the `10` bundle's first available content summary (short-term > autobiographical)
+    and returns a bounded English sentence. Returns "no active continuity trace" when
+    no content is available. Owner-neutral glue: it forwards raw content facts.
+    """
+
+    bundle = directed_retrieval_result.bundle
+    if bundle is None:
+        return "No active continuity trace this cycle."
+    # Prefer short-term context as the most immediate continuity obligation.
+    if bundle.short_term_context:
+        summary = bundle.short_term_context[0].summary[:80]
+        return f"Current continuity: '{summary}'."
+    if bundle.autobiographical_hits:
+        summary = bundle.autobiographical_hits[0].summary[:80]
+        return f"Autobiographical anchor: '{summary}'."
+    return "No active continuity trace this cycle."
+
+
+def _internal_state_text(frame) -> str:
+    """Owner: composition (R70). Project the real `03`/`04`/`05` state into internal_state_summary text.
+
+    Reads the `04` NeuromodulatorStageResult levels, `05` InteroceptiveFeelingStageResult feeling,
+    and `03` RapidSalienceAppraisalStageResult batch-max salience to produce a bounded English
+    projection of the current neuromodulator, feeling, and salience landscape. Owner-neutral glue:
+    it forwards bounded raw facts; all interpretation policy is owned by the respective owners.
+    """
+
+    from helios_v2.runtime.stages import (
+        NeuromodulatorStageResult,
+        InteroceptiveFeelingStageResult,
+        RapidSalienceAppraisalStageResult,
+    )
+
+    stage_results = frame.stage_results or {}
+
+    # Neuromodulator levels.
+    nm_result = stage_results.get("neuromodulation")
+    if isinstance(nm_result, NeuromodulatorStageResult):
+        levels = nm_result.state.levels
+        nm_text = (
+            f"DA {levels.dopamine:.2f} NE {levels.norepinephrine:.2f} "
+            f"5-HT {levels.serotonin:.2f} ACh {levels.acetylcholine:.2f} "
+            f"Cort {levels.cortisol:.2f}"
+        )
+    else:
+        nm_text = "neuromodulators at tonic baseline"
+
+    # Feeling vector.
+    feeling_result = stage_results.get("interoceptive_feeling")
+    if isinstance(feeling_result, InteroceptiveFeelingStageResult):
+        feeling = feeling_result.state.feeling
+        feel_text = f"arousal {feeling.arousal:.2f}, valence {feeling.valence:.2f}, tension {feeling.tension:.2f}"
+    else:
+        feel_text = "feeling at baseline"
+
+    # Salience landscape (batch-max aggregate + top dimension).
+    appraisal_result = stage_results.get("rapid_salience_appraisal")
+    if isinstance(appraisal_result, RapidSalienceAppraisalStageResult) and appraisal_result.batch.appraisals:
+        appraisals = appraisal_result.batch.appraisals
+        max_agg = max(a.salience.aggregate for a in appraisals)
+        # Find the dimension with the highest value in the max-aggregate appraisal.
+        max_appraisal = max(appraisals, key=lambda a: a.salience.aggregate)
+        sal_dims = {
+            "threat": max_appraisal.salience.threat,
+            "reward": max_appraisal.salience.reward,
+            "novelty": max_appraisal.salience.novelty,
+            "social": max_appraisal.salience.social,
+            "uncertainty": max_appraisal.salience.uncertainty,
+        }
+        top_dim = max(sal_dims, key=sal_dims.get)
+        sal_text = f"aggregate {max_agg:.2f}, top dimension: {top_dim}"
+    else:
+        sal_text = "salience at baseline"
+
+    return f"Neuromodulators: {nm_text}. Feeling: {feel_text}. Salience: {sal_text}."
+
+
+@dataclass
+class SemanticEmbodiedPromptRequestBridge:
+    """Owner: composition (R70).
+
+    Purpose:
+        Build the thought and outward-expression embodied-prompt requests for one tick,
+        deriving summary text from the real `02`/`05`/`09`/`10` owner state in the frame
+        instead of constant English sentences.
+
+    Notes:
+        Owner-neutral glue. It forwards bounded current-cycle summary text derived from
+        published stage results and preserves the upstream conscious-state, gate-result, and
+        retrieval-bundle ids; it does not render the prompt or decide prompt-layering policy.
+        Activated under `semantic_memory_enabled == True`; `FirstVersionEmbodiedPromptRequestBridge`
+        remains available for `legacy_constant` mode.
+    """
+
+    def build_requests(
+        self,
+        frame,
+        conscious_result,
+        thought_gating_result,
+        directed_retrieval_result,
+    ) -> tuple[EmbodiedPromptRequest, ...]:
+        tick_id = frame.tick_id
+        stimulus_summary = {
+            "present_field": _present_field_text(frame),
+        }
+        state_summary = {
+            "affective_summary": _affective_summary_text(frame),
+            "continuation_summary": _continuation_summary_text(frame, thought_gating_result),
+        }
+        retrieval_summary = {
+            "retrieval_context": _retrieval_context_text(frame, directed_retrieval_result),
+            "continuity_context": _continuity_context_text(directed_retrieval_result),
+        }
+        # capability_summary and identity_boundary_summary remain composition-level
+        # constants (not derived from owner state) — they describe available channels,
+        # ops, and governance boundaries, which are assembly configuration, not cognition.
+        capability_summary = {
+            "available_channels": ("cli",),
+            "available_ops": ("reply_message",),
+            "forbidden_capabilities": ("direct_execution", "invented_channel"),
+        }
+        identity_boundary_summary = {
+            "identity_boundary": "identity revision remains proposal-only and governance-validated",
+        }
+        conscious_state_id = conscious_result.state.state_id
+        gate_result_id = thought_gating_result.result.result_id
+        bundle_id = directed_retrieval_result.bundle.bundle_id
+        return (
+            EmbodiedPromptRequest(
+                request_id=f"embodied-prompt-request:thought:runtime:{tick_id}",
+                consumer_kind="thought",
+                source_conscious_state_id=conscious_state_id,
+                source_gate_result_id=gate_result_id,
+                source_retrieval_bundle_id=bundle_id,
+                stimulus_summary=stimulus_summary,
+                state_summary=state_summary,
+                retrieval_summary=retrieval_summary,
+                capability_summary=capability_summary,
+                identity_boundary_summary=identity_boundary_summary,
+                tick_id=tick_id,
+            ),
+            EmbodiedPromptRequest(
+                request_id=f"embodied-prompt-request:outward-expression:runtime:{tick_id}",
+                consumer_kind="outward_expression",
+                source_conscious_state_id=conscious_state_id,
+                source_gate_result_id=gate_result_id,
+                source_retrieval_bundle_id=bundle_id,
+                stimulus_summary=stimulus_summary,
+                state_summary=state_summary,
+                retrieval_summary=retrieval_summary,
+                capability_summary=capability_summary,
+                identity_boundary_summary=identity_boundary_summary,
+                tick_id=tick_id,
+            ),
+        )
+
+
+@dataclass
+class SemanticInternalThoughtRequestBridge:
+    """Owner: composition (R70).
+
+    Purpose:
+        Build the internal-thought request from gating, retrieval, and prompt results,
+        deriving `internal_state_summary` from the real `03`/`04`/`05` owner state instead
+        of the constant string "runtime state summary".
+
+    Notes:
+        Owner-neutral glue. It preserves the upstream gate-result and retrieval-bundle ids
+        and forwards a bounded prompt-contract summary; it does not perform thought.
+        Activated under `semantic_memory_enabled == True`; `FirstVersionInternalThoughtRequestBridge`
+        remains available for `legacy_constant` mode.
+    """
+
+    def build_request(
+        self,
+        frame,
+        thought_gating_result,
+        directed_retrieval_result,
+        prompt_result,
+    ) -> InternalThoughtRequest:
+        tick_id = frame.tick_id
+        thought_contract = next(
+            contract for contract in prompt_result.contracts if contract.consumer_kind == "thought"
+        )
+        return InternalThoughtRequest(
+            request_id=f"internal-thought-request:runtime:{tick_id}",
+            source_gate_result_id=thought_gating_result.result.result_id,
+            source_retrieval_bundle_id=directed_retrieval_result.bundle.bundle_id,
+            source_continuation_active=thought_gating_result.continuation_state.active,
+            internal_state_summary=_internal_state_text(frame),
+            prompt_contract_summary={
+                "contract_id": thought_contract.contract_id,
+                "consumer_kind": thought_contract.consumer_kind,
+                "layer_names": tuple(layer.layer_name for layer in thought_contract.layers),
+                "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
+                "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
+            },
+            tick_id=tick_id,
+        )
+
+
 @dataclass
 class FirstVersionThoughtExternalizationRequestBridge:
     """Owner: composition.

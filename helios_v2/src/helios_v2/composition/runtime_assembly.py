@@ -182,11 +182,13 @@ from .bridges import (
     FirstVersionDirectedRetrievalRequestBridge,
     FirstVersionDominantDimensionReporter,
     FirstVersionEmbodiedPromptRequestBridge,
+    SemanticEmbodiedPromptRequestBridge,
     FirstVersionEvaluationRequestBridge,
     FirstVersionExperienceWritebackRequestBridge,
     FirstVersionFeelingConstructionPath,
     FirstVersionIdentityGovernanceRequestBridge,
     FirstVersionInternalThoughtRequestBridge,
+    SemanticInternalThoughtRequestBridge,
     FirstVersionMemoryBindingContextBridge,
     FirstVersionMemoryFormationPath,
     FirstVersionNeuromodulatorUpdatePath,
@@ -1573,7 +1575,11 @@ def assemble_runtime(
         ),
         EmbodiedPromptRuntimeStage(
             prompt_layer=embodied_prompt,
-            request_provider=FirstVersionEmbodiedPromptRequestBridge(),
+            request_provider=(
+                SemanticEmbodiedPromptRequestBridge()
+                if semantic_memory_enabled
+                else FirstVersionEmbodiedPromptRequestBridge()
+            ),
         ),
         OutwardExpressionRuntimeStage(outward_expression_layer=outward_expression),
         OutwardExpressionExternalizationRuntimeStage(
@@ -1582,7 +1588,11 @@ def assemble_runtime(
         ),
         InternalThoughtRuntimeStage(
             internal_thought_layer=internal_thought,
-            request_provider=FirstVersionInternalThoughtRequestBridge(),
+            request_provider=(
+                SemanticInternalThoughtRequestBridge()
+                if semantic_memory_enabled
+                else FirstVersionInternalThoughtRequestBridge()
+            ),
         ),
         ActionExternalizationRuntimeStage(
             action_externalization_layer=action_externalization,

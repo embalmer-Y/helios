@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R69 (semantic assembly as default runtime: `DeterministicHashEmbeddingProvider` shipped in `helios_v2.embedding`; `RuntimeProfile.default_signal_mode` field (`"semantic"` new default vs `"legacy_constant"` escape hatch); `assemble_runtime()` with no arguments auto-provisions `InMemoryExperienceStoreBackend` + `DeterministicHashEmbeddingProvider`, `semantic_memory_enabled == True`). Test baseline: 775 passed. HEAD-era: R69. Doc clarification (post-R41): 16 externalization labelled as non-authoritative premotor-prep draft.
+> Last synced: R70 (Prompt-to-Thought real-state bridge: `SemanticEmbodiedPromptRequestBridge` and `SemanticInternalThoughtRequestBridge` under semantic assembly project bounded English text from the real `02`/`03`/`04`/`05`/`09`/`10` owner state in the frame, replacing the `FirstVersion*Bridge` hardcoded constant strings; `legacy_constant` mode byte-for-byte unchanged; LLM thought loop now receives the brain's real affective/salience/feeling state). Test baseline: 775 passed. HEAD-era: R70.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -32,11 +32,9 @@ completeness, and next development/optimization step), see the companion `OWNER_
   has never been assigned an owner.
 
 > Perspective note: this map's colors reflect "is it driven by real signals", which is a different
-> lens from `index.md`'s "owner-boundary maturity". `08` is exactly where the two differ — by the
-> owner-boundary lens it is `relatively_complete` in `index.md` (its owner semantics are rel.
-> complete, and an upstream gap does not downgrade its own maturity), but by this map's
-> real-signal lens its upstream 06/07 and commitment path are still first-version shim, so it is
-> colored baseline. Both documents are correct; this is not a conflict.
+> lens from `index.md`'s "owner-boundary maturity". With R69 semantic assembly as default, the
+> 03-10 de-shimmed chain is activated by default, so it is counted as deep & real (green) under
+> the real-signal lens. Both documents are correct; this is not a conflict.
 
 ## 3. Flow
 
@@ -50,14 +48,14 @@ flowchart TD
     EXT["External stimulus: real source injectable - R59 external_signal_source / CLI bound / QQ voice future"]:::base
     BODY["Internal body signal - interoceptive source: R50 producer delivered (helios_v2.interoception, compute/runtime pressure, opt-in); R51 05 consumes it to shape feeling"]:::base
     S02[02 Sensory Ingress - relatively complete]:::deep
-    S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::base
-    S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::base
-    S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick; R51 consumes real interoceptive pressure to shape feeling"]:::base
-    S06["06 Memory Affect and Replay - formation de-shimmed + durable/semantic recall + recalled as multi-candidate (R52) + content from real percept (R60) + mismatch grounded in real novelty (R61)"]:::base
-    S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::base
-    S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::base
-    S09["09 Thought Gating - all inputs real - arousal + activation + workload + temporal/DMN + drive_urgency + selected_stimuli(R63) / no constant shim remains"]:::base
-    S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::base
+    S03["03 Rapid Salience Appraisal - fully real (semantic): 5 dims + aggregate"]:::deep
+    S04["04 Neuromodulator System - appraisal-derived + dual-timescale (semantic)/evolves cross-tick"]:::deep
+    S05["05 Interoceptive Feeling - neuromodulator-derived + dual-timescale (semantic)/evolves cross-tick; R51 consumes real interoceptive pressure to shape feeling"]:::deep
+    S06["06 Memory Affect and Replay - formation de-shimmed + durable/semantic recall + recalled as multi-candidate (R52) + content from real percept (R60) + mismatch grounded in real novelty (R61)"]:::deep
+    S07["07 Workspace Competition - real competition (reads real 05 feeling) + bounded attention bottleneck + real multiplicity (R52, semantic)"]:::deep
+    S08["08 Reportable Conscious Content - real ignition commitment (semantic); R52 ignites winner over real multiplicity; upstream 06/07 de-shimmed"]:::deep
+    S09["09 Thought Gating - all inputs real - arousal + activation + workload + temporal/DMN + drive_urgency + selected_stimuli(R63) / no constant shim remains"]:::deep
+    S10["10 Directed Retrieval - recall-intent from real 11 handoff (semantic)/candidate source real"]:::deep
     S16P[16 Embodied Prompt Contract - baseline]:::base
     S16O["16 Outward Expression Draft - baseline/draft-only (non-authoritative)"]:::base
     S16E["16 Outward Externalization Draft - non-authoritative premotor-prep draft (planner 13 + channel 30 hold execution)"]:::base
@@ -113,14 +111,11 @@ flowchart TD
 
 ## 4. Status Summary
 
-- Cognition main chain (02 to 17) runs end to end; 560 tests pass, network-free, plus real
+- Cognition main chain (02 to 17) runs end to end; 775 tests pass, network-free, plus real
   LLM smoke.
-- Deep & real owners: 02 sensory, 11 internal thought (real LLM-driven
-  cognition core), 18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24,
-  25, 33, 34, 42).
-  (Note: 08 reportable conscious content is owner-semantically rel. complete, but its upstream
-  06/07 and commitment path are still first-version shim, so it is colored baseline under the same
-  rule as 03-07 and no longer counted deep & real.)
+- Deep & real owners: 02-10 chain (R69 makes semantic assembly the default, so the 03-10
+  de-shimmed chain is activated by default), 11 internal thought (real LLM-driven cognition core),
+  18 autonomy (cognition-derived), plus infrastructure (01, 21, 22, 23, 24, 25, 33, 34, 42).
 - P3 began (R35): the `03` appraisal owner's novelty dimension is now a real signal under the
   semantic-memory assembly (novelty = 1 - max cosine similarity of the stimulus to stored
   experience, via the 34 embedding substrate + 33 store), the first cognitive consumer of the
@@ -201,11 +196,10 @@ flowchart TD
   and the aggregate inherits its inputs' grounding (threat/reward still the R40 C_engineering_hypothesis
   anchor). Default/recency/offline keep constant aggregate 0.4; the five dimensions unchanged. Next
   for 03: P5 weight/coefficient learning and model-assisted overall appraisal.
-- Baseline owners (the majority): 03-07, 09-10, 12-17 (excluding 13's planner judgment which
-  is real) - owners are real with contracts and tests, but their inputs are still
-  composition-injected deterministic shim. In the default assembly 13's channel
-  descriptor/status snapshots are still shim-injected; in the opt-in channel-bound assembly
-  they come from the real `30` channel-state snapshot.
+- Baseline owners: 12-16 (the 16 family retains non-authoritative draft labeling), 17 (baseline;
+  inputs are still composition-injected deterministic shim, but the corroboration logic itself is
+  real). 13's planner judgment is real; in the opt-in channel-bound assembly 13's channel state
+  comes from the real `30` snapshot.
 - wave_A behavioral truth closed at baseline (R32): the 17 evaluation owner now corroborates
   the prior tick's self-reported consequence outcome against that same tick's 21 execution
   timeline and publishes a `corroborated`/`discrepant`/`unverifiable_no_timeline` verdict,
@@ -614,6 +608,25 @@ flowchart TD
   transport is `30`/`31` channel. The draft carries explicit `forbidden_capabilities` /
   `final_authorities` / `execution_boundary_summary`; "draft" must never be read as "execution"
   (see `gap_premotor_preparation_vs_execution`).
+- Zero-percept pre-gate closure (R65): when the `02` batch is empty (no external and no
+  interoceptive stimulus), the `06`/`07`/`08` pre-gate chain returns `activated=False` inactive
+  results and the tick closes through `09` gate no-fire (the pre-gate mirror of R54).
+  Default-on correctness fix; non-zero-percept ticks are byte-for-byte unchanged.
+- Stable continuity thread key (R67): the `18` continuity key now derives solely from the
+  `carry_reason`'s `_base_reason` (stripping the tick-specific
+  `source_thought_cycle_result_id`/`source_planner_bridge_result_id`), so the same deferral
+  motive maps to the same thread even after a record expires and a fresh deferral appears.
+- Identity cross-tick governance carry (R68): `14` gains a `GovernanceCarryState` frozen
+  dataclass (identity_state_snapshot + recent_governance_trace_history +
+  accepted/rejected_revision_count). The stage advances it post-tick; the bridge reads it via a
+  closure. Cold start falls back to the bootstrap constant.
+- Semantic assembly as default (R69): `RuntimeProfile.default_signal_mode` gains `"semantic"`
+  (new default) vs `"legacy_constant"` (escape hatch). When the caller provides neither
+  experience_store nor embedding_gateway, auto-provisions
+  `InMemoryExperienceStoreBackend` + `DeterministicHashEmbeddingProvider`;
+  `assemble_runtime()` with no arguments produces `semantic_memory_enabled == True`,
+  activating the de-shimmed 03-10 chain by default. The P3 exit conditions (R64 PASS) are
+  now automatically met in the default assembly.
 
 ## 5. Update Rule
 
