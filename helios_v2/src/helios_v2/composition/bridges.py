@@ -1977,7 +1977,8 @@ def _affective_summary_text(frame) -> str:
     from helios_v2.runtime.stages import InteroceptiveFeelingStageResult
 
     stage_results = frame.stage_results or {}
-    feeling_result = stage_results.get("interoceptive_feeling")
+    # R78: align with stages.py:1105 "interoceptive_feeling_layer".
+    feeling_result = stage_results.get("interoceptive_feeling_layer")
     if not isinstance(feeling_result, InteroceptiveFeelingStageResult):
         return "Affect baseline; no computed feeling state."
     feeling = feeling_result.state.feeling
@@ -2082,7 +2083,8 @@ def _internal_state_text(frame) -> str:
     stage_results = frame.stage_results or {}
 
     # Neuromodulator levels.
-    nm_result = stage_results.get("neuromodulation")
+    # R78: align with stages.py:1044 "neuromodulator_system".
+    nm_result = stage_results.get("neuromodulator_system")
     if isinstance(nm_result, NeuromodulatorStageResult):
         levels = nm_result.state.levels
         nm_text = (
@@ -2094,7 +2096,8 @@ def _internal_state_text(frame) -> str:
         nm_text = "neuromodulators at tonic baseline"
 
     # Feeling vector.
-    feeling_result = stage_results.get("interoceptive_feeling")
+    # R78: align with stages.py:1105 "interoceptive_feeling_layer".
+    feeling_result = stage_results.get("interoceptive_feeling_layer")
     if isinstance(feeling_result, InteroceptiveFeelingStageResult):
         feeling = feeling_result.state.feeling
         feel_text = f"arousal {feeling.arousal:.2f}, valence {feeling.valence:.2f}, tension {feeling.tension:.2f}"
