@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R70 (Prompt-to-Thought real-state bridge: `SemanticEmbodiedPromptRequestBridge` and `SemanticInternalThoughtRequestBridge` under semantic assembly project bounded English text from the real `02`/`03`/`04`/`05`/`09`/`10` owner state in the frame, replacing the `FirstVersion*Bridge` hardcoded constant strings; `legacy_constant` mode byte-for-byte unchanged; LLM thought loop now receives the brain's real affective/salience/feeling state). Test baseline: 775 passed. HEAD-era: R70.
+> Last synced: R77 (Long-term stability prerequisites: automated assessment of resource boundedness, state isolation, checkpoint corruption recovery, embedding failure isolation, zero-percept/high-load closure, and owner boundary non-regression. Prior R71–R76 added performance benchmark, P1/P2 exit evaluation, owner audit, feedback path verification, and memory stability assessment). Test baseline: 834 passed. HEAD-era: R77.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose

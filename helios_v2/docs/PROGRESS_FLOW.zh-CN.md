@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R70（Prompt-to-Thought 真实状态桥：`SemanticEmbodiedPromptRequestBridge` 和 `SemanticInternalThoughtRequestBridge` 在语义装配下从 frame 的真实 `02`/`03`/`04`/`05`/`09`/`10` owner 状态投影有界英文文本，替代 `FirstVersion*Bridge` 的硬编码常量字符串；`legacy_constant` 模式字节不变；LLM 思想循环现在接收大脑的真实情感/显著性/感受状态）。测试基线：775 passed。版本：R70。
+> 最近同步：R77（长期稳定运行前置条件：资源有界性、状态隔离、检查点损坏恢复、嵌入失败隔离、零感知/高负载收口、owner 边界不退化的自动化评估。此前 R71–R76 新增了性能基准、P1/P2 退出评估、owner 审计、反馈路径验证、记忆稳定性评估）。测试基线：834 passed。版本：R77。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
