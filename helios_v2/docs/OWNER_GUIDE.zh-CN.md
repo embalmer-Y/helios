@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R64。测试基线：746 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R69。测试基线：775 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -34,13 +34,19 @@
 
 ### 1.2 当前最大的单一 caveat
 
-认知主链端到端运行，但大多数前中段认知 owner（`03-07`、`09-10`、`12`）是 `baseline_real`，其
-**输入仍是 composition 注入的确定性 shim**：契约、校验、测试都是真实的，但流入它们的值是固定的首版
-常量，而非真实信号。给这些 owner 去 shim 是阶段 `P3` 的核心工作。当今真正由真实信号驱动的 owner 是
-`02`、`08`、`11`（LLM）、`18`，以及基础设施 owner。**在语义+内感受装配下,`03-08` 已去 shim,且自 R51 起
-存在第一条端到端、可被评估层只读重建的 FG-2 因果链：真实 compute/runtime 压力 → `05` 体感 → `07` 工作空间竞争。**
-**R64 正式评估了 P3 退出信号并判定为 PASS：FG-1（03-10 去 shim 覆盖率）、FG-2.1（情感跨 tick 演化）、
-FG-2.2（外部 + 内部因果链端到端可追溯）全部成立。**
+P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 R69 使语义装配成为默认
+装配（`assemble_runtime()` 无参数调用时 `semantic_memory_enabled == True`），故 `03-10` 在
+默认装配下已去 shim。认知主链端到端由真实信号驱动。
+
+**剩余主要距离已转移**：
+1. `12-16` 外化链仍为 `baseline_real`，wave_C 执行收口（真实外部 channel 执行）尚未开始。
+2. `14` 身份治理虽有 R68 跨 tick carry，但长程自我演化与跨重启持久化仍待 wave_B/P6 深化。
+3. 真实外部（网络）信号源（QQ/语音/视觉）仍属 wave_C。
+4. `P4` 工具/效应器生态与 `P5` 学习循环尚未开篇。
+
+当今真正由真实信号驱动的 owner 是 `02`、`03-10`（默认去 shim）、`11`（LLM）、`18`，以及
+全部基础设施 owner。自 R51 起存在第一条端到端 FG-2 因果链（真实 compute/runtime 压力 → `05`
+体感 → `07` 工作空间竞争），自 R59 起存在第二条（外部 afferent → appraisal → affect）。
 
 ---
 
@@ -93,7 +99,7 @@ FG-2.2（外部 + 内部因果链端到端可追溯）全部成立。**
 - 职责：情感标记的记忆形成与重放候选surfacing，含强制巩固约束。不拥有检索规划、工作空间晋升或身份回写。
 - 在循环中的作用：形成情景/情感记忆并向工作空间供给重放候选。
 - 完成度细节：`45`（P2 收尾 / P3 中段去 shim）一次收口 `06` 的两处 shim。**形成**：owner 自有的 `AffectGroundedMemoryFormationPath` 在语义记忆装配下取代常量 shim，从真实 `05` `InteroceptiveFeelingState` 形成 affect-tagged 记忆（item 的 `affect_tag` 是真实的当下体感向量，非常量），并由 owner 持有 episodic/autobiographical 家族映射（带 mismatch 证据 → autobiographical）。**显著性门控**：owner 自有的 `SalienceGatedReplayCandidateSelector` 从真实体感（arousal/tension/pain）与 mismatch 算出有界 affect-intensity，据此设每条 replay candidate 的 `forced_consolidation` + `priority_hint`（阈值/系数挂 `consolidation_policy`/`replay_priority_policy` 学习参数类别，P5 可学）——故平淡低情感 tick 不巩固任何记忆，高情感或高 mismatch tick 才巩固。**耐久**：经 owner-neutral 的 `MemoryRecordBridge` + `RuntimeHandle._persist_memory` carry（仿 `_persist_experience`），把恰好被标记 `forced_consolidation` 的 item 以 `record_kind="affect_memory"` 写时 embed 持久化进共享 `33` store，与 `15` 流共存。**召回**：复用 `34` 的语义召回面，affect-memory 经 `10` 可召回并跨重启续存。**记忆内容（R60 去 shim）**：记忆的**内容**此前来自 composition 的常量 binding-context bridge（固定 `("hello","novelty")`/`situational-summary`,所有装配皆然）,故耐久/召回的记忆是"关于一个常量"。R60 把 binding-context 内容改为从帧中真实 `02` percept 派生——优先外部刺激（内感受-only tick 回退整批）,投影主刺激为 `content_kind="perceived-stimulus-summary"`、`summary_ref`=真实刺激 id、`context_ref`=真实批次 id、`salient_tokens`=对真实感知内容的 owner-neutral 机械分词（每个 token 都是真实内容子串,绝不发明,上限 8）。**诚实缺席**：因 gate 前 `02-08` 链每 tick 都需形成记忆（`07` 工作空间对零候选抛错;R54 no-fire 收口只覆盖 gate 后），完全无 percept 的 tick（无外部且无内感受——R59 空源/channel 无输入）不返回 `None`、也不编造外部内容,而是绑定一个锚定真实 `05` 体感的 honest no-percept 标记（`content_kind="no-perceived-stimulus"`,空 token,`summary_ref`=真实体感 state id）;真正的零-percept gate 前收口是后续独立需求。`06` 既不 import persistence 也不 import embedding owner；carry seam 不重算决策（只按 `06` 已设的 flag 过滤）。**惊讶/mismatch（R61 去 shim）**：`06` 显著性门控的第二输入 prediction-mismatch 此前是 composition 常量（固定 `0.8`,使每 tick 都被判 autobiographical 且抬高巩固下限）。R61 把它 grounded 于真实 `03` novelty（`1 - 与既存经验最大余弦`,记忆系统里"惊讶"的功能核心）:取批次最大真实 novelty/uncertainty,投影 `mismatch_score=clamp(novelty)`、`confidence=clamp(1-uncertainty)`;低于阈值 `0.5`（familiar percept）返回 `None`→`06` 形成 episodic 记忆。诚实标注 `B_functional_inspiration`:novelty-as-surprise,非真正预测编码前向模型误差（属 P5）。默认/recency 装配 novelty 为常量 `0.6`（≥阈值）故仍发 `0.6`-派生 mismatch（autobiographical）,非旧 `0.8` 常量。Caveat：去重/合并仍未做。
-- 下一步（P2/P3）：（1）✅ 形成去 shim + 接耐久 store——**R45 已交付**；（2）✅ 召回过往情感记忆作为额外重放候选喂 `07`——**R52 已交付**；（3）✅ 记忆内容由真实 percept 派生——**R60 已交付**；（4）✅ prediction-mismatch（惊讶）由真实 `03` novelty grounded——**R61 已交付**（退休 `0.8` 常量;真实 novelty→mismatch→巩固显著性 + autobiographical/episodic 家族;诚实标注 `B_functional_inspiration`:novelty-as-surprise,非真正预测编码误差,后者属 P5）；（5）去重与同记忆合并/巩固（挂 `consolidation_policy`，有界、owner 拥有）；（6）真实 `05` 体感更深地驱动形成（不止 affect tag）；（7）✅ 零-percept gate 前收口——**R65 已交付**（当 `02` batch 为空时,`06`/`07`/`08` pre-gate 链返回 `activated=False` inactive result,不调动 owner engine;tick 经 `09` gate no-fire 收口;R54 post-gate 收口的 gate 前镜像）。
+- 下一步（P2/P3 后续）：（1）✅ 形成去 shim + 接耐久 store——**R45 已交付**；（2）✅ 召回过往情感记忆作为额外重放候选喂 `07`——**R52 已交付**；（3）✅ 记忆内容由真实 percept 派生——**R60 已交付**；（4）✅ prediction-mismatch（惊讶）由真实 `03` novelty grounded——**R61 已交付**；（5）✅ 零-percept gate 前收口——**R65 已交付**（当 `02` batch 为空时,`06`/`07`/`08` pre-gate 链返回 `activated=False` inactive result,不调动 owner engine;tick 经 `09` gate no-fire 收口;R54 post-gate 收口的 gate 前镜像）；（6）去重与同记忆合并/巩固（挂 `consolidation_policy`，有界、owner 拥有）；（7）真实 `05` 体感更深地驱动形成（不止 affect tag）。
 
 ### 2.7 `07` 工作空间竞争与工作态 — `helios_v2.workspace`
 - 完成度：`baseline_real`（语义记忆装配下竞争与注意力瓶颈已去 shim；首版权重/瓶颈常量、单一候选来源）。
@@ -114,7 +120,7 @@ FG-2.2（外部 + 内部因果链端到端可追溯）全部成立。**
 - 职责：思考窗口触发决策与多 tick 延续压力 carry 的唯一 owner；紧凑门控可观测。不坍缩进检索或思考生成。
 - 在循环中的作用：决定一个 tick 是否触发思考路径，并把延续压力向前 carry。
 - 完成度细节：`37`（P3 第三刀去 shim）使 `09` 门控决策成为 `04` 神经调质水平的首个真实消费者。owner 新增 `ArousalAwareThoughtGatePath` 与 `ThoughtGateSignalSnapshot` 上一个附加可选原始事实字段 `neuromodulatory_arousal`；语义记忆装配下 composition 把真实 `04` 去甲肾上腺素水平转发进来（仅原始事实——arousal→门控的映射归属本 owner,不在 composition）。该 path 向门控分数加一个非负有界项 `arousal_gain * arousal`（首版 `0.15`,属 `gate_policy` 类别）；单调、确定性、无状态,且结构上绝非硬门控（权重 `0.15 < fire 阈值 0.55`,且加项非负）。`48`（接 R46）把门控分中第二大的非刺激项 `global_activation_level`（权重 `* 0.20`）从常量 `0.9` 去 shim：语义装配下 composition 的门控信号 bridge 现从同 tick 的 `07` `WorkspaceCompetitionStageResult` 取真实工作空间激活——保留候选中的最大 `workspace_score_hint`（注意力中持有的主导点火强度）,无保留则 `0.0`。owner-neutral glue（bridge 只转发有界原始事实,clamp 到 `[0,1]`）;`09` 仍独占门控决策与该项权重（门控 path 不变）。R37 的 arousal 耦合保留（两个真实事实同乘一个快照）。`07` 在 `09` 前运行,故缺失/类型错的 `07` 结果是 hard fail（既有 `RuntimeStageExecutionError`）,无静默回退。其余门控信号输入（`workload_pressure`、`temporal_signal`、`dmn_available`）现已真实；R62 起 `drive_urgency_signal` 亦已真实（上一 tick 的 `18` `outward_drive` 经 owner-neutral 的 `PriorDriveUrgencyHolder` 向前 carry,tick 1 中性冷启动 `0.7`）；R63 起 `selected_stimuli` 亦已真实（同 tick `03` appraisal 批最大值 aggregate/novelty/uncertainty 经 owner-neutral 的 `_selected_stimuli_from_appraisal` helper 投影，默认装配 `FirstVersionAggregateEstimator` 从 `0.4` 提升到 `0.7` 提供诚实点火源）。**R63 之后，门控信号中不再有常量 shim**——每个 `09` 门控输入都是真实上游事实或文档化冷启动基线。当 `neuromodulatory_arousal` 为 `None` 时门控 path 仍字节级复刻首版（默认/recency/离线不变）。
-- 下一步：（1）✅ `global_activation_level` 接真实 `07`——**R48 已交付**；（2）✅ `workload_pressure` 接真实 compute/runtime 压力——**R53 已交付**（owner-neutral helper 从同 tick `02` 批次的 R50 内感受 cpu/memory 负载刺激取最大值,经两个门控信号 bridge 转发,取代常量 `0.1`;`09` 仍独占该项权重与 block 阈值;**R53 浮现的约束**：高负载现会正确地把门控压到 `resource_pressure_too_high`/no-fire,但装配链尚无 gate-no-fire 收口（directed retrieval 对非 fire 门控会抛错）,故 R53 端到端只在 fire 窗口内（cpu/memory ≤ ~0.3）演练,高负载→block 关系在 helper 级验证——**R54 已收口该 gate-no-fire tick**（是 R28 fired-but-no-proposal `internal_only` 的门控-no-fire 镜像：no-fire 时每个 gate 后阶段产出显式 not-activated 结果、不调 owner fire 路径,经既有 internal-only 连续性尾收口,高负载 tick 现端到端完成））；其余输入各自一刀：`temporal_signal` + `dmn_available`——**R55 已交付**（新 owner `helios_v2.temporal`：rest→DMN、elapsed-rest→temporal_signal 累积/重置,经门控信号 bridge 转发,`09` 仍独占权重；R54 使其安全：真实 temporal 输入现可正常导致 no-fire 而不崩溃）；`drive_urgency_signal`——**R62 已交付**（上一 tick 真实 `18` `ProactiveDriveState.outward_drive`,clamp 到 `[0,1]`,经 owner-neutral 的 `PriorDriveUrgencyHolder` 在 tick 后推进（R49/R55 carry 模式）、下一 tick 由门控信号 bridge 读取；`09` 仍独占 `* 0.10` 权重；tick 1 用文档化中性冷启动 `0.7`——字节级不变——从 tick 2 起被真实上一 tick 驱动取代）、`selected_stimuli`——**R63 已交付**（同 tick `03` appraisal 批最大值 aggregate/novelty/uncertainty 经 owner-neutral 的 `_selected_stimuli_from_appraisal` helper 投影，取代硬编码 `stimulus_intensity=0.9`/`novelty_signal=0.6`/`sensitization_signal=0.2`；默认装配 `FirstVersionAggregateEstimator` 从 `0.4` 提升到 `0.7`，与其他真实信号一起提供诚实点火源——门控分数 `~0.555 > 0.55`；缺失 `03` 结果回退到文档化冷启动常量；**R63 后门控信号中不再有常量 shim**）；（3）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（4）`P5` 在 `gate_policy` 类别下学习权重与门控阈值；（5）跨重启持久化/恢复延续压力——**R42 已落地**。
+- 下一步：（3）在 `03` threat 变真后耦合 cortisol/inhibition 硬门控通道；（4）`P5` 在 `gate_policy` 类别下学习权重与门控阈值。**R63 后门控信号中不再有常量 shim——每个 `09` 门控输入都是真实上游事实或文档化冷启动基线。**
 
 ### 2.10 `10` 定向检索进思考窗口 — `helios_v2.directed_retrieval`
 - 完成度：`baseline_real`（候选来源真实；recall-intent 自 R49 起由真实 `11` handoff 驱动）。
@@ -160,10 +166,11 @@ FG-2.2（外部 + 内部因果链端到端可追溯）全部成立。**
 - 下一步（wave_C）：超越本地 CLI 的真实外部 channel 执行；更丰富的主动 provenance 进入行动选择。
 
 ### 2.17 `14` 身份治理与自我修订 — `helios_v2.identity_governance`
-- 完成度：`baseline_real`。
+- 完成度：`baseline_real`（R68 起有跨 tick governance carry state）。
 - 职责：自我修订治理、身份状态变更、主动治理压力、正式修订结果发布的唯一 owner。不拥有思考生成、人格投射或审计持久化。
 - 在循环中的作用：治理一个自我修订提议是否接受，并应用受治理的身份变更。
-- 下一步（wave_B / P6）：更深的长程受治理自我演化（发展性，而非仅审计补丁）；跨重启持久化/恢复身份状态（P2 检查点切片）；最终落地 P6 的受治理自我修订路径。
+- 完成度细节（R68 跨 tick carry）：`14` 新增 `GovernanceCarryState` 冻结数据类（identity_state_snapshot + recent_governance_trace_history + accepted/rejected_revision_count），`IdentityGovernanceRuntimeStage` 持有 `_prior_carry_state` 并从治理结果推进（accepted 修订携带新快照，否则保留旧快照；每 tick 追加有界 trace 条目；累积接受/拒绝计数）。bridge 经注入式 `carry_state_provider` 把 carry state 的快照与 trace 历史注入请求。无 provider 或返回 `None` 时回落 bootstrap 常量（字节级不变冷启动）。
+- 下一步（wave_B / P6）：更深的长程受治理自我演化（发展性，而非仅审计补丁）；跨重启持久化/恢复身份状态（纳入 `42` 检查点）；最终落地 P6 的受治理自我修订路径。
 
 ### 2.18 `15` 经验回写与自传巩固 — `helios_v2.experience_writeback`
 - 完成度：`baseline_real`（其连续性流现已经 `33` 持久化）。
@@ -176,7 +183,7 @@ FG-2.2（外部 + 内部因果链端到端可追溯）全部成立。**
 - 职责：主动驱动整合、有界 disposition 选择、延迟连续性发布、长程连续性线程（复现强化、冲突仲裁、owner 拥有的 `LongHorizonContinuityState`）。可语义地请求主动外化，但绝不执行 channel 路径。
 - 在循环中的作用：把真实认知整合成主动 disposition（行动 → externalize，无行动 → reflect/defer），并跨 tick 形成/强化连续性线程。
 - 完成度细节（R57 边界回收）：**"认知结果 → 驱动输入"的映射已从 composition 回迁到 `18` owner**。此前 `FirstVersionAutonomyRequestBridge` 在装配胶水里标定压力常量（`_ACTION_*=0.9/0.4/0.4` 等）、做 planner executed/blocked 分类、做 retrieval `/4.0` 归一化,且其注释逆向引用了 owner 的 `outward_drive >= 1.6` 阈值——这是 `18` 的本职认知策略,违反 §4.5/§7.1/§3.3。R57 新增 owner 拥有的 `ProactiveCognitionFacts`（composition 可读的原始认知事实契约）与 `AutonomyDriveInputProjection.derive_drive_inputs(facts)`（产出既有五个驱动输入 summary）,并把阈值固化为 owner 常量 `OUTWARD_ACTION_THRESHOLD = 1.6`（`FirstVersionAutonomyPath` 复用）。composition bridge 退化为：抽取原始事实 + 转发 provenance + 调 owner 投影。`ProactiveDriveRequest` 契约形状不变;逐 tick、逐装配字节级不变。
-- 下一步（wave_B）：超越有界 carry 的更丰富长程动机演化；更锐利的连续性 key 方案；跨重启持久化/恢复长程状态——**R42 已落地**：`18`/`24` 延迟记录与连续性线程现经 `42` 检查点跨重启续存（opt-in）。`drive_integration_policy` 下的压力常量与阈值现归 `18`,P5 可学。
+- 下一步（wave_B）：超越有界 carry 的更丰富长程动机演化；更锐利的连续性 key 方案——**R67 已交付**：连续性 key 改为仅由 `carry_reason` 的 `_base_reason` 派生（去掉 tick-specific 的 `source_thought_cycle_result_id`/`source_planner_bridge_result_id`），使同一动机在 record 过期后重新出现时仍匹配同一线程（thread 不再因 key 差异重置到 age 1 / reinforcement_count 0）。跨重启持久化/恢复长程状态——**R42 已落地**：`18`/`24` 延迟记录与连续性线程现经 `42` 检查点跨重启续存（opt-in）。`drive_integration_policy` 下的压力常量与阈值现归 `18`,P5 可学。
 
 ### 2.20 `17` 评估保真与诊断 provenance — `helios_v2.evaluation`
 - 完成度：`baseline_real`（只读；自 R32 起对账执行真相；消费 `23` 时间线）。
@@ -253,7 +260,7 @@ FG-2.2（外部 + 内部因果链端到端可追溯）全部成立。**
 ### 4.1 `19` 架构边界与 owner 文档
 - 完成度：`docs_owner`。
 - 职责：让 `ARCHITECTURE_BOUNDARIES.md`（及本 owner 图）与运行真相对齐——owner 边界、允许依赖、迁移注记、禁止捷径。
-- 下一步：在每次 owner-wave 收口的同一变更内更新边界真相（当前已跟踪到 R34）。
+- 下一步：在每次 owner-wave 收口的同一变更内更新边界真相（当前已跟踪到 R69）。
 
 ### 4.2 `20` 脑架构对比与科学接地
 - 完成度：`docs_owner`。
@@ -267,11 +274,11 @@ FG-2.2（外部 + 内部因果链端到端可追溯）全部成立。**
 本节吸收了原先存放于已退休的 `TOTAL_DISTANCE_TO_FINAL_GOAL.md` 与
 `REQUIREMENT_DISTANCE_TO_FINAL_GOAL.md` 的"距终局目标距离"聚合视角，现以活文档形式保留于此。
 
-1. 系统在架构上真实、首版级别 owner 完整。它尚未达到终局完成态。
-2. 当前最重的剩余运行期距离是 `03-07`/`09-10`/`12` 的去 shim（阶段 `P3`）与外部执行收口（`13`/`16`，wave_C）。
-3. `wave_A_behavioral_truth`（评估证伪）随 R32 基线收口。`P2`（耐久记忆）随 R33 开篇，随 R34 获得语义召回，随 R42 获得跨重启的连续性状态续存（`09` 延续压力 + `18`/`24` 长程连续性）。
-4. 下一批最高杠杆动作是：真实 `03` novelty-from-memory（P3 第一刀，基于 R34 构建），以及 P2 其余部分（`04`/`05`/`14` 双时间尺度/持久化 carry 后纳入检查点；`06` 接入耐久底座）。
-5. 当今真正由真实信号驱动的 owner 是 `02`、`08`、`11`、`18`，加全部基础设施 owner；其余皆为诚实的 baseline，等待各自的去 shim wave。语义+内感受装配下 `03-08` 已去 shim,且 R51 闭合了第一条端到端 FG-2 因果链（真实压力 → `05` 体感 → `07` 竞争）。
+1. 系统在架构上真实、首版级别 owner 完整。P3 已退出（R64 PASS），语义装配已成为默认装配（R69）。它尚未达到终局完成态。
+2. 当前最重的剩余运行期距离已转移：`12-16` 外化链去 shim 与 wave_C 执行收口、`14` 身份治理深化（wave_B）、真实外部网络信号源（wave_C）、`P4` 工具/效应器生态。
+3. `wave_A_behavioral_truth`（评估证伪）随 R32 基线收口。`P2`（耐久记忆）随 R33 开篇，随 R34 获得语义召回，随 R42 获得跨重启的连续性状态续存（`09` 延续压力 + `18`/`24` 长程连续性），随 R45 获得情感记忆耐久。`P3`（去 shim）随 R35 开篇，随 R64 正式评估退出并判定 PASS。
+4. 下一批最高杠杆动作是：wave_B 长程主观连续性（`18`/`14`/`15` 深化）、wave_C 执行收口（`13`/`16` 真实外部行动）、P4 工具生态。
+5. 当今真正由真实信号驱动的 owner：`02`（感觉接入）、`03-10`（默认去 shim，R69）、`11`（LLM 驱动思考）、`18`（已接真实认知）、`17`（对账执行真相），加全部基础设施 owner。认知主链 `02→17` 端到端贯通，门控信号中不再有常量 shim（R63）。
 
 ## 6. 更新规则
 
