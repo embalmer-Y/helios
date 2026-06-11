@@ -15,7 +15,7 @@ Does not own:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from helios_v2.sensory import Stimulus, StimulusBatch
 
@@ -28,6 +28,9 @@ from .contracts import (
     RapidSalienceAppraisalAPI,
     RapidSalienceVector,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - circular-import guard for the R80 estimator.
+    from .r80_internal_monologue import InternalMonologueAppraisalEstimator
 
 
 @dataclass(frozen=True)
@@ -525,6 +528,26 @@ class RapidSalienceAppraisalEngine(RapidSalienceAppraisalAPI):
 
     dimension_estimator: RapidDimensionEstimator
     aggregate_estimator: AggregateJudgmentEstimator
+    internal_monologue_estimator: "InternalMonologueAppraisalEstimator | None" = None
+
+    def _estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
+        """Owner: rapid salience appraisal.
+
+        Purpose:
+            Per-modality dispatch for the dimension estimator. The R80 design adds a
+            per-modality override: when `internal_monologue_estimator` is injected and
+            the stimulus modality is `"internal_monologue"`, the engine routes to the
+            internal-monologue estimator; otherwise it falls back to the default
+            `dimension_estimator`. This preserves the existing P3 de-shim path for
+            all other modalities (semantic-memory grounding, prototype-similarity
+            scoring, etc.).
+        """
+        if (
+            self.internal_monologue_estimator is not None
+            and stimulus.modality == "internal_monologue"
+        ):
+            return self.internal_monologue_estimator.estimate_dimensions(stimulus)
+        return self.dimension_estimator.estimate_dimensions(stimulus)
 
     def assess_batch(self, batch: StimulusBatch) -> RapidAppraisalBatch:
         """Owner: rapid salience appraisal.
@@ -549,7 +572,7 @@ class RapidSalienceAppraisalEngine(RapidSalienceAppraisalAPI):
 
         appraisals = []
         for stimulus in batch.stimuli:
-            dimensions = self.dimension_estimator.estimate_dimensions(stimulus)
+            dimensions = self._estimate_dimensions(stimulus)
             aggregate = self.aggregate_estimator.estimate_aggregate(stimulus, dimensions)
             salience = RapidSalienceVector(
                 threat=dimensions.threat,

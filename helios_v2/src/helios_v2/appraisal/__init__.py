@@ -32,6 +32,7 @@ from .engine import (
     THREAT_PROTOTYPES,
     WeightedAggregateEstimator,
 )
+from .r80_internal_monologue import InternalMonologueAppraisalEstimator
 
 __all__ = [
     "AssessStimulusBatchOp",
@@ -51,4 +52,5 @@ __all__ = [
     "SocialContextSource",
     "THREAT_PROTOTYPES",
     "WeightedAggregateEstimator",
+    "InternalMonologueAppraisalEstimator",
 ]

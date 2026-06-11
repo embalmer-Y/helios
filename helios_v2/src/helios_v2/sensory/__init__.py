@@ -22,6 +22,7 @@ from .contracts import (
     StimulusBatch,
 )
 from .ingress import SensoryIngress
+from .internal_monologue import InternalMonologueSource
 
 __all__ = [
     "IngestSignalOp",
@@ -33,4 +34,5 @@ __all__ = [
     "SensorySource",
     "Stimulus",
     "StimulusBatch",
+    "InternalMonologueSource",
 ]

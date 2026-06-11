@@ -151,7 +151,9 @@ from helios_v2.embedding import (
     EmbeddingRequest,
 )
 from helios_v2.continuity_checkpoint import ContinuityCheckpointStore
+from helios_v2.appraisal.r80_internal_monologue import InternalMonologueAppraisalEstimator
 from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
+from helios_v2.sensory import InternalMonologueSource
 from helios_v2.temporal import TemporalSource
 from helios_v2.persistence import (
     ExperienceStore,
@@ -900,6 +902,7 @@ _RUNTIME_PROFILE_FIELD_NAMES: tuple[str, ...] = (
     "temporal_source",
     "external_signal_source",
     "default_signal_mode",
+    "internal_monologue_carry_provider",
 )
 
 
@@ -944,6 +947,7 @@ class RuntimeProfile:
     external_signal_source: "SensorySource | None" = None
     default_signal_mode: str = "semantic"
     aggressive_radical_prompt_profile: "AggressiveRadicalPromptProfile | None" = None
+    internal_monologue_carry_provider: "Callable[[], Mapping[str, object] | None] | None" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1040,6 +1044,7 @@ def assemble_runtime(
     external_signal_source: "SensorySource | None | object" = _UNSET,
     default_signal_mode: str | object = _UNSET,
     aggressive_radical_prompt_profile: "AggressiveRadicalPromptProfile | None | object" = _UNSET,
+    internal_monologue_carry_provider: "Callable[[], Mapping[str, object] | None] | None | object" = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1100,6 +1105,7 @@ def assemble_runtime(
         ("external_signal_source", external_signal_source),
         ("default_signal_mode", default_signal_mode),
         ("aggressive_radical_prompt_profile", aggressive_radical_prompt_profile),
+        ("internal_monologue_carry_provider", internal_monologue_carry_provider),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1129,6 +1135,7 @@ def assemble_runtime(
     external_signal_source = resolved_profile.external_signal_source
     default_signal_mode = resolved_profile.default_signal_mode
     aggressive_radical_prompt_profile = resolved_profile.aggressive_radical_prompt_profile
+    internal_monologue_carry_provider = resolved_profile.internal_monologue_carry_provider
 
     # R69 auto-provisioning: when default_signal_mode is "semantic" and the caller did not
     # inject an experience store and/or embedding gateway, create fresh in-memory backends so
@@ -1301,6 +1308,16 @@ def assemble_runtime(
     if interoceptive_sampler is not None:
         ingress.register_source(RuntimeInteroceptiveSource(sampler=interoceptive_sampler))
 
+    # Internal monologue source (R80): opt-in. When a carry provider is supplied, register a
+    # second-order stimulus source that emits the runtime's self-produced internal-monologue
+    # content as `signal_type="internal_monologue"` `RawSignal`s, so the rumination / self-talk
+    # loop re-enters the `02 -> 03 -> 04` pipeline as a real stimulus rather than just a
+    # prompt-time suggestion. Default-off: when no provider is given, the assembly is unchanged.
+    if internal_monologue_carry_provider is not None:
+        ingress.register_source(
+            InternalMonologueSource(monologue_provider=internal_monologue_carry_provider)
+        )
+
     # Persistence-enabled assembly: register the durable experience store readiness gate so
     # an un-initializable/unwritable store fails fast at startup rather than running
     # non-persistently. Owner-neutral: composition holds no store policy. Default-off.
@@ -1376,9 +1393,20 @@ def assemble_runtime(
         if semantic_memory_enabled
         else FirstVersionAggregateEstimator()
     )
+    # R80: when the internal-monologue source is registered, inject the fixed-dimension
+    # estimator so the appraisal engine routes `modality=="internal_monologue"` stimuli to it.
+    # The default `dimension_estimator` is unchanged for every other modality, preserving the
+    # P3 de-shim path. The estimator is intentionally constructed only when the source is
+    # registered (per R80 design section 2.3); the source-registration guard above is the
+    # runtime-level opt-in.
     appraisal = RapidSalienceAppraisalEngine(
         dimension_estimator=dimension_estimator,
         aggregate_estimator=aggregate_estimator,
+        internal_monologue_estimator=(
+            InternalMonologueAppraisalEstimator()
+            if internal_monologue_carry_provider is not None
+            else None
+        ),
     )
     # `04` neuromodulation de-shim (R36) + dual-timescale dynamics (R43): when enabled, levels are
     # derived from the real appraisal batch (R36 instantaneous drive) and then evolved across ticks

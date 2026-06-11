@@ -224,7 +224,7 @@ cause, R80 composition scope).
 | T3 R79-B | done | — | `AggressiveRadicalPromptProfile` + RuntimeProfile + assemble_runtime integration + 19 new tests, 866 passed |
 | T4 R79-C | done | — | 3 new drives (5-HT / Oxy / Opioid) under `04` owner + `HormonePredictCorroborator` + 5th `LearnedParameterCategory` + 12th v3 schema field; 34 new tests (900 passed baseline + 34 = 900 → 900); R79-D v2 baseline report (A+ variant) confirms 5-HT / Oxy non-constant; A vs B Oxy delta blocked by salience aggregator (R80) |
 | T5 R79-D | done | — | commits `3827632` + `9597046` |
-| T6 R80 | pending | after R79-C | needs `internal_monologue` source + estimator |
+| T6 R80 | in_progress | after R79-C | R80 requirement package at docs/requirements/80-r80-internal-monologue-source-owner/ (T0 done 2026-06-11 11:58); T1-T14 pending; acceptance 8 corrected from 5-HT/Cort to norepinephrine drift (R79-C gates on social/threat only) |
 | T7 R81 | pending | after R80 | needs carry + v4 snapshot |
 | T8 R82 | pending | after R81 | needs 17-dim evaluator + P5 gate |
 | T9 R79 doc sync | done | — | this change set |
