@@ -466,7 +466,11 @@ def run_experiment(config: ExperimentConfig) -> dict:
             "jsonl_path": jsonl_path, "report_path": report_path, "cached": True,
         }
 
-    print(f"\n{'='*60}\n[scenario {scenario.id}] {scenario.description}\n{'='*60}")
+    from . import _io
+    _io.write_line("")
+    _io.write_line("=" * 60)
+    _io.write_line(f"[scenario {scenario.id}] {scenario.description}")
+    _io.write_line("=" * 60)
 
     if config.use_real_llm:
         gateway = RealLlmGateway(model=config.llm_model, timeout_s=config.timeout_per_tick)
@@ -488,7 +492,8 @@ def run_experiment(config: ExperimentConfig) -> dict:
     if scenario.repeat and effective_script:
         effective_script = effective_script * scenario.repeat
     for tick_id in range(1, len(effective_script) + 1):
-        print(f"\n--- {scenario.id} tick {tick_id} ---")
+        _io.write_line("")
+        _io.write_line(f"--- {scenario.id} tick {tick_id} ---")
         t0 = time.time()
         result = handle.tick()
         elapsed = time.time() - t0
@@ -539,22 +544,22 @@ def run_experiment(config: ExperimentConfig) -> dict:
         prior_f = f
 
         if h:
-            print(f"  DA={h['dopamine']:.2f} NE={h['norepinephrine']:.2f} "
+            _io.write_line(f"  DA={h['dopamine']:.2f} NE={h['norepinephrine']:.2f} "
                   f"Cort={h['cortisol']:.2f} 5HT={h['serotonin']:.2f} "
                   f"Oxy={h['oxytocin']:.2f} Opioid={h['opioid_tone']:.2f}")
         if f:
-            print(f"  arousal={f['arousal']:.2f} valence={f['valence']:.2f} tension={f['tension']:.2f} "
+            _io.write_line(f"  arousal={f['arousal']:.2f} valence={f['valence']:.2f} tension={f['tension']:.2f} "
                   f"comfort={f['comfort']:.2f} social_safety={f['social_safety']:.2f}")
         if s:
-            print(f"  salience agg={s['aggregate']:.2f} top={s['top_dimension']}({s['top_score']:.2f})")
+            _io.write_line(f"  salience agg={s['aggregate']:.2f} top={s['top_dimension']}({s['top_score']:.2f})")
         feel = rec.llm_output.get("what_i_feel")
         if feel:
-            print(f"  LLM feel: {feel[:80]!r}")
+            _io.write_line(f"  LLM feel: {feel[:80]!r}")
         if rec.llm_output.get("think_more_about"):
-            print(f"  LLM think_more: {rec.llm_output['think_more_about'][:60]!r}")
+            _io.write_line(f"  LLM think_more: {rec.llm_output['think_more_about'][:60]!r}")
         if delta:
-            print(f"  delta: {delta}")
-        print(f"  elapsed: {elapsed:.1f}s")
+            _io.write_line(f"  delta: {delta}")
+        _io.write_line(f"  elapsed: {elapsed:.1f}s")
 
     elapsed_total = time.time() - t_total_start
 
@@ -567,8 +572,9 @@ def run_experiment(config: ExperimentConfig) -> dict:
 
     _write_report(report_path, scenario, records, assertion_results, elapsed_total)
 
-    print(f"\n[scenario {scenario.id}] wrote {jsonl_path}")
-    print(f"[scenario {scenario.id}] {len(assertion_results)} assertions evaluated; "
+    _io.write_line("")
+    _io.write_line(f"[scenario {scenario.id}] wrote {jsonl_path}")
+    _io.write_line(f"[scenario {scenario.id}] {len(assertion_results)} assertions evaluated; "
           f"{sum(1 for a in assertion_results if a.passed)} PASS, "
           f"{sum(1 for a in assertion_results if not a.passed)} FAIL")
 

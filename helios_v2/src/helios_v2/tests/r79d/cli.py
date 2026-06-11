@@ -16,6 +16,8 @@ import os
 import sys
 from pathlib import Path
 
+from . import _io
+
 ROOT = Path("/root/project/helios")
 DEFAULT_OUTPUT = ROOT / "logs" / "prompt_probe_scenarios" / "r79d"
 
@@ -35,9 +37,9 @@ def _load_env():
 def cmd_list(args):
     from .scenarios import load_all
     scenarios = load_all()
-    print(f"Available scenarios ({len(scenarios)}):")
+    _io.write_line(f"Available scenarios ({len(scenarios)}):")
     for sid, s in scenarios.items():
-        print(f"  - {sid}: {s.description} (n_ticks={len(s.stimulus_script)}, n_assertions={len(s.assertions)}, repeat={s.repeat})")
+        _io.write_line(f"  - {sid}: {s.description} (n_ticks={len(s.stimulus_script)}, n_assertions={len(s.assertions)}, repeat={s.repeat})")
     return 0
 
 
@@ -53,8 +55,8 @@ def cmd_run(args):
 
     if args.scenario:
         if args.scenario not in scenarios:
-            print(f"Unknown scenario: {args.scenario}")
-            print(f"Available: {list(scenarios.keys())}")
+            _io.write_line(f"Unknown scenario: {args.scenario}")
+            _io.write_line(f"Available: {list(scenarios.keys())}")
             return 1
         scen = scenarios[args.scenario]
         cfg = ExperimentConfig(scenario=scen, output_dir=output_dir, use_real_llm=not args.noop, force=args.force)
@@ -64,33 +66,34 @@ def cmd_run(args):
             cfg = ExperimentConfig(scenario=scen, output_dir=output_dir, use_real_llm=not args.noop, force=args.force)
             run_experiment(cfg)
     else:
-        print("Specify --scenario <id> or --all")
+        _io.write_line("Specify --scenario <id> or --all")
         return 1
 
     agg = aggregate_report(output_dir, baseline_name=Path(output_dir).name)
-    print(f"\nAggregate report: {agg}")
+    _io.write_line("")
+    _io.write_line(f"Aggregate report: {agg}")
     return 0
 
 
 def cmd_report(args):
     from .reports import aggregate_report
     out = aggregate_report(Path(args.output), baseline_name=Path(args.output).name)
-    print(f"wrote {out}")
+    _io.write_line(f"wrote {out}")
     return 0
 
 
 def cmd_diff(args):
     from .reports import diff_report
     out = diff_report(Path(args.baseline), Path(args.current))
-    print(f"wrote {out}")
+    _io.write_line(f"wrote {out}")
     return 0
 
 
 def cmd_assertions(args):
     from .assertions import list_assertions
-    print("Available assertions:")
+    _io.write_line("Available assertions:")
     for name in list_assertions():
-        print(f"  - {name}")
+        _io.write_line(f"  - {name}")
     return 0
 
 
