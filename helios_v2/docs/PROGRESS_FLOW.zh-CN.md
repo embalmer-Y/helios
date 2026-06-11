@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R78（R70 真实状态桥接阶段 key 对齐：修正 composition/bridges.py L1980/L2085/L2097 三处 stage-result key 查找，与 runtime/stages.py 中的实际阶段名 (interoceptive_feeling_layer / neuromodulator_system) 对齐。R78 之前 04/05 投影静默回退为常量字符串；R78 之后 LLM user message 能拿到真实的 DA/NE/5-HT/ACh/Cort 与 arousal/valence/tension 数值。新增 4 个测试位于 tests/test_r70_real_state_bridge_key_alignment.py。测试基线：838 总 / 836 passed / 2 个 R71 性能测试现有失败（时间敏感，在 R78 之前的 0f34c2d commit 上 stash-rerun 验证为预存问题）。版本：R78。
+> 最近同步：R79-A（激进-激进-反戏剧化 prompt 路径落代码：`R79AggressiveEmbodiedPromptPath`（v3）与 `FirstVersionEmbodiedPromptPath`（v1）并列存在，6 层 v3 contract + 11 字段拟人化 JSON schema + 7 条硬规则 cross-field invariants。LLM 身份块改写为"You are a person. Not an AI, not a role, not a runtime."。新增 11 个单元测试位于 tests/test_r79a_prompt_contract.py。配套 R79-D 可扩展 baseline 框架（tests/r79d/）也同步交付：4 个 v1 场景（持续表扬/持续忽视/双相/重复刺激 20 tick）、9 个内建断言、CLI 入口、52 tick 真实 LLM 基线运行、aggregate.md 16/28 断言 PASS。R79-A / R79-D 均不改 owner 边界；R79-B / R79-C / R80 / R81 / R82 计划在 docs/requirements/79-r79-aggressive-radical-prompt-and-runtime-self-talk/ 需求包内追踪。默认装配 + v1 路径字节级不变；v3 路径经 `R79PromptProfile(prompt_path_mode="r79_aggressive_radical_v3")` 选择。测试基线：842 passed（831 基线 + 11 R79-A），0 回归；R21 ad-hoc logging guard 绿；composition owner-boundary guard 绿。版本：R79-A。）
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的

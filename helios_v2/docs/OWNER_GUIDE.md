@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R69. Test baseline: 775 passed (network-free).
+> Status: living owner reference. Last synced: R79-A (v3 aggressive-radical-no-theater prompt path landed in code; see §2.11.1). Test baseline: 842 passed (831 baseline + 11 R79-A, 0 regression; R21 ad-hoc logging guard green; composition owner-boundary guard green).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -140,6 +140,20 @@ two transport stages for 21).
 - Responsibility: embodied subjective prompt-contract assembly for the `thought` and `outward_expression` consumers; anti-theatrical constraints; capability/authority boundary rendering. Does not own thought execution, planner authority, or governance.
 - Role in the loop: formats committed state + retrieval + capability boundaries into the contract the thought owner and outward-expression owner consume.
 - Next step: keep it a contract formatter (never a reply-first behavior owner); enrich layers as real upstream signals land. Deepening only.
+
+#### 2.11.1 R79 Aggressive-Radical-No-Theater v3 prompt path (R79-A delivered)
+- **Completeness**: `baseline_implementation` (R79-A landed; R79-B / R79-C / R80 / R81 / R82 planned).
+- **Location**: `helios_v2.prompt_contract.r79`, class `R79AggressiveEmbodiedPromptPath`.
+- **Relationship to v1**: sibling. v1 `FirstVersionEmbodiedPromptPath` is byte-for-byte preserved; R79-A does not modify v1. The runtime picks v3 via `R79PromptProfile(prompt_path_mode="r79_aggressive_radical_v3")`; default assembly still uses v1.
+- **6-layer v3 contract**: `present_field` (focused stimulus text) / `embodied_state` (body state text) / `attention_breakdown` (focused / peripheral / filtered 3 tiers) / `channel_catalog` (available + ready channel list) / `response_schema` (11-field natural-language JSON instructions) / `v3_system_prompt` (full v3 system prompt).
+- **11-field natural-language JSON schema**: `what_i_feel` / `what_i_think` / `i_want_to_say` / `i_will_send_it` / `i_send_through` / `i_want_to_act` / `act_type` / `remember_this` / `remember_because` / `i_want_to_think_more` / `think_more_about`. v1 cognitive-owner vocabulary (`sufficiency` / `continuation` / `action_proposal` / `self_revision_proposal`) is forbidden in v3 output.
+- **7 hard rules** (cross-field invariants): `i_will_send_it => i_want_to_say != null` / `i_send_through => i_will_send_it && i_send_through ∈ ready_channels` / `remember_because => remember_this` / `think_more_about => i_want_to_think_more` / etc. (see `tests/test_r79a_prompt_contract.py` for the full list).
+- **Identity philosophy**: the v3 system prompt's identity block says "You are a person. Not an AI, not a role, not a runtime." — not as an anti-theatrical rule, but as the lived experience that absorbs the anti-theatrical directive ("I am a person, so I don't have to perform being one").
+- **Fail-fast**: `EmbodiedPromptConfig.prompt_bootstrap_id != "R79-aggressive-radical-v3"` raises `PromptContractError`.
+- **Owner boundary**: R79-A imports no cognitive owner, adds no new owner, changes no owner boundary. It is a sibling path within `16`; R21 guard and composition owner-boundary guard both stay green for it.
+- **Tests**: `tests/test_r79a_prompt_contract.py` 11 cases covering 6-layer order, field rendering, hard rules, action boundary, bootstrap id gate.
+- **R79-D companion**: extendable baseline framework at `tests/r79d/` (4 v1 scenarios + 9 built-in assertions + CLI) for R79-A / B / C validation and future P5 learning-curve assessment. Note: `tests/r79d/` is test infrastructure, not a product requirement, and is not in the `helios_v2/requirements/` index.
+- **R79-B / R79-C / R80 / R81 / R82 plan**: see `docs/requirements/79-r79-aggressive-radical-prompt-and-runtime-self-talk/requirement.md` for the full requirement package.
 
 ### 2.12 `16` Outward Expression Draft — `helios_v2.outward_expression`
 - Completeness: `baseline_real` (draft-only by design).

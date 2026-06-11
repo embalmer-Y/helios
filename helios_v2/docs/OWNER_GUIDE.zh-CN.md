@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R69。测试基线：775 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R79-A（v3 激进-激进-反戏剧化 prompt 路径落代码，详见 §2.11.1）。测试基线：842 passed（831 基线 + 11 R79-A，0 回归；R21 ad-hoc logging guard 绿；composition owner-boundary guard 绿）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -134,6 +134,20 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 职责：为 `thought` 与 `outward_expression` 消费者装配具身主观 prompt 契约；反表演约束；能力/权限边界渲染。不拥有思考执行、planner 权限或治理。
 - 在循环中的作用：把承诺状态 + 检索 + 能力边界格式化成思考 owner 与外化 owner 消费的契约。
 - 下一步：保持其为契约 formatter（绝不变成 reply-first 行为 owner）；随真实上游信号到来丰富层。仅深化。
+
+#### 2.11.1 R79 激进-激进-反戏剧化 v3 prompt 路径（R79-A 已交付）
+- **完成度**：`baseline_implementation`（R79-A 落地，R79-B / R79-C / R80 / R81 / R82 计划中）。
+- **位置**：`helios_v2.prompt_contract.r79`，类名 `R79AggressiveEmbodiedPromptPath`。
+- **与 v1 关系**：sibling。v1 `FirstVersionEmbodiedPromptPath` 字节级保留；R79-A 不修改 v1。运行时通过 `R79PromptProfile(prompt_path_mode="r79_aggressive_radical_v3")` 选择 v3；未注入时默认走 v1。
+- **6 层 v3 contract**：`present_field`（focused 刺激文本）/ `embodied_state`（body state 文本）/ `attention_breakdown`（focused / peripheral / filtered 三档）/ `channel_catalog`（available + ready channel 列表）/ `response_schema`（11 字段拟人化 JSON 指令）/ `v3_system_prompt`（完整 v3 system prompt）。
+- **11 字段自然语言 JSON schema**：`what_i_feel` / `what_i_think` / `i_want_to_say` / `i_will_send_it` / `i_send_through` / `i_want_to_act` / `act_type` / `remember_this` / `remember_because` / `i_want_to_think_more` / `think_more_about`。v1 的认知 owner 词（`sufficiency` / `continuation` / `action_proposal` / `self_revision_proposal`）在 v3 输出中禁用。
+- **7 条 hard rules**（cross-field invariants）：`i_will_send_it => i_want_to_say != null` / `i_send_through => i_will_send_it && i_send_through ∈ ready_channels` / `remember_because => remember_this` / `think_more_about => i_want_to_think_more` / 等等（详见 `tests/test_r79a_prompt_contract.py`）。
+- **身份哲学**：v3 system prompt 身份块明文写"You are a person. Not an AI, not a role, not a runtime."——不是反表演规则，而是把反表演吸收进 lived experience（"我是一个人，所以我不需要表演是人"）。
+- **fail-fast**：`EmbodiedPromptConfig.prompt_bootstrap_id != "R79-aggressive-radical-v3"` 时抛 `PromptContractError`。
+- **owner 边界**：R79-A 不导入任何认知 owner、不新增 owner、不改 owner 边界。它是 `16` 内部的 sibling path；R21 guard 与 composition owner-boundary guard 都对它开放。
+- **测试**：`tests/test_r79a_prompt_contract.py` 11 个用例覆盖 6 层顺序、字段渲染、hard rules、boundary、bootstrap id 守门。
+- **R79-D 配套**：在 `tests/r79d/` 部署可扩展 baseline 框架（4 v1 场景 + 9 内建断言 + CLI），供 R79-A / B / C 验证与未来 P5 学习曲线评估使用。**注意**：`tests/r79d/` 是测试基础设施，不是产品需求，不在 `helios_v2/requirements/` 索引里。
+- **R79-B / R79-C / R80 / R81 / R82 计划**：详见 `docs/requirements/79-r79-aggressive-radical-prompt-and-runtime-self-talk/requirement.md` 需求包。
 
 ### 2.12 `16` 外化表达草稿 — `helios_v2.outward_expression`
 - 完成度：`baseline_real`（设计上仅草稿）。
