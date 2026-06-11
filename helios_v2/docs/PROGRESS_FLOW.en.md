@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R77 (Long-term stability prerequisites: automated assessment of resource boundedness, state isolation, checkpoint corruption recovery, embedding failure isolation, zero-percept/high-load closure, and owner boundary non-regression. Prior R71–R76 added performance benchmark, P1/P2 exit evaluation, owner audit, feedback path verification, and memory stability assessment). Test baseline: 834 passed. HEAD-era: R77.
+> Last synced: R78 (R70 Real-State Bridge stage-key alignment: corrected three stage-result key lookups in `composition/bridges.py` L1980/L2085/L2097 to match the actual stage names from `runtime/stages.py` (`interoceptive_feeling_layer`, `neuromodulator_system`). Before R78 the 04/05 projections silently fell back to constant strings; after R78 the LLM user message receives real DA/NE/5-HT/ACh/Cort and arousal/valence/tension values. 4 new tests in `tests/test_r70_real_state_bridge_key_alignment.py`. Test baseline: 838 total / 836 passed / 2 pre-existing R71 perf-flake failures (timing-sensitive, confirmed pre-existing by stash-and-rerun on commit 0f34c2d). HEAD-era: R78.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose

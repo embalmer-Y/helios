@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R77（长期稳定运行前置条件：资源有界性、状态隔离、检查点损坏恢复、嵌入失败隔离、零感知/高负载收口、owner 边界不退化的自动化评估。此前 R71–R76 新增了性能基准、P1/P2 退出评估、owner 审计、反馈路径验证、记忆稳定性评估）。测试基线：834 passed。版本：R77。
+> 最近同步：R78（R70 真实状态桥接阶段 key 对齐：修正 composition/bridges.py L1980/L2085/L2097 三处 stage-result key 查找，与 runtime/stages.py 中的实际阶段名 (interoceptive_feeling_layer / neuromodulator_system) 对齐。R78 之前 04/05 投影静默回退为常量字符串；R78 之后 LLM user message 能拿到真实的 DA/NE/5-HT/ACh/Cort 与 arousal/valence/tension 数值。新增 4 个测试位于 tests/test_r70_real_state_bridge_key_alignment.py。测试基线：838 总 / 836 passed / 2 个 R71 性能测试现有失败（时间敏感，在 R78 之前的 0f34c2d commit 上 stash-rerun 验证为预存问题）。版本：R78。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
