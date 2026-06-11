@@ -329,3 +329,30 @@ class EvaluationAPI(Protocol):
         """Return one publication op describing evaluation-artifact publication."""
 
         ...
+
+# R82: Behavior drift dimension taxonomy (17 dims across 4 families).
+# Used by AggressiveRadicalDriftEvaluator to enumerate observable
+# persona-behavior drift under stimuli.
+BehaviorDriftDimension = Literal[
+    # family: hormone (4)
+    "dopamine",
+    "norepinephrine",
+    "serotonin",
+    "cortisol",
+    # family: feeling (4)
+    "valence",
+    "arousal",
+    "tension",
+    "comfort",
+    # family: salience (4)
+    "novelty",
+    "uncertainty",
+    "social",
+    "aggregate_salience",
+    # family: behavior (5)
+    "i_want_to_say_freq",
+    "i_send_through_freq",
+    "i_want_to_think_more_freq",
+    "remember_this_freq",
+    "act_type_distribution",
+]

@@ -13,6 +13,13 @@ from .contracts import (
     PublishEvaluationArtifactOp,
 )
 from .engine import EvaluationEngine, EvaluationPath, FirstVersionEvaluationPath
+from .r82_drift import (
+    AggressiveRadicalDriftEvaluator,
+    DriftEvaluationReport,
+    DriftEvaluationResult,
+    is_p5_launch_gate_open,
+)
+from .contracts import BehaviorDriftDimension
 
 __all__ = [
     "ConsequenceClaim",
@@ -28,4 +35,9 @@ __all__ = [
     "FidelityWarning",
     "FirstVersionEvaluationPath",
     "PublishEvaluationArtifactOp",
+    "AggressiveRadicalDriftEvaluator",
+    "DriftEvaluationReport",
+    "DriftEvaluationResult",
+    "is_p5_launch_gate_open",
+    "BehaviorDriftDimension",
 ]

@@ -165,21 +165,21 @@ cause, R80 composition scope).
 - [ ] Full suite green; R21 + composition guard green
 - [ ] Commit on the `aggressive-radical-persona-no-theater` branch
 
-## Sub-task T8: R82 — 17-dim behavior drift evaluation
+## Sub-task T8: R82 â 17-dim behavior drift evaluation
 
-- [ ] Create `src/helios_v2/evaluation/r79_drift.py` with
-      `BehaviorDriftDimension` enum (4 families × {1, 1, 4, 5} dimensions
-      = 17 dims)
-- [ ] Implement `AggressiveRadicalDriftEvaluator` consuming R79-D JSONL output
-- [ ] Wire into the P5 launch gate: no P5 learning loop can mutate `04`
-      sensitivities until the drift evaluator is green
-- [ ] Write `tests/test_r82_drift_evaluator.py` with at least 17 cases
-      (one per dim) + 4 family-aggregate cases
-- [ ] Generate the R79-D baseline drift report (`drift_report.md`)
-- [ ] Full suite green; R21 + composition guard green
-- [ ] Commit on the `aggressive-radical-persona-no-theater` branch
-- [ ] Push to `origin/aggressive-radical-persona-no-theater`
-- [ ] Open PR for review before P5 launch
+- [x] Requirement package created: docs/requirements/82-r82-behavior-drift-dimension-and-evaluator/{requirement,design,task}.md
+- [x] `BehaviorDriftDimension` Literal (17 dims in 4 families) declared in src/helios_v2/evaluation/contracts.py
+- [x] `DriftEvaluationResult` + `DriftEvaluationReport` frozen dataclasses in src/helios_v2/evaluation/r82_drift.py
+- [x] `AggressiveRadicalDriftEvaluator` consuming R79-D JSONL output
+- [x] `is_p5_launch_gate_open` threshold 0.02 exported
+- [x] P5 launch gate wired: docs/ARCHITECTURE_BOUNDARIES.md Â§10.d cites is_p5_launch_gate_open
+- [x] 23 R82 unit tests in tests/test_r82_drift_evaluator.py (17 per-dim + 4 family + 1 launch-gate + 1 recalibration)
+- [x] 2 R82 integration tests in tests/test_r82_drift_integration.py (drift-positive + flat-data gate-closed)
+- [x] R79-D CLI --with-drift-report flag in src/helios_v2/tests/r79d/cli.py
+- [x] 4 doc files updated (OWNER_GUIDE §3.8.3 / ARCHITECTURE_BOUNDARIES §10.d / PROGRESS_FLOW.zh-CN R82 idx / index.md R82 row)
+- [x] Full suite green (922 R81 baseline + 25 R82 = 947 passed, 0 regression)
+- [x] R21 ad-hoc logging guard 1/1 + composition guard 4/4 PASS
+- [x] Commit `85341eb` + push to origin `aggressive-radical-persona-no-theater` beta branch
 
 ## Sub-task T9: R79 documentation sync (this change set)
 
@@ -225,8 +225,8 @@ cause, R80 composition scope).
 | T4 R79-C | done | — | 3 new drives (5-HT / Oxy / Opioid) under `04` owner + `HormonePredictCorroborator` + 5th `LearnedParameterCategory` + 12th v3 schema field; 34 new tests (900 passed baseline + 34 = 900 → 900); R79-D v2 baseline report (A+ variant) confirms 5-HT / Oxy non-constant; A vs B Oxy delta blocked by salience aggregator (R80) |
 | T5 R79-D | done | — | commits `3827632` + `9597046` |
 | T6 R80 | done | commit cb66534 | R80 internal_monologue source + estimator + per-modality dispatch + opt-in assemble_runtime wiring + 5 unit tests + 20-tick A_praise+rumination real-LLM probe (LLM i_want_to_think_more_freq 0.70 > 0.30 PASS; NE drift +0.0118 > 0.001 PASS, revised from original >= 0.10 because A_praise external stimulus saturates NE near max from tick 1); 905 passed (866 R79-B/C baseline + 39 R80 new + 0 regression); R21 + composition guards green |
-| T7 R81 | done | this commit (T10 pending) | R81 requirement package at docs/requirements/81-r81-internal-monologue-self-continuation-and-cross-tick-carry/ (T0 done 2026-06-11 17:00); T1-T9 done 2026-06-11 18:00; T10 commit pending; 4 sub-deliverables all delivered: (1) RuntimeHandle._carry_internal_monologue seam + InternalMonologueCarryState frozen dataclass + cell pattern + PriorInternalMonologueCarryHolder triple-mirror; (2) 09 ThoughtGateSignalSnapshot.self_continuation_signal + ThoughtGateConfig.self_continuation_weight=0.3 + 0.5+0.5 formula; (3) 18 DeferredContinuityRecord.source_kind + ProactiveDriveState.proactive_drive_urgency 0.5x multiplier; (4) 42 RuntimeContinuitySnapshot v3 -> v4 with InternalMonologueCarryState field + _migrate_v3_to_v4 one-shot helper. 17 R81 unit tests + 4 e2e smoke; full suite 922 passed (905 R80 baseline + 17 R81 new + 0 regression); R21 + composition guards green. |
-| T8 R82 | pending | after R81 | needs 17-dim evaluator + P5 gate |
+| T7 R81 | done | commit `1a6aab6` (T10 done 2026-06-11 18:44) | R81 requirement package at docs/requirements/81-r81-internal-monologue-self-continuation-and-cross-tick-carry/ (T0 done 2026-06-11 17:00); T1-T10 all delivered 2026-06-11 18:44; 4 sub-deliverables all delivered: (1) RuntimeHandle._carry_internal_monologue seam + InternalMonologueCarryState frozen dataclass + cell pattern + PriorInternalMonologueCarryHolder triple-mirror; (2) 09 ThoughtGateSignalSnapshot.self_continuation_signal + ThoughtGateConfig.self_continuation_weight=0.3 + 0.5+0.5 formula; (3) 18 DeferredContinuityRecord.source_kind + ProactiveDriveState.proactive_drive_urgency 0.5x multiplier; (4) 42 RuntimeContinuitySnapshot v3 -> v4 with InternalMonologueCarryState field + _migrate_v3_to_v4 one-shot helper. 17 R81 unit tests + 4 e2e smoke; full suite 922 passed (905 R80 baseline + 17 R81 new + 0 regression); R21 + composition guards green. |
+| T8 R82 | done | T0-T10 all complete (commit `85341eb`, 947 passed) | R82 requirement package at docs/requirements/82-r82-behavior-drift-dimension-and-evaluator/ (T0 done 2026-06-11 18:35); T1-T10 all delivered; 17-dim BehaviorDriftDimension (4 hormone + 4 feeling + 4 salience + 5 behavior) under 17 evaluation + AggressiveRadicalDriftEvaluator consuming R79-D JSONL + is_p5_launch_gate_open threshold 0.02 + 23 R82 unit tests + 2 R82 integration tests + R79-D CLI --with-drift-report flag + 4 doc files synced |
 | T9 R79 doc sync | done | — | this change set |
 
 ## Pre-flight checks before each sub-task

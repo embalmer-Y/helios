@@ -359,6 +359,20 @@ R81 closes the cross-tick half of the internal-monologue loop. R80 (10.b) ships 
 
 **Deferral list (R82)**: (1) 17-dim `BehaviorDriftDimension` + `AggressiveRadicalDriftEvaluator` P5 launch gate; (2) recalibrate `self_continuation_weight = 0.3` and `0.5x` urgency multiplier against the drift evaluator; (3) extend the carry envelope to include the LLM's `i_send_through` channel (R79-B) so the autonomy stage knows which channel the monologue is targeted at.
 
+## 10.d R82 Behavior Drift Dimension and P5 Launch-Gate Evaluator (baseline_implementation)
+
+R82 is the first read-only consumer of the R79-D long-form JSONL trail. It introduces a per-scenario drift evaluator that classifies each of 17 behavior dimensions as `drift_positive` / `drift_negative` / `drift_neutral` / `dim_unavailable`, aggregates by family, and reports a single P5 launch-gate verdict. R82 ships no runtime mutation, no LLM call, and no cross-owner wiring; it is a pure aggregator sitting on top of the existing evaluation owner.
+
+**Owner boundary**:
+
+- `helios_v2.evaluation.contracts` (the `17` evaluation owner) gains a 17-dim `BehaviorDriftDimension` Literal: 4 hormone (dopamine / norepinephrine / serotonin / cortisol) + 4 feeling (valence / arousal / tension / comfort) + 4 salience (novelty / uncertainty / social / aggregate_salience) + 5 behavior (i_want_to_say_freq / i_send_through_freq / i_want_to_think_more_freq / remember_this_freq / act_type_distribution). The Literal is the only exported addition to the `17` owner surface; the `r82_drift` module is a sibling of the existing evaluation engine.
+- `helios_v2.evaluation.r82_drift` (new sibling module under `17 evaluation`) introduces `AggressiveRadicalDriftEvaluator` (frozen dataclass with `jsonl_path: Path`), `evaluate()` method (returns `DriftEvaluationReport`), and a static `is_p5_launch_gate_open(score, threshold=0.02)` predicate. The evaluator reads the R79-D JSONL only; it does not depend on any runtime handle, gateway, or LLM provider.
+- `helios_v2.evaluation.__init__` exports the new symbols. The `17 evaluation` owner is the sole authority on the dim taxonomy and the launch-gate predicate. R82 does not extend the evaluation engine's first-version path; it is a parallel consumer for baseline-experiment data.
+
+**Cross-owner reads**: R82 reads from the R79-D JSONL trail (`tests/r79d/framework.py` writes it; R82 reads it). R82 does not write to the trail. The 17-dim taxonomy and the recalibration-recommendation contract are the `17 evaluation` owner's read-side complement to the P5 learning loop that will eventually consume them.
+
+**No new owner is created and no owner boundary is altered**. The 0.5x `proactive_drive_urgency` multiplier introduced in R81 is recalibrated against the 17-dim drift evaluator in a later requirement; R82 ships the evaluation infrastructure only.
+
 ## 11. Startup Gate Rule
 
 Startup is valid only when all declared critical dependencies are present.

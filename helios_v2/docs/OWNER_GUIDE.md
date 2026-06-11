@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R81 (Internal Monologue cross-tick carry + 09 self-continuation signal + 18 source_kind + 42 v4 schema bump; see §3.8.2). Test baseline: 922 passed (905 R80 baseline + 17 R81 new + 0 regression; R21 ad-hoc logging guard green; composition owner-boundary guard green).
+> Status: living owner reference. Last synced: R82 (17-dim BehaviorDriftDimension + AggressiveRadicalDriftEvaluator P5 launch gate + R79-D CLI --with-drift-report; see §3.8.3). Test baseline: 947 passed (922 R81 baseline + 25 R82 new + 0 regression; R21 ad-hoc logging guard green; composition owner-boundary guard green).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -142,7 +142,7 @@ two transport stages for 21).
 - Next step: keep it a contract formatter (never a reply-first behavior owner); enrich layers as real upstream signals land. Deepening only.
 
 #### 2.11.1 R79 Aggressive-Radical-No-Theater v3 prompt path (R79-A delivered)
-- **Completeness**: `baseline_implementation` (R79-A landed; R79-B / R79-C / R80 / R81 / R82 planned).
+- **Completeness**: `baseline_implementation` (R79-A / R79-B / R79-C / R79-D / R80 / R81 / R82 delivered).
 - **Location**: `helios_v2.prompt_contract.r79`, class `AggressiveRadicalEmbodiedPromptPath`.
 - **Relationship to v1**: sibling. v1 `FirstVersionEmbodiedPromptPath` is byte-for-byte preserved; R79-A does not modify v1. The runtime picks v3 via `AggressiveRadicalPromptProfile(prompt_path_mode="aggressive-radical-v3")`; default assembly still uses v1.
 - **6-layer v3 contract**: `present_field` (focused stimulus text) / `embodied_state` (body state text) / `attention_breakdown` (focused / peripheral / filtered 3 tiers) / `channel_catalog` (available + ready channel list) / `response_schema` (11-field natural-language JSON instructions) / `v3_system_prompt` (full v3 system prompt).
@@ -153,7 +153,7 @@ two transport stages for 21).
 - **Owner boundary**: R79-A imports no cognitive owner, adds no new owner, changes no owner boundary. It is a sibling path within `16`; R21 guard and composition owner-boundary guard both stay green for it.
 - **Tests**: `tests/test_aggressive_radical_prompt_path.py` 11 cases covering 6-layer order, field rendering, hard rules, action boundary, bootstrap id gate.
 - **R79-D companion**: extendable baseline framework at `tests/r79d/` (4 v1 scenarios + 9 built-in assertions + CLI) for R79-A / B / C validation and future P5 learning-curve assessment. Note: `tests/r79d/` is test infrastructure, not a product requirement, and is not in the `helios_v2/requirements/` index.
-- **R79-B / R79-C / R80 / R81 / R82 plan**: see `docs/requirements/79-r79-aggressive-radical-prompt-and-runtime-self-talk/requirement.md` for the full requirement package.
+- **R79-B / R79-C / R80 / R81 / R82 delivered**: see `docs/requirements/79-r79-aggressive-radical-prompt-and-runtime-self-talk/requirement.md` and `docs/requirements/82-r82-behavior-drift-dimension-and-evaluator/requirement.md` for the full requirement packages.
 
 ### 2.12 `16` Outward Expression Draft — `helios_v2.outward_expression`
 - Completeness: `baseline_real` (draft-only by design).
@@ -285,6 +285,17 @@ Not cognitive owners. They provide substrate the cognitive chain depends on.
 - Files: `src/helios_v2/continuity_checkpoint/contracts.py` + `engine.py` (T1 + T6); `src/helios_v2/composition/bridges.py` + `runtime_assembly.py` (T2 + T4 + T5 wiring); `src/helios_v2/runtime/stages.py` (T5 autonomy stage seed); `src/helios_v2/autonomy/contracts.py` + `engine.py` (T5 source_kind + urgency); `src/helios_v2/thought_gating/contracts.py` + `engine.py` (T4 self-continuation signal).
 - Tests: `tests/test_r81_internal_monologue_continuity.py` (17 cases: 2 carry seam + 4 self-continuation signal + 5 source_kind/urgency + 4 v4 migration + 2 cross-tick harness).
 - Next step: (1) R82 — 17-dim `BehaviorDriftDimension` + `R79DriftEvaluator` P5 launch gate (catches when the carry-induced rumination destabilizes the trajectory); (2) recalibrate `self_continuation_weight = 0.3` and `0.5x` urgency multiplier against the drift evaluator; (3) extend the carry envelope to also include the LLM's `i_send_through` channel (R79-B) so the autonomy stage knows which channel the monologue is targeted at.
+### 3.8.3 Behavior Drift Dimension and P5 Launch-Gate Evaluator — R82 (`helios_v2.evaluation.r82_drift`)
+
+- Completeness: `baseline_implementation` (R82 delivered; 17-dim `BehaviorDriftDimension` Literal in `contracts.py`; `AggressiveRadicalDriftEvaluator` consumer of R79-D JSONL trail; P5 launch-gate predicate `is_p5_launch_gate_open(score, threshold=0.02)`; 23 unit tests in `tests/test_r82_drift_evaluator.py` + 2 integration tests in `tests/test_r82_drift_integration.py`; R79-D CLI `--with-drift-report` flag emits per-scenario `*/*.drift_report.md`).
+- 17 dims: 4 hormone (dopamine / norepinephrine / serotonin / cortisol) + 4 feeling (valence / arousal / tension / comfort) + 4 salience (novelty / uncertainty / social / aggregate_salience) + 5 behavior (i_want_to_say_freq / i_send_through_freq / i_want_to_think_more_freq / remember_this_freq / act_type_distribution).
+- 4-class classification: `drift_positive` / `drift_negative` / `drift_neutral` / `dim_unavailable`; per-family thresholds: hormone 0.10 / feeling 0.15 / salience 0.20 / behavior 0.10 / act_type_entropy 0.5.
+- Behavior frequencies derive from the v3 LLM envelope (boolean → 0.0/1.0); missing key → `dim_unavailable` (sample_count=0). `act_type_distribution` is Shannon entropy of `llm_output.act_type`.
+- Recalibration recommendation per dim: |drift|>0.20 → `raise_weight`, |drift|<0.05 → `lower_weight`, else `hold`; `dim_unavailable` → `n/a`.
+- P5 launch gate: `is_p5_launch_gate_open(overall_drift_score)` = `score >= 0.02` (default conservative threshold). The gate consumes the R79-D JSONL and is the first read-only consumer of the long-form `run_experiment` trail.
+- Owner boundary: this is an `17 evaluation` owner addition. No other owner code is modified. The evaluator is a pure aggregator — no LLM calls, no runtime mutation, no I/O outside the JSONL file.
+- Requirement package: `docs/requirements/82-r82-behavior-drift-dimension-and-evaluator/`. Code: `src/helios_v2/evaluation/r82_drift.py` + `BehaviorDriftDimension` Literal export in `src/helios_v2/evaluation/contracts.py`. Tests: `tests/test_r82_drift_evaluator.py` (23) + `tests/test_r82_drift_integration.py` (2).
+
 
 ### 3.9 Temporal Pacing and DMN Source — `helios_v2.temporal`
 - Completeness: `infra_done` (opt-in).
