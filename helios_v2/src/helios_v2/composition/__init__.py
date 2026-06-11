@@ -3,6 +3,8 @@
 Assembles the existing `01 -> 18` owner chain plus the read-only evaluation owner into a
 single runnable runtime handle. Assembly-only: holds no cognitive policy and provides no
 degraded or fallback assembly path.
+Opt-in capability bundle `AggressiveRadicalPromptProfile` activates the v3
+embodied-prompt path (R79-A) end-to-end without altering the default assembly.
 """
 
 from .dependencies import (
@@ -36,8 +38,10 @@ from .runtime_assembly import (
     default_composition_config,
 )
 from .bridges import SequenceExternalSignalSource
+from .profile import AggressiveRadicalPromptProfile, PromptPathMode
 
 __all__ = [
+    "AggressiveRadicalPromptProfile",
     "CANONICAL_STAGE_ORDER",
     "CHANNEL_BOUND_STAGE_ORDER",
     "CHANNEL_DRIVERS_READY",
@@ -52,6 +56,7 @@ __all__ = [
     "ExperienceStoreReadinessDependencyProvider",
     "FirstVersionDependencyProvider",
     "LLM_PROFILES_READY",
+    "PromptPathMode",
     "LlmReadinessDependencyProvider",
     "RUNTIME_COGNITION_BASELINE",
     "RuntimeHandle",

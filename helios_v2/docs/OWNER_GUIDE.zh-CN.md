@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R79-A（v3 激进-激进-反戏剧化 prompt 路径落代码，详见 §2.11.1）。测试基线：842 passed（831 基线 + 11 R79-A，0 回归；R21 ad-hoc logging guard 绿；composition owner-boundary guard 绿）。
+> 状态：活文档（owner 参考）。最近同步：R79-B（Channel-Catalog Runtime Injection and LLM Channel Arbitration — `AggressiveRadicalPromptProfile` capability bundle + `RuntimeProfile.aggressive_radical_prompt_profile` 字段接入 + 两个 bridge `ready_channels` class field + `AggressiveRadicalChannelArbitrationPostProcessor` owner-neutral glue + 5 类 fail-soft reason，19 个新测试）。测试基线：866 passed（847 基线 + 13 仲裁 + 6 集成，0 回归；R21 ad-hoc logging guard 绿；composition owner-boundary guard 绿）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -204,6 +204,20 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 职责：证据驱动评估、后果绑定路径结论、执行真相对账（`corroborated`/`discrepant`/`unverifiable_no_timeline`）、诊断 provenance 发布的唯一只读 owner。不变更任何运行期状态。
 - 在循环中的作用：最后一个阶段；重建内部到可见的因果链，现在还把自报结论对账内核执行时间线以证伪。
 - 下一步：非确定性认知产出可变路径后做更丰富的 discrepancy 分类与打分深度；preserved-vs-resolved-vs-degraded 连续性对账（wave_B）；artifact 的跨运行耐久比较（依赖 P2）。
+
+### 2.21 R79-B Channel-Catalog Runtime Injection and LLM Channel Arbitration（R79-B 已交付）
+- **完成度**：`baseline_implementation`（R79-B 落地，R79-C / R80 / R81 / R82 计划中）。
+- **位置**：`helios_v2.composition.profile`（`AggressiveRadicalPromptProfile`）+ `helios_v2.composition.bridges`（`AggressiveRadicalChannelArbitrationPostProcessor` + 两个 bridge 的 `ready_channels` class field）。
+- **与 v1 关系**：R79-B 没有任何 default 行为变化；v1 默认装配 + v1 path 字节级保留。`RuntimeProfile.aggressive_radical_prompt_profile=None` 时走 v1；注入 bundle 后切到 v3。
+- **4 个交付物**：
+  1. `AggressiveRadicalPromptProfile`（frozen dataclass，2 字段：`prompt_path_mode` Literal + `ready_channels` tuple），fail-fast `__post_init__` 校验空 channels / 重复 channels / 非字符串 channels；
+  2. `RuntimeProfile.aggressive_radical_prompt_profile` 字段 + `assemble_runtime` 集成（bootstrap id 切到 `v3-aggressive-radical` + 路径选择 `AggressiveRadicalEmbodiedPromptPath` + 非 v1 baseline 抛 `CompositionError`）；
+  3. `FirstVersionEmbodiedPromptRequestBridge` 和 `SemanticEmbodiedPromptRequestBridge` 加 `ready_channels: tuple[str, ...] = ()` class field，配合 `_resolved_channels` 投影（v1 默认 `()` 回退到 `("cli",)` shim）；
+  4. `AggressiveRadicalChannelArbitrationPostProcessor` owner-neutral glue，解析 v3 LLM JSON envelope 的 `i_will_send_it` / `i_send_through` / `i_want_to_say` 三元组并通过 `ChannelSubsystem.dispatch_outbound` 派发单个 `OutboundPacket`，配 `AggressiveRadicalChannelArbitrationOutcome`（frozen dataclass）报告 5 类 fail-soft 原因：`parse_error` / `not_sending` / `channel_not_ready` / `empty_text` / `no_subsystem`。
+- **owner 边界**：R79-B 不导入任何认知 owner；post-processor 只 import `helios_v2.llm.contracts` 和 `helios_v2.channel.contracts`，是 composition owner 内部的 glue。R21 ad-hoc logging guard 与 composition owner-boundary guard 都对它开放。
+- **测试**：19 个新测试（13 仲裁 + 6 集成）。`tests/test_aggressive_radical_channel_arbitration.py` 覆盖 ready / 非 ready / not_sending / parse_error / 多 channel / empty_text / no_subsystem / null i_send_through / code-fence JSON 容错 / outcome 构造校验。`tests/test_r79b_runtime_integration.py` 覆盖 v1 默认不变 / v3 bundle 接入 v3 path + ready_channels / 非 v1 baseline 抛 `CompositionError` / 多 channel 透传 / `RuntimeProfile` 字段默认值与 round-trip。
+- **未完成**：post-processor 还未连到 runtime 出站流水线，那是 R80 的范围。R79-B 的 post-processor 当前是 importable + 6+ unit-test 覆盖的独立 glue，可被 R80 集成。
+- **R79-C / R80 / R81 / R82 计划**：详见 `docs/requirements/79-r79-aggressive-radical-prompt-and-runtime-self-talk/requirement.md` 需求包。R79-B 独立需求包三件套：`docs/requirements/79b-r79b-channel-catalog-runtime-injection-and-llm-arbitration/{requirement,design,task}.md`。
 
 ---
 

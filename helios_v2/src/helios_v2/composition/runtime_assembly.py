@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
-from typing import Callable, Mapping
+from typing import TYPE_CHECKING, Callable, Mapping
+
+if TYPE_CHECKING:
+    from .profile import AggressiveRadicalPromptProfile
 
 from helios_v2.action_externalization import (
     ActionExternalizationConfig,
@@ -99,6 +102,7 @@ from helios_v2.planner_bridge import (
     PlannerBridgeEngine,
 )
 from helios_v2.prompt_contract import (
+    AggressiveRadicalEmbodiedPromptPath,
     EmbodiedPromptConfig,
     EmbodiedPromptEngine,
     FirstVersionEmbodiedPromptPath,
@@ -938,6 +942,7 @@ class RuntimeProfile:
     temporal_source: "TemporalSource | None" = None
     external_signal_source: "SensorySource | None" = None
     default_signal_mode: str = "semantic"
+    aggressive_radical_prompt_profile: "AggressiveRadicalPromptProfile | None" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1033,6 +1038,7 @@ def assemble_runtime(
     temporal_source: "TemporalSource | None | object" = _UNSET,
     external_signal_source: "SensorySource | None | object" = _UNSET,
     default_signal_mode: str | object = _UNSET,
+    aggressive_radical_prompt_profile: "AggressiveRadicalPromptProfile | None | object" = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1092,6 +1098,7 @@ def assemble_runtime(
         ("temporal_source", temporal_source),
         ("external_signal_source", external_signal_source),
         ("default_signal_mode", default_signal_mode),
+        ("aggressive_radical_prompt_profile", aggressive_radical_prompt_profile),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1119,6 +1126,8 @@ def assemble_runtime(
     interoceptive_sampler = resolved_profile.interoceptive_sampler
     temporal_source = resolved_profile.temporal_source
     external_signal_source = resolved_profile.external_signal_source
+    default_signal_mode = resolved_profile.default_signal_mode
+    aggressive_radical_prompt_profile = resolved_profile.aggressive_radical_prompt_profile
 
     # R69 auto-provisioning: when default_signal_mode is "semantic" and the caller did not
     # inject an experience store and/or embedding gateway, create fresh in-memory backends so
@@ -1167,6 +1176,33 @@ def assemble_runtime(
 
     resolved_config = config if config is not None else default_composition_config()
     thought_profile_name = resolved_config.llm.thought_profile_name
+
+    # R79-B: when the opt-in v3 prompt capability bundle is present, switch the embodied-prompt
+    # bootstrap id to the v3-aggressive-radical variant (selects `AggressiveRadicalEmbodiedPromptPath`
+    # in `EmbodiedPromptEngine`) and propagate the bundle`s `ready_channels` to the embodied-prompt
+    # request bridges. Default assembly (no v3 bundle) is byte-for-byte unchanged: bootstrap id stays
+    # `embodied-prompt-bootstrap:v1` and bridges fall back to the hardcoded `("cli",)` shim.
+    if resolved_profile.aggressive_radical_prompt_profile is not None:
+        _v3_bundle = resolved_profile.aggressive_radical_prompt_profile
+        if resolved_config.embodied_prompt.prompt_bootstrap_id != "embodied-prompt-bootstrap:v1":
+            raise CompositionError(
+                "aggressive_radical_prompt_profile requires the default "
+                "embodied-prompt-bootstrap:v1 bootstrap id on the v1 config; "
+                "the v3 path is an additive sibling, not a fork that allows "
+                "arbitrary baseline ids."
+            )
+        resolved_config = replace(
+            resolved_config,
+            embodied_prompt=replace(
+                resolved_config.embodied_prompt,
+                prompt_bootstrap_id="embodied-prompt-bootstrap:v3-aggressive-radical",
+            ),
+        )
+    _resolved_ready_channels = (
+        _v3_bundle.ready_channels
+        if resolved_profile.aggressive_radical_prompt_profile is not None
+        else ()
+    )
 
     def _embed_text(text: str) -> tuple[float, ...]:
         """Owner-neutral embed callable bound to the injected embedding gateway.
@@ -1466,9 +1502,15 @@ def assemble_runtime(
             else FirstVersionDirectedMemoryCandidateProvider()
         ),
     )
+    # R79-B: select v3 path when the bundle is active, otherwise v1 (byte-for-byte unchanged).
+    _resolved_prompt_path = (
+        AggressiveRadicalEmbodiedPromptPath()
+        if resolved_profile.aggressive_radical_prompt_profile is not None
+        else FirstVersionEmbodiedPromptPath()
+    )
     embodied_prompt = EmbodiedPromptEngine(
         config=resolved_config.embodied_prompt,
-        prompt_path=FirstVersionEmbodiedPromptPath(),
+        prompt_path=_resolved_prompt_path,
     )
     outward_expression = OutwardExpressionEngine(
         config=resolved_config.outward_expression,
@@ -1575,10 +1617,18 @@ def assemble_runtime(
         ),
         EmbodiedPromptRuntimeStage(
             prompt_layer=embodied_prompt,
+            # R79-B: forward `_resolved_ready_channels` (set above from the v3 bundle) to the
+            # request bridge instance. When the v3 bundle is absent, `_resolved_ready_channels`
+            # is `()` and the bridge`s `ready_channels` class field stays `()`, so v1 behavior
+            # is byte-for-byte unchanged.
             request_provider=(
-                SemanticEmbodiedPromptRequestBridge()
+                SemanticEmbodiedPromptRequestBridge(
+                    ready_channels=_resolved_ready_channels,
+                )
                 if semantic_memory_enabled
-                else FirstVersionEmbodiedPromptRequestBridge()
+                else FirstVersionEmbodiedPromptRequestBridge(
+                    ready_channels=_resolved_ready_channels,
+                )
             ),
         ),
         OutwardExpressionRuntimeStage(outward_expression_layer=outward_expression),

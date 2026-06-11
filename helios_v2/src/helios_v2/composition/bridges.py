@@ -42,7 +42,7 @@ from helios_v2.autonomy import (
     ProactiveCognitionFacts,
     ProactiveDriveRequest,
 )
-from helios_v2.channel import ChannelSubsystemAPI
+from helios_v2.channel import ChannelSubsystemAPI, OutboundPacket
 from helios_v2.directed_retrieval import (
     DirectedMemoryCandidateProvider,
     MemoryRetrievalCandidate,
@@ -1831,7 +1831,15 @@ class FirstVersionEmbodiedPromptRequestBridge:
         Owner-neutral glue. It forwards bounded current-cycle summaries and preserves the
         upstream conscious-state, gate-result, and retrieval-bundle ids; it does not render
         the prompt or decide prompt-layering policy.
+
+        `ready_channels` carries the v3 capability-bundle's channel catalog; when non-empty,
+        `build_requests` projects it into `capability_summary["available_channels"]` so the
+        v3 LLM contract sees the same channels the post-processor will arbitrate against.
+        When empty (v1 default assembly, no v3 bundle), the projection falls back to the
+        v1 hardcoded `("cli",)` shim so v1 behavior is byte-for-byte unchanged.
     """
+
+    ready_channels: tuple[str, ...] = ()
 
     def build_requests(
         self,
@@ -1852,8 +1860,9 @@ class FirstVersionEmbodiedPromptRequestBridge:
             "retrieval_context": "short-term context and autobiographical continuity trace are both active",
             "continuity_context": "preserve the current user anchor and current unresolved reply obligation",
         }
+        _resolved_channels = self.ready_channels if self.ready_channels else ("cli",)
         capability_summary = {
-            "available_channels": ("cli",),
+            "available_channels": _resolved_channels,
             "available_ops": ("reply_message",),
             "forbidden_capabilities": ("direct_execution", "invented_channel"),
         }
@@ -2141,7 +2150,15 @@ class SemanticEmbodiedPromptRequestBridge:
         retrieval-bundle ids; it does not render the prompt or decide prompt-layering policy.
         Activated under `semantic_memory_enabled == True`; `FirstVersionEmbodiedPromptRequestBridge`
         remains available for `legacy_constant` mode.
+
+        `ready_channels` carries the v3 capability-bundle's channel catalog; when non-empty,
+        `build_requests` projects it into `capability_summary["available_channels"]` so the
+        v3 LLM contract sees the same channels the post-processor will arbitrate against.
+        When empty (v1 default assembly, no v3 bundle), the projection falls back to the
+        v1 hardcoded `("cli",)` shim so v1 behavior is byte-for-byte unchanged.
     """
+
+    ready_channels: tuple[str, ...] = ()
 
     def build_requests(
         self,
@@ -2165,8 +2182,9 @@ class SemanticEmbodiedPromptRequestBridge:
         # capability_summary and identity_boundary_summary remain composition-level
         # constants (not derived from owner state) — they describe available channels,
         # ops, and governance boundaries, which are assembly configuration, not cognition.
+        _resolved_channels = self.ready_channels if self.ready_channels else ("cli",)
         capability_summary = {
-            "available_channels": ("cli",),
+            "available_channels": _resolved_channels,
             "available_ops": ("reply_message",),
             "forbidden_capabilities": ("direct_execution", "invented_channel"),
         }
@@ -2873,4 +2891,221 @@ class FirstVersionEvaluationRequestBridge:
             prior_consequence_claim_evidence=self.prior_claim_bridge.build_claim_evidence(
                 self.timeline_holder
             ),
+        )
+
+
+@dataclass(frozen=True)
+class AggressiveRadicalChannelArbitrationOutcome:
+    """Immutable outcome of one LLM channel-arbitration decision.
+
+    Owner: composition (capability glue; not a cognitive owner).
+
+    Failure semantics:
+        Construction raises `ValueError` on a non-bool `dispatched`, a `reason`
+        outside the fixed taxonomy, or a non-string `target` / `op` (when set).
+
+    Notes:
+        `reason` carries the fixed string taxonomy:
+          - "" when dispatched=True (success carries no reason).
+          - "parse_error" when the LLM output could not be parsed as JSON.
+          - "not_sending" when the LLM declared i_will_send_it=False or left
+            i_send_through null.
+          - "channel_not_ready" when the LLM picked a channel outside the
+            ready_channels catalog.
+          - "empty_text" when i_want_to_say is null/empty (no payload).
+          - "no_subsystem" when no ChannelSubsystem is wired into the
+            runtime.
+    """
+
+    dispatched: bool
+    reason: str = ""
+    target: str | None = None
+    op: str | None = None
+    outcome: "OutboundDispatchOutcome | None" = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.dispatched, bool):
+            raise ValueError(
+                f"AggressiveRadicalChannelArbitrationOutcome.dispatched must be "
+                f"a bool, got {type(self.dispatched).__name__}."
+            )
+        _ALLOWED_REASONS = frozenset({
+            "",
+            "parse_error",
+            "not_sending",
+            "channel_not_ready",
+            "empty_text",
+            "no_subsystem",
+        })
+        if self.reason not in _ALLOWED_REASONS:
+            raise ValueError(
+                f"AggressiveRadicalChannelArbitrationOutcome.reason must be in "
+                f"{sorted(_ALLOWED_REASONS)!r}, got {self.reason!r}."
+            )
+        if self.target is not None and (not isinstance(self.target, str) or not self.target):
+            raise ValueError(
+                f"AggressiveRadicalChannelArbitrationOutcome.target must be a "
+                f"non-empty string when set, got {self.target!r}."
+            )
+        if self.op is not None and (not isinstance(self.op, str) or not self.op):
+            raise ValueError(
+                f"AggressiveRadicalChannelArbitrationOutcome.op must be a "
+                f"non-empty string when set, got {self.op!r}."
+            )
+
+
+def _parse_arbitration_envelope(output_text: str) -> dict[str, object] | None:
+    """Parse the v3 LLM envelope from `LlmCompletion.output_text`.
+
+    The envelope is a single JSON object with 11 fields. We use a tolerant
+    parser:
+      1. try `json.loads` on the whole text first;
+      2. if that fails, find the first "{" and the last "}` and retry on
+         the substring (handles the case where the LLM wraps JSON in a
+         code fence or adds a single trailing newline).
+
+    Returns the parsed dict on success, `None` on any failure.
+    """
+    import json as _json
+
+    if not isinstance(output_text, str) or not output_text:
+        return None
+    try:
+        parsed = _json.loads(output_text)
+    except (ValueError, TypeError):
+        first_brace = output_text.find("{")
+        if first_brace < 0:
+            return None
+        last_brace = output_text.rfind("}")
+        if last_brace <= first_brace:
+            return None
+        try:
+            parsed = _json.loads(output_text[first_brace : last_brace + 1])
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+class AggressiveRadicalChannelArbitrationPostProcessor:
+    """Owner-neutral glue that dispatches LLM channel choices to the channel subsystem.
+
+    Owner: composition (capability glue; not a cognitive owner).
+
+    Purpose:
+        Consume the v3 aggressive-radical envelope's `i_will_send_it` /
+        `i_send_through` / `i_want_to_say` triple from one `LlmCompletion` and
+        dispatch a corresponding `OutboundPacket` through the wired
+        `ChannelSubsystem`. The post-processor is fail-soft: any non-dispatch
+        path returns an `AggressiveRadicalChannelArbitrationOutcome` with
+        `dispatched=False` and a fixed-string `reason`; the runtime continues
+        to the next tick without raising.
+
+    Failure semantics:
+        `process(...)` never raises; it returns
+        `AggressiveRadicalChannelArbitrationOutcome` for every input.
+        The 5 fail-soft reasons are:
+          - "parse_error" — LLM output was not a JSON object.
+          - "not_sending" — LLM declared i_will_send_it=False OR left
+            i_send_through null.
+          - "channel_not_ready" — LLM picked a channel outside the
+            ready_channels catalog (catastrophic: LLM ignored the v3 rule).
+          - "empty_text" — i_want_to_say is null or empty (no payload to
+            transport).
+          - "no_subsystem" — no ChannelSubsystem is wired in.
+
+    Notes:
+        - The post-processor is owner-neutral: it imports only
+          `helios_v2.llm.contracts` (for `LlmCompletion`) and
+          `helios_v2.channel.contracts` (for `OutboundPacket` /
+          `ChannelSubsystemAPI`). It does not import cognitive owners.
+        - `op_name` defaults to "speak_text" (matches the planner_bridge
+          taxonomy). The post-processor does not branch on `i_want_to_act`
+          / `act_type`; that is R80's scope (sensorimotor owner).
+        - The post-processor does not gate on `i_want_to_think_more` /
+          `remember_this`; those are persistence / carry concerns for R80+
+          R81.
+    """
+
+    _OP_NAME: str = "speak_text"
+
+    def process(
+        self,
+        completion: "LlmCompletion",
+        request: "EmbodiedPromptRequest | None",
+        ready_channels: "frozenset[str] | tuple[str, ...]",
+        channel_subsystem: "ChannelSubsystemAPI | None" = None,
+    ) -> AggressiveRadicalChannelArbitrationOutcome:
+        """Run one arbitration pass.
+
+        Inputs:
+            `completion` - the LLM `LlmCompletion` whose `output_text` carries
+            the v3 envelope.
+            `request` - the originating `EmbodiedPromptRequest`, used only to
+            tag the outbound packet with `request_id` in `payload`. May be
+            None in unit tests.
+            `ready_channels` - the set of channels the v3 contract told the
+            LLM it may pick from. Must be non-empty (the bundle enforces this
+            at construction).
+            `channel_subsystem` - the wired `ChannelSubsystem` (or None in
+            unit tests; the post-processor will report `"no_subsystem"`).
+
+        Returns:
+            An `AggressiveRadicalChannelArbitrationOutcome` describing the
+            decision. Never raises.
+        """
+        envelope = _parse_arbitration_envelope(completion.output_text)
+        if envelope is None:
+            return AggressiveRadicalChannelArbitrationOutcome(
+                dispatched=False,
+                reason="parse_error",
+            )
+
+        i_will_send_it = envelope.get("i_will_send_it")
+        i_send_through = envelope.get("i_send_through")
+        i_want_to_say = envelope.get("i_want_to_say")
+
+        if not i_will_send_it or not i_send_through:
+            return AggressiveRadicalChannelArbitrationOutcome(
+                dispatched=False,
+                reason="not_sending",
+            )
+
+        if not isinstance(i_send_through, str) or i_send_through not in ready_channels:
+            return AggressiveRadicalChannelArbitrationOutcome(
+                dispatched=False,
+                reason="channel_not_ready",
+            )
+
+        if not isinstance(i_want_to_say, str) or not i_want_to_say:
+            return AggressiveRadicalChannelArbitrationOutcome(
+                dispatched=False,
+                reason="empty_text",
+            )
+
+        if channel_subsystem is None:
+            return AggressiveRadicalChannelArbitrationOutcome(
+                dispatched=False,
+                reason="no_subsystem",
+            )
+
+        packet_id = f"arb:{completion.completion_id}"
+        request_id = request.request_id if request is not None else ""
+        packet = OutboundPacket(
+            packet_id=packet_id,
+            target_driver_id=i_send_through,
+            op_name=self._OP_NAME,
+            payload={"outbound_text": i_want_to_say, "request_id": request_id},
+            execution_priority=0,
+            provenance={"source_completion_id": completion.completion_id},
+        )
+        result = channel_subsystem.dispatch_outbound((packet,), budget=1)
+        outcome = result.outcomes[0] if result.outcomes else None
+        return AggressiveRadicalChannelArbitrationOutcome(
+            dispatched=True,
+            reason="",
+            target=i_send_through,
+            op=self._OP_NAME,
+            outcome=outcome,
         )
