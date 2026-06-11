@@ -150,7 +150,11 @@ from helios_v2.embedding import (
     EmbeddingProfileRegistry,
     EmbeddingRequest,
 )
-from helios_v2.continuity_checkpoint import ContinuityCheckpointStore
+from helios_v2.continuity_checkpoint import (
+    ContinuityCheckpointStore,
+    InternalMonologueCarryState,
+    _migrate_v3_to_v4,
+)
 from helios_v2.appraisal.r80_internal_monologue import InternalMonologueAppraisalEstimator
 from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
 from helios_v2.sensory import InternalMonologueSource
@@ -209,6 +213,7 @@ from .bridges import (
     FirstVersionWorkspaceCompetitionPath,
     PriorThoughtRecallHolder,
     PriorDriveUrgencyHolder,
+    PriorInternalMonologueCarryHolder,
     ThoughtDirectedRetrievalRequestBridge,
     EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
@@ -596,6 +601,8 @@ class RuntimeHandle:
     memory_record_bridge: "MemoryRecordBridge | None" = None
     prior_thought_recall_holder: "PriorThoughtRecallHolder | None" = None
     drive_urgency_holder: "PriorDriveUrgencyHolder | None" = None
+    # R81: cross-tick internal-monologue carry holder (read by `09` signal bridge).
+    internal_monologue_carry_holder: "PriorInternalMonologueCarryHolder | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     temporal_source: "TemporalSource | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
@@ -605,8 +612,17 @@ class RuntimeHandle:
     neuromodulator_stage: "NeuromodulatorRuntimeStage | None" = None
     feeling_stage: "InteroceptiveFeelingRuntimeStage | None" = None
     identity_governance_stage: "IdentityGovernanceRuntimeStage | None" = None
+    # R81: profile-level internal-monologue carry provider. The InternalMonologueSource's
+    # monologue_provider closure is built in assemble_runtime and prefers this in-memory
+    # carry state (R79 v3 prompt envelope) over the profile-level provider.
+    internal_monologue_carry_provider: "Callable[[], Mapping[str, object] | None] | None" = None
     _reconstructor: ExecutionTimelineReconstructor = field(
         default_factory=ExecutionTimelineReconstructor
+    )
+    # R81: in-memory cross-tick carry state for the R79 v3 prompt envelope.
+    # Persisted via RuntimeContinuitySnapshot v4 `internal_monologue` field.
+    _internal_monologue_carry: "InternalMonologueCarryState | None" = field(
+        default=None, init=False, repr=False, compare=False
     )
 
     def startup(self) -> None:
@@ -653,6 +669,14 @@ class RuntimeHandle:
             restored_feeling = self.continuity_checkpoint_bridge.restore_feeling_state(snapshot)
             if restored_feeling is not None:
                 self.feeling_stage.seed_prior_state(restored_feeling)
+        # R81: migrate v3 snapshots to v4 in place; restore the internal-monologue carry state.
+        migrated_snapshot = _migrate_v3_to_v4(snapshot)
+        if migrated_snapshot.internal_monologue is not None:
+            self._internal_monologue_carry = migrated_snapshot.internal_monologue
+            if self.internal_monologue_carry_holder is not None:
+                self.internal_monologue_carry_holder.set_from_state(
+                    migrated_snapshot.internal_monologue
+                )
 
     def tick(self) -> RuntimeTickResult:
         """Execute one runtime tick and carry its completed timeline forward when instrumented."""
@@ -663,6 +687,8 @@ class RuntimeHandle:
         self._carry_recall_directive(result)
         self._carry_temporal(result)
         self._carry_drive_urgency(result)
+        self._carry_internal_monologue(result)
+        self._push_internal_monologue_envelope_to_autonomy()
         self._persist_experience(result)
         self._persist_memory(result)
         self._checkpoint_continuity(result)
@@ -765,6 +791,77 @@ class RuntimeHandle:
         if drive_state is not None:
             self.drive_urgency_holder.set_from_drive_state(drive_state)
 
+    def _carry_internal_monologue(self, result: RuntimeTickResult) -> None:
+        """Capture the just-completed tick's internal-monologue envelope for the next tick.
+
+        Owner-neutral carry (R81). The R80 InternalMonologueSource already ran during the
+        kernel tick and consumed the profile-level provider. We re-read the same provider
+        to capture the verbatim envelope that was emitted. When the profile provider is set
+        and returned a non-empty envelope, we build an `InternalMonologueCarryState` and
+        store it in-memory so the next tick's 02 closure provider reads it. The reset rule
+        (per design.md D1) is: a successful thought-gate fire with prior self-continuation
+        signal > 0 clears the carry to None. A no-fire tick persists the new state.
+        """
+
+        provider = self.internal_monologue_carry_provider
+        if provider is None:
+            return
+        envelope = provider()
+        if not envelope:
+            return
+
+        new_state = InternalMonologueCarryState(
+            last_envelope=dict(envelope),
+            last_tick_id=result.tick_id,
+        )
+
+        # Apply reset rule (D1): fire + positive prior self-continuation signal -> reset.
+        thought_gating_result = result.stage_results.get(
+            "thought_gating_and_continuation_pressure"
+        )
+        fired = bool(getattr(thought_gating_result, "thought_fired", False)) \
+            if thought_gating_result is not None else False
+        prior_signal = float(
+            getattr(thought_gating_result, "self_continuation_signal", 0.0)
+        ) if thought_gating_result is not None else 0.0
+
+        if fired and prior_signal > 0.0:
+            self._internal_monologue_carry = None
+            if hasattr(self, "_r81_carry_cell"):
+                self._r81_carry_cell[0] = None
+            if self.internal_monologue_carry_holder is not None:
+                self.internal_monologue_carry_holder.set_from_state(None)
+            return
+
+        self._internal_monologue_carry = new_state
+        if hasattr(self, "_r81_carry_cell"):
+            self._r81_carry_cell[0] = new_state
+        if self.internal_monologue_carry_holder is not None:
+            self.internal_monologue_carry_holder.set_from_state(new_state)
+
+    def _push_internal_monologue_envelope_to_autonomy(self) -> None:
+        """Owner: composition (R81).
+
+        Purpose:
+            After `_carry_internal_monologue` updates the in-memory carry state, push the
+            new envelope (or None) into the autonomy stage's `_internal_monologue_envelope`
+            field. The autonomy stage will read this on the NEXT tick (one-tick carry, like
+            `prior_deferred_records`).
+
+        Notes:
+            The envelope is the raw `last_envelope` Mapping from `InternalMonologueCarryState`,
+            which contains the LLM's `what_i_feel` / `i_want_to_think_more` / `think_more_about`
+            fields. The autonomy owner only needs to know it exists; it does not parse the keys.
+        """
+
+        if self.autonomy_stage is None:
+            return
+        envelope = None
+        state = self._internal_monologue_carry
+        if state is not None:
+            envelope = state.last_envelope
+        self.autonomy_stage._internal_monologue_envelope = envelope
+
     def _persist_experience(self, result: RuntimeTickResult) -> None:
         """Durably append the just-completed tick's `15` continuity records when enabled.
 
@@ -848,12 +945,14 @@ class RuntimeHandle:
         )
         if thought_gating_result is None or autonomy_result is None:
             return
+        # R81: pass the current in-memory carry state so it lands in snapshot v4.
         snapshot = self.continuity_checkpoint_bridge.build_snapshot(
             thought_gating_result,
             autonomy_result,
             result.tick_id,
             neuromodulator_stage_result=result.stage_results.get("neuromodulator_system"),
             feeling_stage_result=result.stage_results.get("interoceptive_feeling_layer"),
+            internal_monologue=self._internal_monologue_carry,
         )
         self.continuity_checkpoint.save_latest(snapshot)
 
@@ -1313,10 +1412,20 @@ def assemble_runtime(
     # content as `signal_type="internal_monologue"` `RawSignal`s, so the rumination / self-talk
     # loop re-enters the `02 -> 03 -> 04` pipeline as a real stimulus rather than just a
     # prompt-time suggestion. Default-off: when no provider is given, the assembly is unchanged.
+    # R81: the source's monologue_provider closure prefers the in-memory carry state
+    # (set by _carry_internal_monologue across ticks) over the profile-level provider.
+    # We use a single-element list as a mutable cell so the closure reads the latest state.
+    _r81_carry_cell: "list[InternalMonologueCarryState | None]" = [None]
     if internal_monologue_carry_provider is not None:
-        ingress.register_source(
-            InternalMonologueSource(monologue_provider=internal_monologue_carry_provider)
+        def _r81_monologue_provider() -> "Mapping[str, object] | None":
+            cell = _r81_carry_cell[0]
+            if cell is not None and cell.last_envelope is not None:
+                return cell.last_envelope
+            return internal_monologue_carry_provider()
+        _r81_monologue_source = InternalMonologueSource(
+            monologue_provider=_r81_monologue_provider
         )
+        ingress.register_source(_r81_monologue_source)
 
     # Persistence-enabled assembly: register the durable experience store readiness gate so
     # an un-initializable/unwritable store fails fast at startup rather than running
@@ -1598,6 +1707,11 @@ def assemble_runtime(
     # (the gate-signal bridge is in every assembly); cold-starts at the neutral baseline.
     drive_urgency_holder = PriorDriveUrgencyHolder()
 
+    # R81: cross-tick internal-monologue carry holder. The `09` gate-signal bridge reads it
+    # for self_continuation_signal; the InternalMonologueSource closure reads the same
+    # in-memory carry cell for re-injection. Updated by _carry_internal_monologue post-tick.
+    internal_monologue_carry_holder = PriorInternalMonologueCarryHolder()
+
     # Owner-neutral carry for the prior-tick `14` governance state (R68). The bridge reads
     # the stage's prior carry state at request-build time; the stage advances it post-tick.
     # The lambda captures `governance_stage_ref` by closure — assigned before the first tick.
@@ -1628,11 +1742,13 @@ def assemble_runtime(
                 NeuromodulatorAwareThoughtGateSignalBridge(
                     temporal_source=temporal_source,
                     drive_urgency_holder=drive_urgency_holder,
+                    internal_monologue_carry=internal_monologue_carry_holder,
                 )
                 if semantic_memory_enabled
                 else FirstVersionThoughtGateSignalBridge(
                     temporal_source=temporal_source,
                     drive_urgency_holder=drive_urgency_holder,
+                    internal_monologue_carry=internal_monologue_carry_holder,
                 )
             ),
         ),
@@ -1773,7 +1889,7 @@ def assemble_runtime(
         if stage.stage_name == "identity_governance_self_revision_integration"
     )
 
-    return RuntimeHandle(
+    handle = RuntimeHandle(
         kernel=kernel,
         ingress=ingress,
         timeline_holder=timeline_holder,
@@ -1788,6 +1904,7 @@ def assemble_runtime(
         ),
         prior_thought_recall_holder=prior_thought_recall_holder,
         drive_urgency_holder=drive_urgency_holder,
+        internal_monologue_carry_holder=internal_monologue_carry_holder,
         embed_record=_embed_text if embedding_gateway is not None else None,
         temporal_source=temporal_source,
         continuity_checkpoint=continuity_checkpoint,
@@ -1797,7 +1914,13 @@ def assemble_runtime(
         neuromodulator_stage=neuromodulator_stage_ref,
         feeling_stage=feeling_stage_ref,
         identity_governance_stage=governance_stage_ref,
+        internal_monologue_carry_provider=internal_monologue_carry_provider,
     )
+    # R81: bind the carry cell to the handle so _carry_internal_monologue can write to it
+    # on each tick. The cell is referenced by the InternalMonologueSource closure registered
+    # earlier; storing the same list object on the handle enables cross-tick carry.
+    handle._r81_carry_cell = _r81_carry_cell
+    return handle
 
 
 @dataclass

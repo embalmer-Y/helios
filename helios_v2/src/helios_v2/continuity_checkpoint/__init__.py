@@ -11,7 +11,9 @@ from .contracts import (
     SNAPSHOT_VERSION,
     CheckpointError,
     CheckpointStoreBackend,
+    InternalMonologueCarryState,
     RuntimeContinuitySnapshot,
+    _migrate_v3_to_v4,
 )
 from .engine import (
     ContinuityCheckpointStore,
@@ -25,7 +27,9 @@ __all__ = [
     "SNAPSHOT_VERSION",
     "CheckpointError",
     "CheckpointStoreBackend",
+    "InternalMonologueCarryState",
     "RuntimeContinuitySnapshot",
+    "_migrate_v3_to_v4",
     "ContinuityCheckpointStore",
     "InMemoryCheckpointBackend",
     "SqliteCheckpointBackend",

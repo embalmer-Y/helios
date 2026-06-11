@@ -2216,6 +2216,14 @@ class AutonomyRuntimeStage(RuntimeStage):
         init=False,
         repr=False,
     )
+    # R81: the prior tick's internal-monologue envelope (Mapping or None). When set, the
+    # autonomy owner emits an extra `source_kind="internal_monologue"` deferred record that
+    # scales the proactive_drive_urgency by 0.5x.
+    _internal_monologue_envelope: "object | None" = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     @property
     def stage_name(self) -> str:
@@ -2250,6 +2258,29 @@ class AutonomyRuntimeStage(RuntimeStage):
 
         self._prior_deferred_records = deferred_records
         self._prior_continuity_threads = continuity_threads
+
+    def seed_internal_monologue_envelope(
+        self,
+        envelope: "object | None",
+    ) -> None:
+        """Owner: composition (R81).
+
+        Purpose:
+            Seed the stage's prior-tick internal-monologue envelope before the first tick,
+            so a restarted runtime can resume the carry-driven proactive_drive_urgency.
+
+        Inputs:
+            `envelope` - the owner-validated prior-tick envelope (Mapping-like) or None.
+
+        Returns:
+            None.
+
+        Notes:
+            One-shot composition-time seed point. Each tick still overwrites the envelope
+            from the runtime carry cell in `seed_internal_monologue_envelope_for_tick`.
+        """
+
+        self._internal_monologue_envelope = envelope
 
     def run(self, frame: RuntimeFrame) -> AutonomyStageResult:
         """Execute autonomy against the declared upstream owner outputs."""
@@ -2311,6 +2342,7 @@ class AutonomyRuntimeStage(RuntimeStage):
             request,
             prior_deferred_records=self._prior_deferred_records,
             prior_continuity_threads=self._prior_continuity_threads,
+            internal_monologue_envelope=self._internal_monologue_envelope,
         )
         if request.source_gate_result_id != thought_gating_result.result.result_id:
             raise RuntimeStageExecutionError(

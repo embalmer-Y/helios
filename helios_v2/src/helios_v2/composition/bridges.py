@@ -81,7 +81,7 @@ from helios_v2.neuromodulation import (
 )
 from helios_v2.observability import ExecutionTimelineView
 from helios_v2.persistence import ExperienceStore, PersistedExperienceRecord, cosine_similarity
-from helios_v2.continuity_checkpoint import RuntimeContinuitySnapshot
+from helios_v2.continuity_checkpoint import InternalMonologueCarryState, RuntimeContinuitySnapshot
 from helios_v2.outward_expression_externalization import OutwardExpressionExternalizationRequest
 from helios_v2.planner_bridge import PlannerBridgeRequest
 from helios_v2.prompt_contract import EmbodiedPromptRequest
@@ -1111,6 +1111,7 @@ class ContinuityCheckpointBridge:
         tick_id,
         neuromodulator_stage_result=None,
         feeling_stage_result=None,
+        internal_monologue=None,
     ) -> RuntimeContinuitySnapshot:
         """Owner: composition.
 
@@ -1153,6 +1154,7 @@ class ContinuityCheckpointBridge:
             continuity_threads=autonomy_stage_result.result.long_horizon_state.threads,
             neuromodulator_levels=levels,
             feeling=feeling,
+            internal_monologue=internal_monologue,
         )
 
     def restore_neuromodulator_state(self, snapshot: RuntimeContinuitySnapshot):
@@ -1373,6 +1375,7 @@ class FirstVersionThoughtGateSignalBridge:
 
     temporal_source: object | None = None
     drive_urgency_holder: object | None = None
+    internal_monologue_carry: object | None = None  # R81
 
     def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
         tick_id = frame.tick_id
@@ -1387,6 +1390,7 @@ class FirstVersionThoughtGateSignalBridge:
             dmn_available=dmn_available,
             selected_stimuli=_selected_stimuli_from_appraisal(frame, tick_id),
             tick_id=tick_id,
+            self_continuation_signal=_self_continuation_signal(self.internal_monologue_carry),
         )
 
 
@@ -1422,6 +1426,7 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
     workspace_stage_name: str = "workspace_competition_and_working_state"
     temporal_source: object | None = None
     drive_urgency_holder: object | None = None
+    internal_monologue_carry: object | None = None  # R81
 
     def build_signal_snapshot(self, frame, conscious_result) -> ThoughtGateSignalSnapshot:
         from helios_v2.runtime.stages import (
@@ -1467,6 +1472,7 @@ class NeuromodulatorAwareThoughtGateSignalBridge:
             dmn_available=dmn_available,
             selected_stimuli=_selected_stimuli_from_appraisal(frame, tick_id),
             tick_id=tick_id,
+            self_continuation_signal=_self_continuation_signal(self.internal_monologue_carry),
             neuromodulatory_arousal=norepinephrine,
         )
 
@@ -1577,6 +1583,26 @@ def _drive_urgency_signal(holder: object | None) -> float:
         return _DRIVE_URGENCY_COLD_START
     return holder.current()
 
+def _self_continuation_signal(carry: object | None) -> float:
+    """Owner: composition (R81). Return the `09` gate `self_continuation_signal`.
+
+    When an `InternalMonologueCarryHolder` is wired, returns the bounded signal computed from
+    the prior tick's R79 v3 envelope projection:
+        0.5 * bool(i_want_to_think_more) + 0.5 * bool(think_more_about is non-empty)
+    This signal is non-decaying across ticks; composition's reset rule clears it after a
+    successful thought-gate fire (per design.md D1). When no holder is wired, returns 0.0.
+    Owner-neutral: the `09` owner keeps the gate weight (default 0.3).
+    """
+    if carry is None:
+        return 0.0
+    envelope = getattr(carry, "last_envelope", None)
+    if not envelope:
+        return 0.0
+    iwttm = bool(envelope.get("i_want_to_think_more", False))
+    tma = envelope.get("think_more_about", "")
+    has_tma = bool(isinstance(tma, str) and tma.strip())
+    return float(0.5 * (1.0 if iwttm else 0.0) + 0.5 * (1.0 if has_tma else 0.0))
+
 
 @dataclass
 class PriorDriveUrgencyHolder:
@@ -1610,6 +1636,39 @@ class PriorDriveUrgencyHolder:
         """Owner: composition. Return the carried prior-tick drive urgency (bounded)."""
 
         return self.urgency
+
+
+@dataclass
+class PriorInternalMonologueCarryHolder:
+    """Owner: composition (R81).
+
+    Purpose:
+        Carry the prior tick's R79 v3 prompt envelope forward into the next tick's `09`
+        gate signal projection. The closure provider on the R80 InternalMonologueSource
+        (in runtime_assembly) reads the same in-memory carry state for re-injection; this
+        holder is the read-side seam that bridges the carry into the `09` signal snapshot.
+
+    Notes:
+        Owner-neutral carry. `set_from_state` projects the `42` InternalMonologueCarryState
+        verbatim; `current` returns the raw last_envelope Mapping or None. The 09 score term
+        computation lives in `_self_continuation_signal`.
+    """
+
+    last_envelope: "Mapping[str, object] | None" = None
+
+    def set_from_state(self, state) -> None:
+        """Owner: composition. Set the carried envelope from a published R81 InternalMonologueCarryState."""
+
+        if state is None:
+            self.last_envelope = None
+            return
+        envelope = getattr(state, "last_envelope", None)
+        self.last_envelope = dict(envelope) if envelope else None
+
+    def current(self) -> "Mapping[str, object] | None":
+        """Owner: composition. Return the carried prior-tick envelope (Mapping or None)."""
+
+        return self.last_envelope
 
 
 # R63: documented cold-start fallback values for the `09` gate's `selected_stimuli` projection.
@@ -2629,6 +2688,7 @@ class FirstVersionAutonomyRequestBridge:
         prompt_result,
         outward_expression_result,
         outward_expression_externalization_result,
+        internal_monologue_envelope: "object | None" = None,  # R81
     ) -> ProactiveDriveRequest:
         tick_id = frame.tick_id
         # No-fire tick (R54): the thought path did not activate. Build the autonomy request from
@@ -2668,6 +2728,12 @@ class FirstVersionAutonomyRequestBridge:
                 temporal_pressure_summary=summaries["temporal_pressure_summary"],
                 identity_unresolved_summary=summaries["identity_unresolved_summary"],
                 outward_readiness_summary=summaries["outward_readiness_summary"],
+                internal_monologue_envelope=(
+                    dict(internal_monologue_envelope)
+                    if hasattr(internal_monologue_envelope, "__getitem__")
+                    and not isinstance(internal_monologue_envelope, str)
+                    else internal_monologue_envelope
+                ),
             )
 
         bundle = directed_retrieval_result.bundle
@@ -2706,6 +2772,12 @@ class FirstVersionAutonomyRequestBridge:
             temporal_pressure_summary=summaries["temporal_pressure_summary"],
             identity_unresolved_summary=summaries["identity_unresolved_summary"],
             outward_readiness_summary=summaries["outward_readiness_summary"],
+            internal_monologue_envelope=(
+                dict(internal_monologue_envelope)
+                if hasattr(internal_monologue_envelope, "__getitem__")
+                and not isinstance(internal_monologue_envelope, str)
+                else internal_monologue_envelope
+            ),
         )
 
 

@@ -134,6 +134,10 @@ class ProactiveDriveRequest:
     outward_readiness_summary: Mapping[str, object]
     prior_deferred_records: tuple[DeferredContinuityRecord, ...] = ()
     prior_continuity_threads: tuple["ContinuityThread", ...] = ()
+    # R81: the prior tick's internal-monologue envelope. When set, the autonomy engine
+    # emits an extra `source_kind="internal_monologue"` deferred record so the carry can
+    # affect the next tick's `proactive_drive_urgency` (0.5x multiplier).
+    internal_monologue_envelope: "Mapping[str, object] | None" = None
 
     def __post_init__(self) -> None:
         for attr_name in (
@@ -185,6 +189,9 @@ class ProactiveDriveState:
     pressure_components: Mapping[str, float]
     deferred_active: bool
     proactive_action_requested: bool
+    # R81: post-multiplier outward-drive urgency, in [0, 1]. When any carried record has
+    # source_kind="internal_monologue", the autonomy engine scales the raw outward_drive by 0.5x.
+    proactive_drive_urgency: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.state_id:
@@ -204,6 +211,10 @@ class ProactiveDriveState:
                     f"ProactiveDriveState pressure_components[{key}] must be numeric"
                 )
         object.__setattr__(self, "pressure_components", components)
+        if not (0.0 <= self.proactive_drive_urgency <= 1.0):
+            raise AutonomyError(
+                f"ProactiveDriveState.proactive_drive_urgency must be in [0, 1]; got {self.proactive_drive_urgency}"
+            )
 
 
 @dataclass(frozen=True)
@@ -217,6 +228,10 @@ class DeferredContinuityRecord:
     carry_count: int
     decayed_pressure: float
     expires_after_ticks: int | None
+    # R81: source_kind categorizes the origin of the deferred record. The R18 autonomy owner
+    # applies a multiplier of 0.5 to the proactive_drive_urgency when the carried record is
+    # internal_monologue-sourced (so internal self-talk should not override the gate weight).
+    source_kind: str = "external_stimulus"  # Literal["external_stimulus", "retrieval", "internal_monologue"]
 
     def __post_init__(self) -> None:
         if not self.record_id:
@@ -236,6 +251,11 @@ class DeferredContinuityRecord:
         if self.expires_after_ticks is not None and self.expires_after_ticks <= 0:
             raise AutonomyError(
                 "DeferredContinuityRecord expires_after_ticks must be positive when present"
+            )
+        valid_kinds = ("external_stimulus", "retrieval", "internal_monologue")
+        if self.source_kind not in valid_kinds:
+            raise AutonomyError(
+                f"DeferredContinuityRecord source_kind must be one of {valid_kinds}; got {self.source_kind!r}"
             )
 
 

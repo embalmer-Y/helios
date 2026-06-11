@@ -406,7 +406,7 @@ def test_p2_h1_subjective_continuity_across_restart(tmp_path) -> None:
     assert saved is not None
     assert saved.feeling is not None, "checkpoint should save 05 feeling state"
     assert saved.neuromodulator_levels is not None, "checkpoint should save 04 levels"
-    assert saved.snapshot_version == 3
+    assert saved.snapshot_version == 4
 
     # Session B: restore and verify.
     ckpt_b = ContinuityCheckpointStore(

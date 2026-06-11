@@ -20,7 +20,8 @@ meaning and never makes a cognitive decision.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Mapping, Protocol, runtime_checkable
+from dataclasses import replace
 
 from helios_v2.autonomy import ContinuityThread, DeferredContinuityRecord
 from helios_v2.feeling import InteroceptiveFeelingVector
@@ -32,11 +33,69 @@ from helios_v2.thought_gating import ContinuationPressureState
 # whose version does not match is rejected rather than silently migrated (R43: bumped to 2 to
 # add the `04` neuromodulator levels; R44: bumped to 3 to add the `05` feeling; no migration,
 # since no production data exists yet).
-SNAPSHOT_VERSION = 3
+SNAPSHOT_VERSION = 4  # R43: bumped to 2 to add the 04 neuromodulator levels;
+                   # R44: bumped to 3 to add the 05 feeling;
+                   # R81: bumped to 4 to add the internal_monologue carry state.
 
 
 class CheckpointError(RuntimeError):
     """Hard-stop error raised when runtime-continuity checkpoint invariants or backends fail."""
+
+
+
+
+@dataclass(frozen=True)
+class InternalMonologueCarryState:
+    """One immutable snapshot of the LLM envelope carried across ticks.
+
+    Owner: 42 continuity_checkpoint (lives in the snapshot module, not in
+    22 composition, because the envelope persists in the checkpoint file).
+
+    Construction:
+        - last_envelope is the verbatim subset of the LLM JSON envelope
+          produced by the v3 prompt path. May be None (v1 baseline) or a
+          Mapping (v3 baseline).
+        - last_tick_id is the tick_id when last_envelope was captured. None
+          if no envelope has been captured yet.
+        - i_want_to_think_more is a convenience projection of
+          last_envelope["i_want_to_think_more"] (default False).
+        - think_more_about is a convenience projection of
+          last_envelope["think_more_about"] (default "").
+
+    Failure semantics:
+        - last_envelope must be a Mapping[str, object] or None. Any other
+          type (str, int, list, etc.) raises CheckpointError.
+        - i_want_to_think_more and think_more_about are coerced from
+          last_envelope: missing key or wrong type -> False / "".
+          These coercions do NOT raise.
+        - last_tick_id must be None or a non-negative int.
+    """
+
+    last_envelope: "Mapping[str, object] | None"
+    last_tick_id: "int | None"
+    i_want_to_think_more: bool = False
+    think_more_about: str = ""
+
+    def __post_init__(self) -> None:
+        if self.last_envelope is not None and not isinstance(self.last_envelope, Mapping):
+            raise CheckpointError(
+                "InternalMonologueCarryState.last_envelope must be a Mapping or None; "
+                f"got {type(self.last_envelope).__name__}"
+            )
+        if self.last_tick_id is not None and self.last_tick_id < 0:
+            raise CheckpointError(
+                "InternalMonologueCarryState.last_tick_id must be >= 0 or None"
+            )
+        # Coerce convenience projections (no raise)
+        if self.last_envelope is not None:
+            v_iwttm = self.last_envelope.get("i_want_to_think_more", False)
+            if not isinstance(v_iwttm, bool):
+                v_iwttm = False
+            object.__setattr__(self, "i_want_to_think_more", v_iwttm)
+            v_tma = self.last_envelope.get("think_more_about", "")
+            if not isinstance(v_tma, str):
+                v_tma = ""
+            object.__setattr__(self, "think_more_about", v_tma)
 
 
 @dataclass(frozen=True)
@@ -73,6 +132,7 @@ class RuntimeContinuitySnapshot:
     continuity_threads: tuple[ContinuityThread, ...] = ()
     neuromodulator_levels: NeuromodulatorLevels | None = None
     feeling: InteroceptiveFeelingVector | None = None
+    internal_monologue: "InternalMonologueCarryState | None" = None
     snapshot_version: int = SNAPSHOT_VERSION
 
     def __post_init__(self) -> None:
@@ -164,3 +224,28 @@ class CheckpointStoreBackend(Protocol):
         Notes:
             Absence is reported as `None`, never as a fabricated empty snapshot.
         """
+
+
+def _migrate_v3_to_v4(
+    snapshot: "RuntimeContinuitySnapshot",
+) -> "RuntimeContinuitySnapshot":
+    """Migrate a v3 snapshot to v4 by setting internal_monologue=None.
+
+    Behavior:
+        - v4 input -> returns input unchanged (no-op)
+        - v3 input -> returns replace(snapshot, internal_monologue=None, snapshot_version=4)
+        - v<3 input -> raises CheckpointError (cannot retro-migrate past R43/R44)
+        - v>4 input -> raises CheckpointError (forward-incompatible)
+    """
+    if snapshot.snapshot_version == 4:
+        return snapshot
+    if snapshot.snapshot_version == 3:
+        return replace(
+            snapshot,
+            internal_monologue=None,
+            snapshot_version=4,
+        )
+    raise CheckpointError(
+        f"Cannot migrate v{snapshot.snapshot_version} snapshot to v4; "
+        "supported: v3 (migrated) or v4 (no-op)"
+    )

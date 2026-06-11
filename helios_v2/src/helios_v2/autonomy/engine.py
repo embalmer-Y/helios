@@ -242,6 +242,7 @@ class FirstVersionAutonomyPath:
         carry_count: int,
         decayed_pressure: float,
         expires_after_ticks: int | None,
+        source_kind: str = "external_stimulus",  # R81
     ) -> DeferredContinuityRecord:
         return DeferredContinuityRecord(
             record_id=f"deferred-continuity:{request_id}:{suffix}",
@@ -251,6 +252,7 @@ class FirstVersionAutonomyPath:
             carry_count=carry_count,
             decayed_pressure=round(decayed_pressure, 4),
             expires_after_ticks=expires_after_ticks,
+            source_kind=source_kind,
         )
 
     def _merge_active_records(
@@ -285,6 +287,7 @@ class FirstVersionAutonomyPath:
                     carry_count=max(record.carry_count for record in group),
                     decayed_pressure=min(1.0, sum(record.decayed_pressure for record in group)),
                     expires_after_ticks=expires_after_ticks,
+                    source_kind=first.source_kind,  # R81
                 )
             )
 
@@ -324,6 +327,7 @@ class FirstVersionAutonomyPath:
                     carry_count=record.carry_count + 1,
                     decayed_pressure=next_pressure,
                     expires_after_ticks=next_expiry,
+                    source_kind=record.source_kind,  # R81
                 )
             )
         merged_snapshot = self._merge_active_records(
@@ -483,6 +487,25 @@ class FirstVersionAutonomyPath:
         dominant_disposition = "reflect"
         activity_mode = "inward_reflective"
 
+        # R81: when the prior tick's internal-monologue envelope is present, emit an extra
+        # `source_kind="internal_monologue"` deferred record. This makes the carry visible to
+        # the multiplier logic at the ProactiveDriveState construction site (0.5x outward_drive).
+        if request.internal_monologue_envelope is not None:
+            generated_record_count += 1
+            deferred_records.append(
+                self._build_deferred_record(
+                    request_id=request.request_id,
+                    suffix="internal-monologue",
+                    continuity_key="internal_monologue_carry",
+                    origin_ref="r81:internal_monologue",
+                    carry_reason="internal_monologue_carry",
+                    carry_count=1,
+                    decayed_pressure=0.5,
+                    expires_after_ticks=4,
+                    source_kind="internal_monologue",
+                )
+            )
+
         if externalization_blocked and proactive_action_requested:
             dominant_disposition = "defer"
             activity_mode = "deferred_continuity"
@@ -543,6 +566,15 @@ class FirstVersionAutonomyPath:
         deferred_records = list(merge_snapshot.active_records)
         merged_record_count += merge_snapshot.merged_record_count
 
+        # R81: post-multiplier proactive_drive_urgency. When any carried record has
+        # source_kind="internal_monologue", scale outward_drive by 0.5x (so internal self-talk
+        # does not override external stimulus-driven drives). Clamp into [0, 1].
+        has_internal_monologue_record = any(
+            r.source_kind == "internal_monologue" for r in deferred_records
+        )
+        urgency_multiplier = 0.5 if has_internal_monologue_record else 1.0
+        proactive_drive_urgency = min(1.0, max(0.0, outward_drive * urgency_multiplier))
+
         drive_state = ProactiveDriveState(
             state_id=f"proactive-drive-state:{request.request_id}",
             dominant_disposition=dominant_disposition,
@@ -554,6 +586,8 @@ class FirstVersionAutonomyPath:
                 "identity_unresolved_pressure": identity_unresolved,
                 "combined_pressure": combined_pressure,
                 "outward_drive": outward_drive,
+                "urgency_multiplier": float(urgency_multiplier),
+                "has_internal_monologue_record": float(has_internal_monologue_record),
                 "prior_deferred_count": float(len(request.prior_deferred_records)),
                 "active_deferred_count": float(len(deferred_records)),
                 "generated_record_count": float(generated_record_count),
@@ -563,6 +597,7 @@ class FirstVersionAutonomyPath:
             },
             deferred_active=bool(deferred_records),
             proactive_action_requested=proactive_action_requested,
+            proactive_drive_urgency=proactive_drive_urgency,
         )
         long_horizon_state = self._build_long_horizon_state(
             request=request,

@@ -59,7 +59,7 @@ def test_snapshot_reuses_owner_contracts_verbatim() -> None:
     assert snapshot.continuation_state.active is True
     assert snapshot.deferred_records[0].record_id == "deferred:1"
     assert snapshot.continuity_threads[0].thread_id == "thread:1"
-    assert snapshot.snapshot_version == 3
+    assert snapshot.snapshot_version == 4
 
 
 def test_snapshot_rejects_non_positive_version() -> None:

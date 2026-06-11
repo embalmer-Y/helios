@@ -186,7 +186,7 @@ def test_snapshot_round_trips_neuromodulator_levels(tmp_path) -> None:
     loaded = store.load_latest()
     assert loaded is not None
     assert loaded.neuromodulator_levels == snapshot.neuromodulator_levels
-    assert loaded.snapshot_version == 3
+    assert loaded.snapshot_version == 4
 
 
 def test_snapshot_without_levels_round_trips_as_none() -> None:
@@ -247,7 +247,7 @@ def test_snapshot_round_trips_feeling(tmp_path) -> None:
     loaded = store.load_latest()
     assert loaded is not None
     assert loaded.feeling == snapshot.feeling
-    assert loaded.snapshot_version == 3
+    assert loaded.snapshot_version == 4
 
 
 def test_version_two_payload_is_rejected_not_migrated(tmp_path) -> None:

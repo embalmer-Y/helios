@@ -25,6 +25,7 @@ from helios_v2.thought_gating import ContinuationPressureState
 from .contracts import (
     CheckpointError,
     CheckpointStoreBackend,
+    InternalMonologueCarryState,
     RuntimeContinuitySnapshot,
     SNAPSHOT_VERSION,
 )
@@ -174,6 +175,39 @@ def _decode_thread(payload: dict[str, object]) -> ContinuityThread:
     )
 
 
+def _encode_internal_monologue(im: "InternalMonologueCarryState | None") -> "dict | None":
+    """Project an InternalMonologueCarryState into a JSON-safe dict.
+
+    None -> None (no carry state captured this tick).
+    """
+    if im is None:
+        return None
+    return {
+        "last_envelope": dict(im.last_envelope),
+        "last_tick_id": im.last_tick_id,
+        "i_want_to_think_more": im.i_want_to_think_more,
+        "think_more_about": im.think_more_about,
+    }
+
+
+def _decode_internal_monologue(payload):
+    """Reconstruct an InternalMonologueCarryState from its JSON projection.
+
+    Missing or None payload -> None. The InternalMonologueCarryState constructor
+    runs its own validation (Mapping check, tick_id >= 0 check, bool/str coercion).
+    """
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise CheckpointError(
+            "Stored snapshot internal_monologue must be a JSON object"
+        )
+    return InternalMonologueCarryState(
+        last_envelope=payload.get("last_envelope"),
+        last_tick_id=payload.get("last_tick_id"),
+    )
+
+
 def encode_snapshot(snapshot: RuntimeContinuitySnapshot) -> str:
     """Owner: durable runtime-continuity checkpoint.
 
@@ -217,6 +251,9 @@ def encode_snapshot(snapshot: RuntimeContinuitySnapshot) -> str:
                     if snapshot.feeling is not None
                     else None
                 ),
+                "internal_monologue": _encode_internal_monologue(
+                    snapshot.internal_monologue
+                ),
             },
             sort_keys=True,
         )
@@ -244,8 +281,11 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
         `CheckpointError` so a corrupt snapshot is always a hard stop on load.
 
     Notes:
-        Version is not migrated: a payload whose `snapshot_version` differs from the current one is
-        rejected rather than silently upgraded (no production data exists to migrate).
+        Version handling: a v3 payload is decoded and reconstructed with
+        `internal_monologue=None` (no v3 field); a v4 payload is decoded as-is. v>4
+        payloads are rejected (forward-incompatible); v<3 payloads are rejected (cannot
+        retro-migrate past R43/R44). This mirrors the runtime migrate path: a stored v3
+        snapshot is transparently upgraded to v4 on first read; older payloads are not.
     """
 
     try:
@@ -256,10 +296,15 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
         raise CheckpointError("Stored runtime-continuity snapshot must be a JSON object")
     try:
         snapshot_version = int(data.get("snapshot_version", -1))
-        if snapshot_version != SNAPSHOT_VERSION:
+        if snapshot_version > SNAPSHOT_VERSION:
             raise CheckpointError(
-                f"Stored runtime-continuity snapshot version {snapshot_version} does not match "
+                f"Stored runtime-continuity snapshot version {snapshot_version} is forward of "
                 f"the current version {SNAPSHOT_VERSION}; it is rejected rather than migrated"
+            )
+        if snapshot_version < 3:
+            raise CheckpointError(
+                f"Stored runtime-continuity snapshot version {snapshot_version} is pre-R43; "
+                f"only v3 (migrated to v4) and v4 (current) are supported"
             )
         continuation_payload = data["continuation_state"]
         if not isinstance(continuation_payload, dict):
@@ -285,6 +330,12 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
         )
         tick_id_value = data.get("tick_id")
         tick_id = None if tick_id_value is None else int(tick_id_value)
+        internal_monologue_payload = data.get("internal_monologue")
+        internal_monologue = (
+            _decode_internal_monologue(internal_monologue_payload)
+            if snapshot_version == SNAPSHOT_VERSION
+            else None  # v3: no internal_monologue field, default to None.
+        )
     except CheckpointError:
         raise
     except (KeyError, TypeError, ValueError) as error:
@@ -301,6 +352,7 @@ def decode_snapshot(payload: str) -> RuntimeContinuitySnapshot:
         continuity_threads=continuity_threads,
         neuromodulator_levels=neuromodulator_levels,
         feeling=feeling,
+        internal_monologue=internal_monologue,
         snapshot_version=snapshot_version,
     )
 

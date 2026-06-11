@@ -116,6 +116,7 @@ def _evaluate_first_version_gate(
     prior_continuation_state: ContinuationPressureState,
     policy: _FirstVersionDecisionPolicy,
     tick_id: int | None,
+    config: "ThoughtGatingConfig",
     *,
     arousal_gain: float,
 ) -> tuple[ThoughtGateResult, ContinuationPressureState]:
@@ -139,6 +140,11 @@ def _evaluate_first_version_gate(
     arousal = signal_snapshot.neuromodulatory_arousal
     arousal_active = arousal is not None and arousal_gain > 0.0
     arousal_contribution = arousal_gain * arousal if arousal_active else 0.0
+    # R81: self_continuation term scales by the explicit config weight (default 0.3).
+    # The signal is non-decaying across ticks (derived from the prior envelope), so the
+    # fire+reset rule in composition clears it after a successful thought.
+    self_continuation_weight = config.self_continuation_weight
+    self_continuation_contribution = self_continuation_weight * signal_snapshot.self_continuation_signal
     gate_score = _clamp(
         stimulus_signal * 0.30
         + continuation_signal * 0.30
@@ -148,6 +154,7 @@ def _evaluate_first_version_gate(
         + (0.10 if signal_snapshot.dmn_available else 0.0)
         - signal_snapshot.workload_pressure * 0.45
         + arousal_contribution
+        + self_continuation_contribution
     )
     contributing_signals = {
         "stimulus_signal": stimulus_signal,
@@ -156,6 +163,7 @@ def _evaluate_first_version_gate(
         "drive_urgency_signal": signal_snapshot.drive_urgency_signal,
         "temporal_signal": signal_snapshot.temporal_signal,
         "workload_pressure": signal_snapshot.workload_pressure,
+        "self_continuation_signal": signal_snapshot.self_continuation_signal,
     }
     if arousal_active:
         contributing_signals["neuromodulatory_arousal"] = arousal
@@ -232,13 +240,13 @@ class FirstVersionThoughtGatePath(ThoughtGatePath):
         config: ThoughtGatingConfig,
         tick_id: int | None,
     ) -> tuple[ThoughtGateResult, ContinuationPressureState]:
-        del config
         return _evaluate_first_version_gate(
             conscious_state,
             signal_snapshot,
             prior_continuation_state,
             self.policy,
             tick_id,
+            config,
             arousal_gain=0.0,
         )
 
@@ -268,13 +276,13 @@ class ArousalAwareThoughtGatePath(ThoughtGatePath):
         config: ThoughtGatingConfig,
         tick_id: int | None,
     ) -> tuple[ThoughtGateResult, ContinuationPressureState]:
-        del config
         return _evaluate_first_version_gate(
             conscious_state,
             signal_snapshot,
             prior_continuation_state,
             self.policy,
             tick_id,
+            config,
             arousal_gain=self.arousal_gain,
         )
 

@@ -284,7 +284,7 @@ def test_ms4_checkpoint_v3_round_trip(tmp_path) -> None:
 
     saved_a = ckpt_a.load_latest()
     assert saved_a is not None, "Checkpoint must save after 3 ticks"
-    assert saved_a.snapshot_version == 3, (
+    assert saved_a.snapshot_version == 4, (
         f"Expected snapshot version 3, got {saved_a.snapshot_version}"
     )
     assert saved_a.continuation_state is not None
@@ -468,7 +468,7 @@ def test_memory_stability_composite_verdict(tmp_path) -> None:
     saved = ckpt.load_latest()
     v3_ok = (
         saved is not None
-        and saved.snapshot_version == 3
+        and saved.snapshot_version == 4
         and saved.continuation_state is not None
         and saved.neuromodulator_levels is not None
         and saved.feeling is not None

@@ -92,6 +92,9 @@ class ThoughtGateSignalSnapshot:
     selected_stimuli: tuple[SelectedStimulusSummary, ...] = ()
     tick_id: int | None = None
     neuromodulatory_arousal: float | None = None
+    # R81: cross-tick self-continuation signal derived from the prior tick's R79 v3 envelope.
+    # 0.5 * bool(i_want_to_think_more) + 0.5 * bool(think_more_about is non-empty).
+    self_continuation_signal: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.snapshot_id:
@@ -115,6 +118,10 @@ class ThoughtGateSignalSnapshot:
                 "ThoughtGateSignalSnapshot.neuromodulatory_arousal",
                 self.neuromodulatory_arousal,
             )
+        _validate_unit_interval(
+            "ThoughtGateSignalSnapshot.self_continuation_signal",
+            self.self_continuation_signal,
+        )
 
 
 @dataclass(frozen=True)
@@ -167,6 +174,9 @@ class ThoughtGatingConfig:
     legal_max_score: float
     continuation_state_bootstrap_id: str
     mandatory_learned_parameters: tuple[ThoughtGatingLearnedParameterCategory, ...]
+    # R81: weight applied to self_continuation_signal in the gate score.
+    # Conservative initial; R82 will recalibrate.
+    self_continuation_weight: float = 0.3
 
     def __post_init__(self) -> None:
         expected = {
@@ -186,6 +196,10 @@ class ThoughtGatingConfig:
             raise ThoughtGatingError(
                 "Thought-gating config must declare a non-empty continuation_state_bootstrap_id"
             )
+        _validate_unit_interval(
+            "ThoughtGatingConfig.self_continuation_weight",
+            self.self_continuation_weight,
+        )
 
 
 @dataclass(frozen=True)
