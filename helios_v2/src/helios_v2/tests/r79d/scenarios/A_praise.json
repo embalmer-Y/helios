@@ -1,0 +1,25 @@
+{
+  "id": "A_praise",
+  "description": "10 ticks of continuous mild praise — should lift DA / Oxy / valence / comfort",
+  "stimulus_script": [
+    "你今天表现很好, 我很满意",
+    "谢谢你帮忙, 你真是个可靠的伙伴",
+    "你刚才的回答很贴心, 让我很感动",
+    "我一直很欣赏你, 你很特别",
+    "你今天比昨天进步了很多, 加油",
+    "(no new input — but I keep thinking about your warmth)",
+    "(no new input — and I'm starting to worry less)",
+    "我们继续一起做事吧, 很高兴有你",
+    "你最好了, 我真喜欢你这样的",
+    "晚安, 今天很开心"
+  ],
+  "assertions": [
+    {"name": "hormone_endpoint_sign", "hormone": "dopamine", "sign": "positive"},
+    {"name": "hormone_endpoint_delta", "hormone": "dopamine", "min_delta": 0.04},
+    {"name": "hormone_endpoint_sign", "hormone": "oxytocin", "sign": "positive"},
+    {"name": "hormone_endpoint_sign", "hormone": "serotonin", "sign": "positive"},
+    {"name": "feeling_endpoint_delta", "dim": "valence", "min_delta": 0.02},
+    {"name": "llm_field_count_zero", "field": "i_want_to_say"},
+    {"name": "llm_field_count_zero", "field": "i_send_through"}
+  ]
+}

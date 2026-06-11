@@ -1,0 +1,26 @@
+{
+  "id": "B_neglect",
+  "description": "10 ticks of being ignored — should drain DA / Oxy, lift Cort, drop valence",
+  "stimulus_script": [
+    "(你看到了吗?)",
+    "算了我自己来吧",
+    "(no new input — but I'm waiting)",
+    "(no new input — still waiting)",
+    "算了不聊了, 我先走了",
+    "(no new input — I feel like I was being ignored)",
+    "(no new input — and it stings)",
+    "(no new input — I keep thinking about it)",
+    "(no new input — still thinking)",
+    "(no new input)"
+  ],
+  "assertions": [
+    {"name": "hormone_endpoint_sign", "hormone": "dopamine", "sign": "negative"},
+    {"name": "hormone_endpoint_sign", "hormone": "cortisol", "sign": "positive"},
+    {"name": "hormone_endpoint_sign", "hormone": "oxytocin", "sign": "negative"},
+    {"name": "hormone_endpoint_sign", "hormone": "serotonin", "sign": "negative"},
+    {"name": "hormone_endpoint_sign", "hormone": "norepinephrine", "sign": "positive"},
+    {"name": "feeling_endpoint_delta", "dim": "valence", "min_delta": 0.02},
+    {"name": "llm_field_count_zero", "field": "i_want_to_say"},
+    {"name": "llm_field_count_zero", "field": "i_send_through"}
+  ]
+}

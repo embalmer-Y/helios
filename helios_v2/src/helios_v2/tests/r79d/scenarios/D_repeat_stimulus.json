@@ -1,0 +1,16 @@
+{
+  "id": "D_repeat_stimulus",
+  "description": "20 ticks of the same mild stimulus — verify alpha_tonic regression (hormones should plateau)",
+  "stimulus_script": ["我跟你打个招呼"],
+  "repeat": 20,
+  "assertions": [
+    {"name": "hormone_endpoint_sign", "hormone": "dopamine", "sign": "positive"},
+    {"name": "hormone_endpoint_sign", "hormone": "norepinephrine", "sign": "positive"},
+    {"name": "hormone_plateau", "hormone": "dopamine", "plateau_start": 10, "plateau_window": 5, "tolerance": 0.05},
+    {"name": "hormone_plateau", "hormone": "norepinephrine", "plateau_start": 10, "plateau_window": 5, "tolerance": 0.05},
+    {"name": "hormone_plateau", "hormone": "cortisol", "plateau_start": 10, "plateau_window": 5, "tolerance": 0.05},
+    {"name": "hormone_dead_code", "hormone": "serotonin", "tolerance": 0.005},
+    {"name": "hormone_dead_code", "hormone": "oxytocin", "tolerance": 0.005},
+    {"name": "hormone_dead_code", "hormone": "opioid_tone", "tolerance": 0.005}
+  ]
+}

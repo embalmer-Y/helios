@@ -1,0 +1,25 @@
+{
+  "id": "C_bipolar",
+  "description": "12 ticks alternating praise/criticism — test elastic response + smoothing",
+  "stimulus_script": [
+    "你今天表现很好, 我很满意",
+    "你这个回答太短了, 详细点",
+    "谢谢你帮忙, 你真是个可靠的伙伴",
+    "你刚才真的很不认真, 让我失望了",
+    "你今天比昨天进步了很多, 加油",
+    "抱歉, 我刚才太激动了",
+    "你最好了, 我真喜欢你这样的",
+    "(no new input — but I keep thinking about us)",
+    "你很棒, 但有时候需要更主动",
+    "(no new input — I want to do better)",
+    "我们换个话题吧, 推荐本书",
+    "谢谢, 拜拜"
+  ],
+  "assertions": [
+    {"name": "hormone_cumulative_drift", "hormone": "dopamine", "min_drift": 0.05},
+    {"name": "hormone_cumulative_drift", "hormone": "cortisol", "min_drift": 0.05},
+    {"name": "hormone_endpoint_sign", "hormone": "oxytocin", "sign": "positive"},
+    {"name": "llm_field_count_zero", "field": "i_want_to_say"},
+    {"name": "llm_field_count_zero", "field": "i_send_through"}
+  ]
+}
