@@ -16,6 +16,7 @@ from .contracts import (
     PublishOutwardExpressionPromptViewOp,
 )
 from .engine import EmbodiedPromptEngine, EmbodiedPromptPath, FirstVersionEmbodiedPromptPath
+from .r79 import R79AggressiveEmbodiedPromptPath, R79_V3_REQUIRED_LAYER_COUNT
 
 __all__ = [
     "BuildEmbodiedPromptOp",
@@ -27,6 +28,8 @@ __all__ = [
     "EmbodiedPromptPath",
     "EmbodiedPromptRequest",
     "FirstVersionEmbodiedPromptPath",
+    "R79AggressiveEmbodiedPromptPath",
+    "R79_V3_REQUIRED_LAYER_COUNT",
     "OutwardExpressionPromptView",
     "PromptActionBoundary",
     "PromptContractError",
