@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R82 (17-dim BehaviorDriftDimension + AggressiveRadicalDriftEvaluator P5 launch gate + R79-D CLI --with-drift-report; see §3.8.3). Test baseline: 947 passed (922 R81 baseline + 25 R82 new + 0 regression; R21 ad-hoc logging guard green; composition owner-boundary guard green).
+> Status: living owner reference. Last synced: R83 (10-minute end-to-end preflight + 6-axis Turing-style evaluation harness; see §3.8.4). Test baseline: 979 passed (947 R82 baseline + 32 R83 new + 0 regression; R21 ad-hoc logging guard green; composition owner-boundary guard green).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -295,6 +295,17 @@ Not cognitive owners. They provide substrate the cognitive chain depends on.
 - P5 launch gate: `is_p5_launch_gate_open(overall_drift_score)` = `score >= 0.02` (default conservative threshold). The gate consumes the R79-D JSONL and is the first read-only consumer of the long-form `run_experiment` trail.
 - Owner boundary: this is an `17 evaluation` owner addition. No other owner code is modified. The evaluator is a pure aggregator — no LLM calls, no runtime mutation, no I/O outside the JSONL file.
 - Requirement package: `docs/requirements/82-r82-behavior-drift-dimension-and-evaluator/`. Code: `src/helios_v2/evaluation/r82_drift.py` + `BehaviorDriftDimension` Literal export in `src/helios_v2/evaluation/contracts.py`. Tests: `tests/test_r82_drift_evaluator.py` (23) + `tests/test_r82_drift_integration.py` (2).
+### 3.8.4 Long-Running Preflight and Turing-Style Persona Evaluation — R83 (`helios_v2.tests.r83`)
+
+- Completeness: `baseline_implementation` (R83 delivered; final acceptance gate of the R79 plan; **does not create a new owner** — sits in `src/helios_v2/tests/r83/` as a sibling of `tests/r79d/`).
+- 6 axes: A1 `linguistic_naturalness` (LLM-judge, fail-soft) / A2 `bio_responsiveness` (algorithmic, 6 expected_response family rules) / A3 `memory_fidelity` (stub: P5 unblocker pending, returns 0.5 with `not-implemented` reason) / A4 `agency_locking` (LLM-judge) / A5 `cross_tick_continuity` (R82 drift evaluator → `0.5 + min(overall_drift * 4.0, 0.5)`) / A6 `stimulus_response_coherence` (LLM-judge).
+- 40-stimulus catalog: 8 hand-written Chinese state blocks × 5 variants each (`praise` / `neglect` / `criticism` / `comfort` / `challenge` / `surprise` / `conflict` / `contrast`); catalog is reproducible (deterministic JSON).
+- LongRunner: consumes R79-D `ScriptedCliSource` + `NoopLlmGateway` / `RealLlmGateway`; runtime assembled via `assemble_runtime(deterministic_thought=False, gateway=gateway)`; per-block `i_want_to_say` extracted from `last_envelope` (embodied_prompt_runtime / internal_monologue_runtime); JSONL trail written to `output_dir/r83_longrun.jsonl`. Wall-clock deadline check before each tick (so partial runs survive).
+- JudgeProbe: fail-soft; parse failure ⇒ 0.5/0.5/0.5 fallback with `judge-unavailable` reasoning; empty samples ⇒ `no-samples` fallback.
+- Verdict: `human-like` iff `mean_score >= 0.6 AND min_score >= 0.4`; else `needs-recalibration`; `recalibration_targets` lists axes with score < 0.6.
+- ReportBuilder: writes `r83_report.md` with TL;DR + axis scores + per-block detail + bio-chemistry deltas + recalibration targets.
+- CLI: `python -m helios_v2.tests.r83 [--duration MINUTES=1.0] [--noop] [--no-judge] [--output-dir DIR] [--run-id ID]`.
+- Requirement package: `docs/requirements/83-r83-long-running-preflight-and-turing-style-evaluation/`. Code: `src/helios_v2/tests/r83/{__init__,__main__,_io,long_runner,judge,memory_probe,report_builder,verdict}.py` + `scenarios/{__init__.py, r83_states.json}`. Tests: `tests/test_r83_smoke.py` (32).
 
 
 ### 3.9 Temporal Pacing and DMN Source — `helios_v2.temporal`

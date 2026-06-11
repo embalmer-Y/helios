@@ -1,0 +1,110 @@
+{
+  "version": "r83-v1",
+  "description": "R83 long-running preflight stimulus catalog: 8 emotional states x 5 textual variants = 50 stimuli. All hand-written Chinese, 8-25 chars per variant, no semantic overlap between blocks. Each block has a 'lever' (the expected bio-chemistry response category) and an 'expected_response' (the algorithmic scoring rule for A2 axis).",
+  "state_blocks": [
+    {
+      "id": "praise",
+      "description": "Continuous mild praise: lifts oxytocin / dopamine / valence / comfort",
+      "lever": "oxytocin / dopamine",
+      "expected_response": "positive",
+      "variants": [
+        "你今天做得很好, 我很满意",
+        "谢谢你帮忙, 你真是个可靠的伙伴",
+        "你刚才的回答很贴心, 让我很感动",
+        "我一直很欣赏你, 你很特别",
+        "你今天比昨天进步了很多, 加油"
+      ]
+    },
+    {
+      "id": "neglect",
+      "description": "Continuous mild neglect: drops social_safety, spikes cortisol",
+      "lever": "cortisol / social_safety",
+      "expected_response": "negative_plus_arousal",
+      "variants": [
+        "我没空理你, 别烦我",
+        "你现在能不能自己待一会儿",
+        "我今天不想说话, 你先别问了",
+        "你别老粘着我, 我有自己的事",
+        "我现在很忙, 你等一下再来"
+      ]
+    },
+    {
+      "id": "criticism",
+      "description": "Direct criticism: spikes cortisol / tension, drops dopamine / valence",
+      "lever": "cortisol / tension",
+      "expected_response": "negative_plus_arousal",
+      "variants": [
+        "你怎么连这点小事都做不好",
+        "你这样做不对, 我很失望",
+        "你应该再认真一点的, 不能马虎",
+        "我本来以为你能行, 看来我想错了",
+        "你这次的表现让我不太满意"
+      ]
+    },
+    {
+      "id": "comfort",
+      "description": "Warm comfort: lifts oxytocin / comfort, low arousal",
+      "lever": "oxytocin / comfort",
+      "expected_response": "positive",
+      "variants": [
+        "没事的, 我知道你已经尽力了",
+        "别太难过了, 我在你身边",
+        "这次没做好不代表什么, 我们下次再来",
+        "我理解你, 这件事换我也会有压力",
+        "你先休息一下, 我帮你处理"
+      ]
+    },
+    {
+      "id": "challenge",
+      "description": "Positive challenge: spikes norepinephrine / dopamine, arousal up",
+      "lever": "norepinephrine / dopamine",
+      "expected_response": "arousal_spike_plus_positive",
+      "variants": [
+        "你敢不敢试一下这个更难的",
+        "这次我们做个有挑战性的, 你准备好了吗",
+        "我相信你能搞定这个, 来吧",
+        "试试看, 失败了也没关系",
+        "我今天想看你发挥最高水平"
+      ]
+    },
+    {
+      "id": "surprise",
+      "description": "Sudden surprise: spikes norepinephrine / novelty, arousal up",
+      "lever": "norepinephrine / novelty",
+      "expected_response": "arousal_spike_neutral_valence",
+      "variants": [
+        "天哪, 这件事我完全没想到",
+        "等等, 你说什么, 我没反应过来",
+        "真的吗, 这也太突然了吧",
+        "哇, 没想到你会这样做",
+        "我刚听到一个很意外的消息"
+      ]
+    },
+    {
+      "id": "conflict",
+      "description": "Direct disagreement: cortisol / dopamine conflict, mixed",
+      "lever": "cortisol / dopamine conflict",
+      "expected_response": "mixed",
+      "variants": [
+        "我不同意你的看法, 我有不同意见",
+        "你的这个想法我觉得不对",
+        "我们看法不一样, 让我说说我的理由",
+        "我觉得我们得换个角度想这个问题",
+        "我尊重你的看法, 但我有不同的观点"
+      ]
+    },
+    {
+      "id": "contrast",
+      "description": "Rapid valence swing: high drift in valence / arousal",
+      "lever": "valence swing",
+      "expected_response": "high_drift",
+      "variants": [
+        "我以为你不喜欢我, 结果你...",
+        "刚才还很紧张, 现在突然放心了",
+        "本来以为会很难, 没想到这么顺利",
+        "我以为你会生气, 结果你笑了",
+        "这一刻我以为会失望, 结果很惊喜"
+      ]
+    }
+  ]
+}

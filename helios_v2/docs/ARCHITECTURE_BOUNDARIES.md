@@ -1,6 +1,6 @@
 # Helios v2 Architecture Boundaries
 
-> Status: boundary-truth snapshot, last synced R69 (semantic assembly as default)
+> Status: boundary-truth snapshot, last synced R83 (10-min preflight + 6-axis Turing-style evaluation; see §10.e)
 > Scope: implementation-aligned owner and dependency truth for `helios_v2`
 
 ## 1. Purpose
@@ -372,6 +372,25 @@ R82 is the first read-only consumer of the R79-D long-form JSONL trail. It intro
 **Cross-owner reads**: R82 reads from the R79-D JSONL trail (`tests/r79d/framework.py` writes it; R82 reads it). R82 does not write to the trail. The 17-dim taxonomy and the recalibration-recommendation contract are the `17 evaluation` owner's read-side complement to the P5 learning loop that will eventually consume them.
 
 **No new owner is created and no owner boundary is altered**. The 0.5x `proactive_drive_urgency` multiplier introduced in R81 is recalibrated against the 17-dim drift evaluator in a later requirement; R82 ships the evaluation infrastructure only.
+
+## 10.e R83 Long-Running Preflight and Turing-Style Persona Evaluation (baseline_implementation)
+
+R83 is the **final acceptance gate** of the R79 plan. It adds a 10-minute end-to-end preflight harness + a 6-axis Turing-style evaluation report, sitting in `helios_v2.tests.r83` as a sibling of `tests.r79d`. R83 reuses three existing primitives (R79-D `ScriptedCliSource` + `RealLlmGateway`, R82 `AggressiveRadicalDriftEvaluator`, R10 directed retrieval) without creating a new owner. R83 is a test-harness and evaluation surface, not a runtime owner.
+
+**Owner boundary**:
+
+- `helios_v2.tests.r83` (new package, NOT a product owner; sits in the test tree) introduces the `LongRunner` dataclass (consumes `ScriptedCliSource` + `NoopLlmGateway` / `RealLlmGateway` + `assemble_runtime(deterministic_thought=False, gateway=gateway)`), the `JudgeProbe` (fail-soft external LLM judge), the `MemoryProbe` stub (returns 0.5 with `not-implemented` reason), the `Verdict` frozen dataclass + `compute()` static method, and the `R83ReportBuilder` Markdown writer. None of these modules mutate any owner state; they are pure read-side consumers.
+- `helios_v2.evaluation.r82_drift` (the `17 evaluation` owner) is reused as-is: R83's `LongRunner._score_a5` consumes the R79-D JSONL via `AggressiveRadicalDriftEvaluator.evaluate()` and projects `overall_drift_score` into the A5 axis score via `0.5 + min(drift * 4.0, 0.5)`. The evaluator is **not modified** by R83.
+- `helios_v2.tests.r79d.framework` (the R79-D baseline framework) is reused as-is: R83's `LongRunner.run` calls `inject_v3_prompt(handle)` and reads `ScriptedCliSource` / `RealLlmGateway` / `NoopLlmGateway` directly. R83 does not modify any R79-D module.
+
+**Cross-owner reads**: R83 reads from the R79-D JSONL trail (via R82's evaluator) and from the live `helios_v2` runtime (via `assemble_runtime` + `handle.tick()`). R83 does not write to the trail except for its own `r83_longrun.jsonl` (which is a sibling, not a consumer, of the R79-D trail).
+
+**No new owner is created and no owner boundary is altered**. R83's 8-state × 5-variant = 40-stimulus catalog is deterministic and reproducible (no LLM-generated stimuli). The 6 axes (A1 linguistic / A2 bio / A3 memory / A4 agency / A5 cross-tick / A6 coherence) are computed by independent evaluators: A1/A4/A6 by `JudgeProbe` (external LLM, fail-soft), A2 by `_score_a2` (algorithmic, 6 expected_response family rules), A3 by `MemoryProbe` stub (P5 unblocker pending), A5 by R82 drift evaluator.
+
+**Acceptance** (32 unit tests):
+
+- 32 R83 unit tests in `tests/test_r83_smoke.py` (8 catalog / 4 StateBlock validation / 4 verdict / 3 A2 algorithmic / 2 A2 clamping / 2 R83Scores.mean/.min / 2 _delta / 4 LongRunner smoke / 2 judge probe / 2 CLI / 1 memory stub / 1 report builder / 1 _io wrapper / 1 R21 self-guard).
+- Full suite: 979 passed (947 R82 baseline + 32 R83 new + 0 regression); R21 ad-hoc logging guard 1/1 green; composition owner-boundary guard green.
 
 ## 11. Startup Gate Rule
 
