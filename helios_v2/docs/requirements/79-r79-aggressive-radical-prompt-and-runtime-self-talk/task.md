@@ -25,29 +25,29 @@ package.
 
 ## Sub-task T2: R79-A — aggressive-radical-no-theater prompt path
 
-- [x] Create `src/helios_v2/prompt_contract/r79.py`
-- [x] Implement `R79AggressiveEmbodiedPromptPath` with 6-layer contract builder
+- [x] ~~Create `src/helios_v2/prompt_contract/r79.py`~~ — REMOVED in rename; v3 path is now `AggressiveRadicalEmbodiedPromptPath` inside `src/helios_v2/prompt_contract/engine.py` (follows the owner convention of "all paths live in engine.py")
+- [x] Implement `AggressiveRadicalEmbodiedPromptPath` with 6-layer contract builder
 - [x] Implement 11-field natural-language JSON schema
 - [x] Implement 7 hard-rule cross-field invariants
-- [x] Fail-fast on `prompt_bootstrap_id != "R79-aggressive-radical-v3"`
+- [x] Fail-fast on `prompt_bootstrap_id != "embodied-prompt-bootstrap:v3-aggressive-radical"`
 - [x] Wire export in `prompt_contract/__init__.py`
-- [x] Write `tests/test_r79a_prompt_contract.py` with 11 unit tests
+- [x] Write `tests/test_aggressive_radical_prompt_path.py` with 11 unit tests
 - [x] Run full suite, confirm 842 passed (831 baseline + 11 R79-A)
 - [x] Confirm R21 ad-hoc logging guard green
 - [x] Confirm composition owner-boundary guard green
-- [x] Commit `5fcc80a` "R79-A: R79AggressiveEmbodiedPromptPath + 11 unit tests (842 passed)"
+- [x] Commit `5fcc80a` "R79-A: AggressiveRadicalEmbodiedPromptPath + 11 unit tests (842 passed)"
 
 ## Sub-task T3: R79-B — channel catalog runtime injection + LLM channel arbitration
 
 - [ ] Create `src/helios_v2/composition/profile.py` (or extend existing
-      profile module) with `R79PromptProfile` capability bundle
+      profile module) with `AggressiveRadicalPromptProfile` capability bundle
 - [ ] Extend `ChannelSubsystem.channel_state_snapshot()` to return
       `frozenset[ChannelState]`
-- [ ] Add `R79RequestBuilder` to `src/helios_v2/llm_gateway/` (opt-in
+- [ ] Add `AggressiveRadicalRequestBuilder` to `src/helios_v2/llm_gateway/` (opt-in
       `LlmRequest` builder for the v3 path)
-- [ ] Add `R79ChannelArbitrationPostProcessor` to
+- [ ] Add `AggressiveRadicalChannelArbitrationPostProcessor` to
       `src/helios_v2/composition/bridges.py` (owner-neutral glue)
-- [ ] Confirm `assemble_runtime(profile=R79PromptProfile(...))` wires the
+- [ ] Confirm `assemble_runtime(profile=AggressiveRadicalPromptProfile(...))` wires the
       v3 path end-to-end
 - [ ] Write `tests/test_r79b_channel_arbitration.py` with at least 6
       cases (ready / not-ready / partial / fallback / no-op / boundary)
@@ -144,7 +144,7 @@ package.
 - [ ] Create `src/helios_v2/evaluation/r79_drift.py` with
       `BehaviorDriftDimension` enum (4 families × {1, 1, 4, 5} dimensions
       = 17 dims)
-- [ ] Implement `R79DriftEvaluator` consuming R79-D JSONL output
+- [ ] Implement `AggressiveRadicalDriftEvaluator` consuming R79-D JSONL output
 - [ ] Wire into the P5 launch gate: no P5 learning loop can mutate `04`
       sensitivities until the drift evaluator is green
 - [ ] Write `tests/test_r82_drift_evaluator.py` with at least 17 cases
@@ -159,12 +159,12 @@ package.
 
 ### T9.1 `docs/requirements/index.md` — add R79 row
 
-- [x] Add R79 row: `| 79 | Aggressive-Radical Persona No-Theater | baseline_implementation | 16, 22, 25, 30, 04, 02, 03, 09, 42, 17 | R79-A delivered (R79AggressiveEmbodiedPromptPath + 11 unit tests); R79-D delivered (4-scenario baseline framework + 52-tick run); R79-B / R79-C / R80 / R81 / R82 pending |`
+- [x] Add R79 row: `| 79 | Aggressive-Radical Persona No-Theater | baseline_implementation | 16, 22, 25, 30, 04, 02, 03, 09, 42, 17 | R79-A delivered (AggressiveRadicalEmbodiedPromptPath + 11 unit tests); R79-D delivered (4-scenario baseline framework + 52-tick run); R79-B / R79-C / R80 / R81 / R82 pending |`
 
 ### T9.2 `docs/PROGRESS_FLOW.en.md` / `PROGRESS_FLOW.zh-CN.md` — top "最近同步"
 
 - [x] Update `PROGRESS_FLOW.zh-CN.md` "最近同步" from R78 → R79-A
-      (R79AggressiveEmbodiedPromptPath 落代码, 11 单元测试, 842 passed 基线)
+      (AggressiveRadicalEmbodiedPromptPath 落代码, 11 单元测试, 842 passed 基线)
 - [x] Update `PROGRESS_FLOW.en.md` "Last sync" same content in English
 
 ### T9.3 `docs/OWNER_GUIDE.en.md` / `OWNER_GUIDE.zh-CN.md` — top + §2.11
@@ -172,9 +172,9 @@ package.
 - [x] Update `OWNER_GUIDE.zh-CN.md` top "最近同步" from R69 → R79-A
 - [x] Update `OWNER_GUIDE.en.md` top "Last synced" same content in English
 - [x] Add `16` prompt contract §2.11 entry for R79:
-      `R79AggressiveEmbodiedPromptPath` 是 v3 激进-激进-反戏剧化
+      `AggressiveRadicalEmbodiedPromptPath` 是 v3 激进-激进-反戏剧化
       prompt path，与 `FirstVersionEmbodiedPromptPath`（v1）并列存在，
-      通过 `prompt_path_mode="r79_aggressive_radical_v3"` 选择。
+      通过 `prompt_path_mode="aggressive-radical-v3"` 选择。
 
 ### T9.4 `docs/ARCHITECTURE_BOUNDARIES.md` — §8 migration-state
 
@@ -195,7 +195,7 @@ package.
 |---|---|---|---|
 | T1 R79 docs | done | — | this change set |
 | T2 R79-A | done | — | commit `5fcc80a` |
-| T3 R79-B | pending | next | needs `R79PromptProfile` + arbitration bridge |
+| T3 R79-B | pending | next | needs `AggressiveRadicalPromptProfile` + arbitration bridge |
 | T4 R79-C | pending | after R79-B | needs 3 new updaters + corroborator |
 | T5 R79-D | done | — | commits `3827632` + `9597046` |
 | T6 R80 | pending | after R79-C | needs `internal_monologue` source + estimator |

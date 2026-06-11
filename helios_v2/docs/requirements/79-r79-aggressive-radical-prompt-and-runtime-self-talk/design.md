@@ -11,13 +11,13 @@ owner package. There is no rewrite.
 ```
         v1 baseline (R70/R78)                          R79 stack
         ─────────────────────                          ─────────
-16  prompt_contract   ─► FirstVersionEmbodied  ──────►  + R79AggressiveEmbodied
+16  prompt_contract   ─► FirstVersionEmbodied  ──────►  + AggressiveRadicalEmbodied
     (default)              PromptPath                    PromptPath (opt-in)
     ───────────────────────────────────────────────   ──────────────────────
-22  composition        ─► assemble_runtime     ──────►  + R79PromptProfile
+22  composition        ─► assemble_runtime     ──────►  + AggressiveRadicalPromptProfile
     (default)              (v1)                          (opt-in capability bundle)
     ───────────────────────────────────────────────   ──────────────────────
-25  llm_gateway        ─► OpenAICompatible      ──────►  + R79RequestBuilder
+25  llm_gateway        ─► OpenAICompatible      ──────►  + AggressiveRadicalRequestBuilder
     (default)              (v1)                          (opt-in)
     ───────────────────────────────────────────────   ──────────────────────
 30  channel_driver     ─► ChannelDriver        ──────►  + ready_channels exposed
@@ -39,7 +39,7 @@ owner package. There is no rewrite.
     (default)                                        (rumination carry)
     ───────────────────────────────────────────────   ──────────────────────
 17  evaluation         ─► v1 dimensions        ──────►  + 17-dim BehaviorDriftDimension
-    (default)                                        + R79DriftEvaluator
+    (default)                                        + AggressiveRadicalDriftEvaluator
     ───────────────────────────────────────────────   ──────────────────────
 21  observability      (no change; reads new state)    (no change)
 R21  ad-hoc-logging-guard  (no change; _io wrapper)    (no change)
@@ -53,7 +53,7 @@ tracked as future work in the same requirement package.
 
 ### 2.1 The 6-layer `EmbodiedPromptContract`
 
-`R79AggressiveEmbodiedPromptPath` builds a 6-layer contract in fixed order
+`AggressiveRadicalEmbodiedPromptPath` builds a 6-layer contract in fixed order
 (earlier layers are read first by the LLM, so order matters):
 
 | # | Layer name         | Content                                                           | Source field                         |
@@ -133,25 +133,25 @@ framework's `i_want_to_say_freq` / `i_send_through_freq` /
 
 ## 3. R79-B: channel catalog runtime injection
 
-### 3.1 The `R79PromptProfile` capability bundle
+### 3.1 The `AggressiveRadicalPromptProfile` capability bundle
 
-`composition.profile.R79PromptProfile` is a frozen dataclass with 2 fields:
+`composition.profile.AggressiveRadicalPromptProfile` is a frozen dataclass with 2 fields:
 
 ```python
 @dataclass(frozen=True)
-class R79PromptProfile:
-    prompt_path_mode: Literal["r79_aggressive_radical_v3"] = "r79_aggressive_radical_v3"
+class AggressiveRadicalPromptProfile:
+    prompt_path_mode: Literal["aggressive-radical-v3"] = "aggressive-radical-v3"
     ready_channels: tuple[str, ...] = ()
 ```
 
 It is consumed by `assemble_runtime` via the existing capability-bundle
-mechanism (R50). The default is `prompt_path_mode="r79_aggressive_radical_v3"`
+mechanism (R50). The default is `prompt_path_mode="aggressive-radical-v3"`
 and `ready_channels=()` (i.e., no channels are ready until the channel driver
 subsystem is asked).
 
-### 3.2 The `R79ChannelArbitrationPostProcessor` bridge
+### 3.2 The `AggressiveRadicalChannelArbitrationPostProcessor` bridge
 
-`composition.bridges.R79ChannelArbitrationPostProcessor` consumes the LLM
+`composition.bridges.AggressiveRadicalChannelArbitrationPostProcessor` consumes the LLM
 JSON envelope after it returns and dispatches to the correct `ChannelDriver`
 if and only if the chosen channel is in the `ready_channels` snapshot.
 
@@ -365,7 +365,7 @@ forbid `<salience>_to_<channel>` sensitivity strategies in composition glue
 
 ## 11. Migration and rollback
 
-- **Rollout**: `R79PromptProfile(prompt_path_mode="r79_aggressive_radical_v3")`
+- **Rollout**: `AggressiveRadicalPromptProfile(prompt_path_mode="aggressive-radical-v3")`
   in the runtime profile. No code change required.
 - **Rollback**: flip the flag back to `v1_first_version`. The v3 path is never
   invoked. v1 contract is byte-for-byte unchanged.

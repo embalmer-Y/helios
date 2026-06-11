@@ -74,16 +74,16 @@ aggressive-radical-no-theater prompt path that:
    behavior-drift metrics, to measure P5 learning progress.
 
 The v1 path remains as a baseline (`FirstVersionEmbodiedPromptPath`); R79 adds a
-sibling v3 path (`R79AggressiveEmbodiedPromptPath`) and never modifies v1 in place.
+sibling v3 path (`AggressiveRadicalEmbodiedPromptPath`) and never modifies v1 in place.
 The change is backwards-compatible: default assembly still uses v1 unless the
-runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
+runtime profile opts in to `prompt_path_mode="aggressive-radical-v3"`.
 
 ## 3. Functional Requirements
 
 ### 3.1 R79-A: aggressive-radical-no-theater embodied prompt path (delivered)
 
 1. The `16` `prompt_contract` owner gains a new owner module
-   `R79AggressiveEmbodiedPromptPath` (sibling to `FirstVersionEmbodiedPromptPath`).
+   `AggressiveRadicalEmbodiedPromptPath` (sibling to `FirstVersionEmbodiedPromptPath`).
 2. The new path implements the existing `EmbodiedPromptPath` Protocol and is
    wired into the existing `EmbodiedPromptEngine` via composition opt-in.
 3. The new path emits a 6-layer `EmbodiedPromptContract`:
@@ -106,7 +106,7 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
    `i_send_through => i_will_send_it && i_send_through in ready_channels`,
    `remember_because => remember_this`, `think_more_about => i_want_to_think_more`.
 7. The new path requires `EmbodiedPromptConfig.prompt_bootstrap_id ==
-   "R79-aggressive-radical-v3"`; a different bootstrap id is a hard-stop
+   "embodied-prompt-bootstrap:v3-aggressive-radical"`; a different bootstrap id is a hard-stop
    `PromptContractError`.
 8. The action boundary MUST distinguish `thought` vs `outward_expression` consumers
    (mirroring v1 boundary rules).
@@ -116,13 +116,13 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
 ### 3.2 R79-B: channel catalog runtime injection + LLM channel arbitration
 
 1. The `22` composition root owner gains an opt-in capability bundle
-   `R79PromptProfile(prompt_path_mode="r79_aggressive_radical_v3", ready_channels=...)`.
-2. The `25` LLM gateway owner adds the `R79AggressiveEmbodiedPromptPath` as a
+   `AggressiveRadicalPromptProfile(prompt_path_mode="aggressive-radical-v3", ready_channels=...)`.
+2. The `25` LLM gateway owner adds the `AggressiveRadicalEmbodiedPromptPath` as a
    registered `LlmRequest` builder when the profile is active.
 3. The `30` channel driver subsystem exposes its per-driver `ChannelStateSnapshot`
    to the prompt-contract builder, so `ready_channels` is computed from real
    per-driver availability (replacing the v1 hardcoded shim).
-4. A new post-processor (`R79ChannelArbitrationPostProcessor`) interprets the
+4. A new post-processor (`AggressiveRadicalChannelArbitrationPostProcessor`) interprets the
    LLM JSON's `i_will_send_it` + `i_send_through` + `act_type` triple and
    dispatches to the appropriate `ChannelDriver` if and only if the chosen
    channel is in the `ready_channels` set. LLM output that names a non-ready
@@ -229,7 +229,7 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
    (4: novelty / uncertainty / social / aggregate), behavior (5:
    i_want_to_say_freq / i_send_through_freq / i_want_to_think_more_freq /
    remember_this_freq / act_type_distribution).
-2. The `R79DriftEvaluator` (under `17` evaluation) consumes the
+2. The `AggressiveRadicalDriftEvaluator` (under `17` evaluation) consumes the
    `R79-D` framework's per-scenario JSONL output and computes per-tick
    drift for each dimension.
 3. The P5 launch gate requires the drift evaluator to be wired before
@@ -248,7 +248,7 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
    existing `21` observability owner + per-tick timeline capture the new
    paths unchanged.
 4. **Compatibility**: Default assembly and the v1 path remain byte-for-byte
-   unchanged when `prompt_path_mode` is not `r79_aggressive_radical_v3`.
+   unchanged when `prompt_path_mode` is not `aggressive-radical-v3`.
    R78 (real-state bridge) remains unchanged. R26 (LLM-backed default
    cognition) remains unchanged.
 5. **Migration safety**: R79 is opt-in; rollout is one profile flag flip.
@@ -276,17 +276,17 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
 
 ### R79-A (delivered)
 
-- `helios_v2/src/helios_v2/prompt_contract/r79.py` — new
-  `R79AggressiveEmbodiedPromptPath` + 6-layer v3 contract builder.
-- `helios_v2/src/helios_v2/prompt_contract/__init__.py` — export additions.
-- `helios_v2/tests/test_r79a_prompt_contract.py` — 11 unit tests.
+- `helios_v2/src/helios_v2/prompt_contract/r79.py` — **removed** (R79-A's initial placement, renamed to follow the owner convention of "all paths live in `engine.py`"; the class is now `AggressiveRadicalEmbodiedPromptPath` inside `engine.py`).
+- `helios_v2/src/helios_v2/prompt_contract/engine.py` — `AggressiveRadicalEmbodiedPromptPath` + 6-layer v3 contract builder appended after `FirstVersionEmbodiedPromptPath`.
+- `helios_v2/src/helios_v2/prompt_contract/__init__.py` — export `AggressiveRadicalEmbodiedPromptPath`.
+- `helios_v2/tests/test_aggressive_radical_prompt_path.py` — 11 unit tests.
 
 ### R79-B (next)
 
-- `helios_v2/src/helios_v2/composition/profile.py` — `R79PromptProfile`
+- `helios_v2/src/helios_v2/composition/profile.py` — `AggressiveRadicalPromptProfile`
   capability bundle.
 - `helios_v2/src/helios_v2/composition/bridges.py` — new
-  `R79ChannelArbitrationPostProcessor` bridge.
+  `AggressiveRadicalChannelArbitrationPostProcessor` bridge.
 - `helios_v2/tests/test_r79b_channel_arbitration.py` — arbitration tests.
 
 ### R79-C (next)
@@ -325,7 +325,7 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
 ### R82 (next)
 
 - `helios_v2/src/helios_v2/evaluation/r79_drift.py` — new
-  `BehaviorDriftDimension` + `R79DriftEvaluator`.
+  `BehaviorDriftDimension` + `AggressiveRadicalDriftEvaluator`.
 - `helios_v2/tests/test_r82_drift_evaluator.py` — 17-dim tests.
 
 ### Documentation sync (R79-A baseline, this change set)
@@ -345,14 +345,14 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
 
 ### 7.1 R79-A acceptance (delivered)
 
-1. `R79AggressiveEmbodiedPromptPath.build()` returns a 6-layer
+1. `AggressiveRadicalEmbodiedPromptPath.build()` returns a 6-layer
    `EmbodiedPromptContract` for any valid
    `EmbodiedPromptRequest + EmbodiedPromptConfig(prompt_bootstrap_id=
-   "R79-aggressive-radical-v3")`.
+   "embodied-prompt-bootstrap:v3-aggressive-radical")`.
 2. The v3 system prompt layer contains: "You are a person", "Not an AI",
    "focused / peripheral / filtered" (3 attention tiers), the 11 natural
    field names, and the 7 hard-rule cross-field invariants.
-3. `prompt_bootstrap_id != "R79-aggressive-radical-v3"` raises
+3. `prompt_bootstrap_id != "embodied-prompt-bootstrap:v3-aggressive-radical"` raises
    `PromptContractError`.
 4. `i_send_through` in the response schema is bounded to the
    `ready_channels` set, not the `available_channels` set.
@@ -363,8 +363,8 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
 
 ### 7.2 R79-B acceptance (pending)
 
-1. `assemble_runtime(profile=R79PromptProfile(
-   prompt_path_mode="r79_aggressive_radical_v3"))` builds a runtime with
+1. `assemble_runtime(profile=AggressiveRadicalPromptProfile(
+   prompt_path_mode="aggressive-radical-v3"))` builds a runtime with
    the v3 path wired and `ready_channels` sourced from real
    `ChannelSubsystem.channel_state_snapshot()`.
 2. LLM output naming a non-ready channel results in an internal-only tick
@@ -424,7 +424,7 @@ runtime profile opts in to `prompt_path_mode="r79_aggressive_radical_v3"`.
 
 ### 7.7 R82 acceptance (pending)
 
-1. `R79DriftEvaluator` produces 17-dim drift verdicts for the R79-D
+1. `AggressiveRadicalDriftEvaluator` produces 17-dim drift verdicts for the R79-D
    baseline output.
 2. The P5 launch gate uses the drift evaluator; no P5 learning loop can
    mutate `04` sensitivities until the drift evaluator is green.

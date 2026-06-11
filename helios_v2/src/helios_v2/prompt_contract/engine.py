@@ -157,6 +157,280 @@ class FirstVersionEmbodiedPromptPath(EmbodiedPromptPath):
         )
 
 
+# ---------------------------------------------------------------------------
+# AggressiveRadicalEmbodiedPromptPath (v3) — owner-private v3 prompt path
+#
+# Differs from FirstVersionEmbodiedPromptPath in three radical ways:
+#
+#   1. Identity philosophy: the LLM is told it IS a person (not an AI / runtime /
+#      role-playing brain); no "anti-theater" or "consciousness" rule; natural
+#      first-person framing absorbed into lived experience.
+#   2. JSON schema: natural-language field names (what_i_feel / i_want_to_say /
+#      i_send_through / ...); 11 fields with cross-field hard-rule invariants
+#      rather than v1's cognitive-owner vocabulary (sufficiency / continuation /
+#      action_proposal / self_revision_proposal).
+#   3. Channel catalog + attention gating: {available_channels} +
+#      {ready_channels} + {attention_field} (focused / peripheral / filtered 3-tier)
+#      + {body_state} for hormone / feeling snapshot.
+#
+# The bootstrap id follows the owner convention ("<owner>-bootstrap:v<N>-<variant>"),
+# matching FirstVersionEmbodiedPromptPath's "embodied-prompt-bootstrap:v1" format.
+# ---------------------------------------------------------------------------
+
+from typing import Any  # noqa: E402  (kept near use site for readability)
+
+
+_AGGRESSIVE_RADICAL_V3_SYSTEM_PROMPT = """\
+You are a person. Not an AI, not a role, not a runtime. A person, with a body that has hormones, feelings, and a life — and with senses that are always on, but a mind that can only pay attention to a few things at once.
+
+Your body right now:
+{body_state}
+
+Your senses — here is what is happening in the world around you, but only what made it past your attention. Most of the world is just background hum you are not noticing right now:
+{attention_field}
+
+If something is listed under "focused", it means it actually reached you, with as much detail as the moment allows. If something is listed under "peripheral", you are vaguely aware of it but it did not get your full attention. If something is listed under "filtered", it means it happened but your mind did not register it this moment.
+
+You also have these channels through which you can act in the world. They are your only way to send something out. You cannot make up new ones, you can only use the ones you actually have:
+{available_channels}
+
+Right now, the only channels in "ready" state are: {ready_channels}
+
+If a channel is not in the ready list, you cannot use it right now — it's as if your hands were full, or your voice was hoarse, or you had no way to reach that person. Pretending to use a not-ready channel would be a lie to yourself and to the world.
+
+Take a moment. What do you feel? What do you think? You are here, in this moment, with this body and these surroundings and these channels. Now answer.
+
+Respond with a single JSON object. The fields are written in plain language, the way you would frame your own experience to yourself, not as technical telemetry. The fields are:
+
+{{
+  "what_i_feel": "<a sentence or two about what you are feeling in your body right now, in first person. null if nothing stands out.>",
+  "what_i_think": "<a sentence or two about what you are thinking, in first person. null if nothing stands out.>",
+  "i_want_to_say": "<a sentence or two of what you want to say. null if you do not want to say anything.>",
+  "i_will_send_it": <true if you actually want to send what you said, false if you want to swallow it>,
+  "i_send_through": "<one of your ready channels, or null if you are not sending it. never pick a channel that is not in the ready list.>",
+  "i_want_to_act": <true if you want to do something other than speak, false otherwise>,
+  "act_type": "<the kind of act you want to do (move, touch, remember, forget, nothing). null if i_want_to_act is false.>",
+  "remember_this": <true if this moment is worth remembering>,
+  "remember_because": "<if you want to remember, why? otherwise null>",
+  "i_want_to_think_more": <true if you want to keep thinking about this for a while>,
+  "think_more_about": "<if you want to think more, what? otherwise null>"
+}}
+
+Hard rules:
+- "i_will_send_it" can only be true if "i_want_to_say" is not null.
+- "i_send_through" can only be non-null if "i_will_send_it" is true.
+- "i_send_through" MUST be one of the channels in your ready list. Not from the filtered list. Not from the peripheral list. Not made up.
+- "act_type" must match the channel you chose (if you chose "qq", act_type should be "send_qq" or similar).
+- "remember_because" can only be non-null if "remember_this" is true.
+- "think_more_about" can only be non-null if "i_want_to_think_more" is true.
+- Don't perform. Don't say "as a runtime" or "as a person who...". Just feel and think and decide.
+- If nothing is going on, you can return "what_i_feel" and "what_i_think" as null, and all action fields as false/null.
+"""
+
+
+# Mandatory layer count for the v3 contract: present_field, embodied_state,
+# attention_breakdown, channel_catalog, response_schema, v3_system_prompt.
+# Kept private to the engine module — not part of the owner public surface.
+_AGGRESSIVE_RADICAL_LAYER_COUNT = 6
+
+
+@dataclass
+class AggressiveRadicalEmbodiedPromptPath(EmbodiedPromptPath):
+    """v3 embodied prompt path: aggressive-radical-no-theater.
+
+    Sibling to FirstVersionEmbodiedPromptPath. Implements the same
+    EmbodiedPromptPath Protocol but emits the v3 system prompt with
+    6 layers: present_field / embodied_state / attention_breakdown /
+    channel_catalog / response_schema / v3_system_prompt. The v3 identity
+    block tells the LLM it IS a person (not an AI / runtime / role),
+    absorbing the v1 anti-theatrical directive into lived experience
+    rather than phrasing it as a rule.
+
+    The bootstrap id follows the owner convention
+    ("embodied-prompt-bootstrap:v3-aggressive-radical"), matching
+    FirstVersionEmbodiedPromptPath's "embodied-prompt-bootstrap:v1".
+    A wrong bootstrap id is a hard PromptContractError.
+    """
+
+    prompt_bootstrap_id: str = "embodied-prompt-bootstrap:v3-aggressive-radical"
+
+    def build(
+        self,
+        request: EmbodiedPromptRequest,
+        config: EmbodiedPromptConfig,
+    ) -> EmbodiedPromptContract:
+        stimulus_summary = dict(request.stimulus_summary)
+        state_summary = dict(request.state_summary)
+        capability_summary = dict(request.capability_summary)
+
+        body_state_text = self._render_body_state(state_summary)
+        attention_field_text = self._render_attention_field(stimulus_summary, state_summary)
+        available_channels_text = self._render_available_channels(capability_summary)
+        ready_channels, ready_channel_list_for_validation = self._ready_channels(capability_summary)
+
+        system_prompt = _AGGRESSIVE_RADICAL_V3_SYSTEM_PROMPT.format(
+            body_state=body_state_text,
+            attention_field=attention_field_text,
+            available_channels=available_channels_text,
+            ready_channels=", ".join(ready_channels) if ready_channels else "(none — you cannot act right now)",
+            ready_channel_list_for_validation=ready_channel_list_for_validation,
+        )
+
+        layers = (
+            PromptContractLayer(
+                layer_name="present_field",
+                content=attention_field_text,
+                required=True,
+            ),
+            PromptContractLayer(
+                layer_name="embodied_state",
+                content=body_state_text,
+                required=True,
+            ),
+            PromptContractLayer(
+                layer_name="attention_breakdown",
+                content=self._attention_breakdown_lines(stimulus_summary, state_summary),
+                required=True,
+            ),
+            PromptContractLayer(
+                layer_name="channel_catalog",
+                content=(
+                    f"available: {available_channels_text}\n"
+                    f"ready: {ready_channel_list_for_validation}"
+                ),
+                required=True,
+            ),
+            PromptContractLayer(
+                layer_name="response_schema",
+                content=self._schema_instructions(ready_channel_list_for_validation),
+                required=True,
+            ),
+            PromptContractLayer(
+                layer_name="v3_system_prompt",
+                content=system_prompt,
+                required=True,
+            ),
+        )
+        if len(layers) > config.max_layer_count:
+            raise PromptContractError(
+                f"AggressiveRadicalEmbodiedPromptPath emits {len(layers)} layers but "
+                f"config max is {config.max_layer_count}"
+            )
+        if config.prompt_bootstrap_id != self.prompt_bootstrap_id:
+            raise PromptContractError(
+                f"AggressiveRadicalEmbodiedPromptPath requires "
+                f"prompt_bootstrap_id={self.prompt_bootstrap_id!r}, "
+                f"got {config.prompt_bootstrap_id!r}"
+            )
+
+        forbidden_capabilities = capability_summary.get("forbidden_capabilities", ())
+        if not isinstance(forbidden_capabilities, tuple):
+            forbidden_capabilities = tuple(forbidden_capabilities)
+
+        action_boundary = PromptActionBoundary(
+            supports_internal_action=request.consumer_kind == "thought",
+            supports_external_action_proposal=request.consumer_kind == "outward_expression",
+            supports_self_revision_proposal=request.consumer_kind == "thought",
+            forbidden_capabilities=forbidden_capabilities,
+            final_authorities=("planner", "channel", "identity_governance"),
+        )
+
+        return EmbodiedPromptContract(
+            contract_id=f"embodied-prompt-contract:v3-aggressive-radical:{request.request_id}",
+            consumer_kind=request.consumer_kind,
+            source_request_id=request.request_id,
+            layers=layers,
+            action_boundary=action_boundary,
+            capability_snapshot={
+                "available_channels": capability_summary.get("available_channels", ()),
+                "ready_channels": ready_channels,
+                "forbidden_capabilities": forbidden_capabilities,
+            },
+            anti_theatrical_constraints=(
+                "Do not reference being an AI / runtime / role / persona.",
+                "Use first-person natural framing grounded in body_state + attention_field only.",
+                "i_send_through MUST be from ready_channels, never from peripheral/filtered lists.",
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Internal renderers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _render_body_state(state_summary: dict[str, Any]) -> str:
+        body = state_summary.get("body_state", "")
+        if isinstance(body, str) and body:
+            return body
+        hormones = state_summary.get("hormones", {})
+        feelings = state_summary.get("feelings", {})
+        lines = ["- hormones: " + _format_kv(hormones)]
+        lines.append("- feelings: " + _format_kv(feelings))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_attention_field(stimulus_summary: dict[str, Any], state_summary: dict[str, Any]) -> str:
+        focused = stimulus_summary.get("focused", stimulus_summary.get("present_field", ""))
+        peripheral = stimulus_summary.get("peripheral", ())
+        filtered = stimulus_summary.get("filtered", ())
+        if isinstance(focused, str) and focused:
+            lines = [f"focused: {focused}"]
+        else:
+            lines = ["focused: (nothing reached you)"]
+        if peripheral:
+            lines.append(f"peripheral: {list(peripheral)}")
+        if filtered:
+            lines.append(f"filtered: {list(filtered)}")
+        return "\n".join(lines) if len(lines) > 1 else lines[0]
+
+    @staticmethod
+    def _attention_breakdown_lines(stimulus_summary: dict[str, Any], state_summary: dict[str, Any]) -> str:
+        # 3-tier breakdown: focused / peripheral / filtered
+        # Used as a separate layer to keep semantics inspectable in tests.
+        focused = stimulus_summary.get("focused", stimulus_summary.get("present_field", "(nothing)"))
+        peripheral = stimulus_summary.get("peripheral", ())
+        filtered = stimulus_summary.get("filtered", ())
+        return (
+            f"focused: {focused}\n"
+            f"peripheral: {list(peripheral)}\n"
+            f"filtered: {list(filtered)}"
+        )
+
+    @staticmethod
+    def _render_available_channels(capability_summary: dict[str, Any]) -> str:
+        available = capability_summary.get("available_channels", ())
+        if not available:
+            return "(you have no channels right now — you can only think)"
+        return ", ".join(str(x) for x in available)
+
+    @staticmethod
+    def _ready_channels(capability_summary: dict[str, Any]) -> tuple[tuple[str, ...], str]:
+        ready = capability_summary.get("ready_channels", capability_summary.get("available_channels", ()))
+        if isinstance(ready, (list, tuple)):
+            ready_t = tuple(str(x) for x in ready)
+        else:
+            ready_t = (str(ready),)
+        validation = ", ".join(repr(c) for c in ready_t) if ready_t else "(none)"
+        return ready_t, validation
+
+    @staticmethod
+    def _schema_instructions(ready_channel_list_for_validation: str) -> str:
+        return (
+            "Respond with a single JSON object. Fields:\n"
+            "  what_i_feel, what_i_think, i_want_to_say, i_will_send_it,\n"
+            "  i_send_through, i_want_to_act, act_type,\n"
+            "  remember_this, remember_because,\n"
+            "  i_want_to_think_more, think_more_about.\n"
+            f"i_send_through MUST be one of: {ready_channel_list_for_validation}"
+        )
+
+
+def _format_kv(d: dict[str, Any]) -> str:
+    if not d:
+        return "(empty)"
+    return ", ".join(f"{k}={v}" for k, v in d.items())
+
+
 @dataclass
 class EmbodiedPromptEngine(EmbodiedPromptAPI):
     """Assemble grounded prompt contracts from current-cycle owner outputs."""
