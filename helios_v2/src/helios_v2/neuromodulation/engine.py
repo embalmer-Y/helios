@@ -375,6 +375,9 @@ class AppraisalDerivedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
     reward_to_dopamine: float = 0.5
     novelty_to_dopamine: float = 0.15
     threat_to_cortisol: float = 0.5
+    safety_social_to_serotonin: float = 0.4
+    social_uncertainty_to_oxytocin: float = 0.4
+    safety_uncertainty_to_opioid: float = 0.4
 
     def update_levels(
         self,
@@ -408,12 +411,35 @@ class AppraisalDerivedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
                 low.cortisol,
                 high.cortisol,
             ),
-            # Remaining channels regress to the tonic baseline (clamped) in this slice; their
-            # real drivers are later de-shim slices.
-            serotonin=_clamp(base.serotonin, low.serotonin, high.serotonin),
+            # 5-HT / Oxy / Opioid (R79-C) are driven by appraisal salience:
+            # 5-HT from safety + social, Oxy from social + non-uncertainty,
+            # Opioid from safety + non-uncertainty.
+            serotonin=_clamp(
+                base.serotonin
+                + self.safety_social_to_serotonin * (1.0 - salience.threat) * salience.social,
+                low.serotonin,
+                high.serotonin,
+            ),
+            # acetylcholine stays at tonic baseline in this slice
+            # (selective-attention driver is a future slice).
             acetylcholine=_clamp(base.acetylcholine, low.acetylcholine, high.acetylcholine),
-            oxytocin=_clamp(base.oxytocin, low.oxytocin, high.oxytocin),
-            opioid_tone=_clamp(base.opioid_tone, low.opioid_tone, high.opioid_tone),
+            oxytocin=_clamp(
+                base.oxytocin
+                + self.social_uncertainty_to_oxytocin * salience.social * (1.0 - salience.uncertainty),
+                low.oxytocin,
+                high.oxytocin,
+            ),
+            opioid_tone=_clamp(
+                base.opioid_tone
+                + self.safety_uncertainty_to_opioid
+                * (1.0 - salience.threat)
+                * (1.0 - salience.uncertainty)
+                * salience.social,
+                low.opioid_tone,
+                high.opioid_tone,
+            ),
+            # excitation / inhibition stay at tonic baseline in this slice
+            # (thought_gating driver is a future slice).
             excitation=_clamp(base.excitation, low.excitation, high.excitation),
             inhibition=_clamp(base.inhibition, low.inhibition, high.inhibition),
         )

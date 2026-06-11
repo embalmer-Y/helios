@@ -29,12 +29,24 @@ from .engine import (
     NeuromodulatorEngine,
     NeuromodulatorUpdatePath,
 )
+from .corroborator import (
+    HormonePredictCorroborator,
+    HormonePredictCouplingChannel,
+    HormonePredictCouplingClassification,
+    HormonePredictCouplingConfig,
+    HormonePredictCouplingVerdict,
+)
 
 __all__ = [
     "ActiveChannelReporter",
     "AppraisalDerivedNeuromodulatorUpdatePath",
     "DecayFamily",
     "DualTimescaleNeuromodulatorUpdatePath",
+    "HormonePredictCorroborator",
+    "HormonePredictCouplingChannel",
+    "HormonePredictCouplingClassification",
+    "HormonePredictCouplingConfig",
+    "HormonePredictCouplingVerdict",
     "LearnedParameterCategory",
     "NeuromodulatorConfig",
     "NeuromodulatorEngine",

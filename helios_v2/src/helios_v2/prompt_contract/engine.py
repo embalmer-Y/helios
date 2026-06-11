@@ -213,7 +213,8 @@ Respond with a single JSON object. The fields are written in plain language, the
   "remember_this": <true if this moment is worth remembering>,
   "remember_because": "<if you want to remember, why? otherwise null>",
   "i_want_to_think_more": <true if you want to keep thinking about this for a while>,
-  "think_more_about": "<if you want to think more, what? otherwise null>"
+  "think_more_about": "<if you want to think more, what? otherwise null>",
+  "hormone_response_i_predict": "<a 9-key dict mirroring your body's neuromodulators (dopamine / norepinephrine / serotonin / acetylcholine / cortisol / oxytocin / opioid_tone / excitation / inhibition), each value in [-1.0, +1.0]. -1 means 'this should fall', +1 means 'this should rise', 0 means 'no opinion'. null if you do not want to predict.>"
 }}
 
 Hard rules:
@@ -223,6 +224,7 @@ Hard rules:
 - "act_type" must match the channel you chose (if you chose "qq", act_type should be "send_qq" or similar).
 - "remember_because" can only be non-null if "remember_this" is true.
 - "think_more_about" can only be non-null if "i_want_to_think_more" is true.
+- "hormone_response_i_predict" is a 9-key dict (or null). Each key is a channel name, each value is a number in [-1.0, +1.0]. No other keys allowed.
 - Don't perform. Don't say "as a runtime" or "as a person who...". Just feel and think and decide.
 - If nothing is going on, you can return "what_i_feel" and "what_i_think" as null, and all action fields as false/null.
 """

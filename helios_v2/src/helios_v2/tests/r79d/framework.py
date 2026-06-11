@@ -11,7 +11,6 @@ from typing import Any, Callable, Sequence
 
 ROOT = Path("/root/project/helios")
 SCRIPT_DIR = ROOT / "helios_v2" / "scripts"
-V3_PROMPT_PATH = ROOT / "logs" / "prompt_probe_scenarios" / "r79_v2" / "inputs" / "00_system_v3_draft.txt"
 
 
 @dataclass(frozen=True)
@@ -387,37 +386,48 @@ class ScriptedCliSource:
 
 
 def inject_v3_prompt(handle, v3_prompt_text: str | None = None):
+    """Inject the R79-A aggressive-radical v3 system prompt into the LLM path.
+
+    R79-C update (2026-06-11): previously this read a hard-coded v2-draft file
+    from V3_PROMPT_PATH. Now the v3 prompt is rendered by the same
+    ``AggressiveRadicalEmbodiedPromptPath`` runtime that production uses, so the
+    12-field schema (including R79-C's ``hormone_response_i_predict``) and the
+    6-layer contract are sourced from one place. ``v3_prompt_text`` arg is
+    kept for backwards-compatible unit tests that pass pre-rendered text.
+
+    v3 prompt is re-rendered **per-tick** from the most recent tick result so
+    hormone / feeling / channel-catalog state always reflects the live body
+    (this is the whole point of the 12-field hormone_response_i_predict
+    schema — the LLM must see its current body to predict its next body).
+    """
     import helios_v2.internal_thought.engine as ite
     from helios_v2.llm.contracts import LlmMessage
-    V3 = v3_prompt_text or V3_PROMPT_PATH.read_text(encoding="utf-8")
+    from helios_v2.prompt_contract.engine import AggressiveRadicalEmbodiedPromptPath
+
+    # Module-level last-result slot. Updated by run_experiment after each
+    # tick. v3_build_messages reads it lazily so we don't have to thread
+    # the result through LlmBackedInternalThoughtPath's _build_messages
+    # signature.
+    _r79d_state = {"last_result": None}
 
     def v3_build_messages(self_engine, request, retrieval_bundle, continuation_state):
-        system_msg = LlmMessage(role="system", content=V3)
+        from helios_v2.prompt_contract.engine import _AGGRESSIVE_RADICAL_V3_SYSTEM_PROMPT as _V3_TEMPLATE
+        last_result = _r79d_state["last_result"]
+        if v3_prompt_text is not None:
+            system_content = v3_prompt_text
+        else:
+            # Build the four {placeholder} values freshly each tick.
+            v3_kwargs = _build_v3_placeholders(handle, AggressiveRadicalEmbodiedPromptPath, last_result)
+            system_content = _V3_TEMPLATE.format(**v3_kwargs)
+        system_msg = LlmMessage(role="system", content=system_content)
         user_lines = []
         user_lines.append("# Current body state (first-person sense of your own chemistry & feeling)")
         user_lines.append("(These are the levels you feel right now. They shift each tick as your body and mind respond.)")
         user_lines.append("")
-        try:
-            neuromod = handle.neuromodulator_stage
-            feel_stage = handle.feeling_stage
-            levels_obj = None
-            if neuromod is not None and neuromod._prior_state is not None:
-                levels_obj = neuromod._prior_state.levels
-            feeling_obj = None
-            if feel_stage is not None and feel_stage._prior_state is not None:
-                feeling_obj = feel_stage._prior_state.feeling
-            if levels_obj is not None:
-                class _Combined: pass
-                c = _Combined()
-                for f in ("dopamine", "norepinephrine", "serotonin", "acetylcholine", "cortisol", "oxytocin", "opioid_tone", "excitation", "inhibition"):
-                    setattr(c, f, getattr(levels_obj, f))
-                if feeling_obj is not None:
-                    setattr(c, "arousal", feeling_obj.arousal)
-                    setattr(c, "valence", feeling_obj.valence)
-                    setattr(c, "tension", feeling_obj.tension)
-                user_lines.append(body_state_translate(c))
-        except Exception as e:
-            user_lines.append(f"(body state unavailable: {e})")
+        # Body state is already in the v3 system prompt (4th slot); keep
+        # user-side body state as a short reminder so the LLM does not
+        # lose track of it across the system/user boundary.
+        user_lines.append("(body state snapshot is in the system prompt; it will update next tick)")
         user_lines.append("")
         if retrieval_bundle.short_term_context:
             for i, ctx in enumerate(retrieval_bundle.short_term_context):
@@ -442,6 +452,84 @@ def inject_v3_prompt(handle, v3_prompt_text: str | None = None):
         return (system_msg, user_msg)
 
     ite.LlmBackedInternalThoughtPath._build_messages = v3_build_messages
+
+    # Expose the per-tick state injector to run_experiment.
+    handle._r79d_v3_state = _r79d_state  # type: ignore[attr-defined]
+
+
+def _build_v3_placeholders(handle, path_cls, result):
+    """Compute the four {placeholder} kwargs for the v3 system template.
+
+    Returns a dict with keys: body_state, attention_field, available_channels,
+    ready_channels. Sources live state from the most recent tick result if
+    available, else from the handle's bound stage refs.
+    """
+    hormones: dict = {}
+    feelings: dict = {}
+    if result is not None:
+        h = get_hormone_state_from_result(result)
+        f = get_feeling_state_from_result(result)
+        hormones = dict(h)
+        feelings = {k: v for k, v in f.items() if k in ("arousal", "valence", "tension", "comfort")}
+    else:
+        neuromod = handle.neuromodulator_stage
+        feel_stage = handle.feeling_stage
+        levels_obj = neuromod._prior_state.levels if (neuromod is not None and neuromod._prior_state is not None) else None
+        feeling_obj = feel_stage._prior_state.feeling if (feel_stage is not None and feel_stage._prior_state is not None) else None
+        if levels_obj is not None:
+            for fld in ("dopamine", "norepinephrine", "serotonin", "acetylcholine",
+                        "cortisol", "oxytocin", "opioid_tone", "excitation", "inhibition"):
+                hormones[fld] = getattr(levels_obj, fld)
+        if feeling_obj is not None:
+            feelings["arousal"] = feeling_obj.arousal
+            feelings["valence"] = feeling_obj.valence
+            feelings["tension"] = feeling_obj.tension
+
+    # Read the most recent stimulus from the script source if available.
+    focused_text = ""
+    try:
+        from helios_v2.tests.r79d.framework import ScriptedCliSource  # local
+        sources = getattr(handle.ingress, "_sources", None) or []
+        for src in sources:
+            if isinstance(src, ScriptedCliSource):
+                idx = max(0, src.index - 1)
+                if 0 <= idx < len(src.script):
+                    focused_text = src.script[idx]
+                break
+    except Exception:
+        pass
+
+    # R79-D: only the cli channel is wired (ScriptedCliSource delivers through
+    # it; no other channel owners are bound on the test handle).
+    available_channels = ("cli",)
+    ready_channels = ("cli",)
+
+    state_summary = {
+        "body_state": "",  # forces helper to fall through to hormones/feelings
+        "hormones": hormones,
+        "feelings": feelings,
+    }
+    stimulus_summary = {
+        "focused": focused_text,
+        "peripheral": (),
+        "filtered": (),
+    }
+    capability_summary = {
+        "available_channels": available_channels,
+        "ready_channels": ready_channels,
+    }
+
+    body_state_text = path_cls._render_body_state(state_summary)
+    attention_field_text = path_cls._render_attention_field(stimulus_summary, state_summary)
+    available_channels_text = path_cls._render_available_channels(capability_summary)
+    ready_channels_tuple, _ = path_cls._ready_channels(capability_summary)
+    ready_channels_text = ", ".join(repr(c) for c in ready_channels_tuple) if ready_channels_tuple else "(none)"
+    return {
+        "body_state": body_state_text,
+        "attention_field": attention_field_text,
+        "available_channels": available_channels_text,
+        "ready_channels": ready_channels_text,
+    }
 
 
 # ============================================================
@@ -497,6 +585,13 @@ def run_experiment(config: ExperimentConfig) -> dict:
         t0 = time.time()
         result = handle.tick()
         elapsed = time.time() - t0
+
+        # R79-C: feed the latest tick result into the v3 prompt builder so
+        # the LLM sees live hormone/feeling/channel state in the system
+        # message. The v3 prompt is re-rendered per-tick.
+        r79d_v3_state = getattr(handle, "_r79d_v3_state", None)
+        if r79d_v3_state is not None:
+            r79d_v3_state["last_result"] = result
 
         h = get_hormone_state_from_result(result)
         f = get_feeling_state_from_result(result)

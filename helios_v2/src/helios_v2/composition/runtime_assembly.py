@@ -398,6 +398,7 @@ def default_composition_config() -> CompositionConfig:
                 "cross_channel_coupling_strength",
                 "decay_speed_persistence",
                 "gate_influence_strength",
+                "hormone_predict_coupling",
             ),
         ),
         feeling=InteroceptiveFeelingConfig(

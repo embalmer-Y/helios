@@ -31,6 +31,7 @@ def _build_config() -> NeuromodulatorConfig:
             "cross_channel_coupling_strength",
             "decay_speed_persistence",
             "gate_influence_strength",
+            "hormone_predict_coupling",
         ),
     )
 
@@ -97,5 +98,6 @@ def test_config_rejects_baseline_outside_legal_bounds() -> None:
                 "cross_channel_coupling_strength",
                 "decay_speed_persistence",
                 "gate_influence_strength",
+                "hormone_predict_coupling",
             ),
         )

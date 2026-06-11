@@ -10,9 +10,17 @@
 ## Overview
 
 R79 is decomposed into 7 sub-tasks (R79-A through R82) plus 1 documentation
-sync sub-task. R79-A and R79-D are delivered (this change set); R79-B / R79-C
-/ R80 / R81 / R82 are tracked here for future work in the same requirement
-package.
+sync sub-task. R79-A / R79-B / R79-C / R79-D are delivered (across commits
+`5fcc80a` / R79-B commit / `2a92339` / `3827632` + `9597046` / R79-C
+commit); R80 / R81 / R82 are tracked here for future work in the same
+requirement package. R79-C delivered the 5-HT / Oxy / Opioid appraisal-derived
+drives under the `04` owner, the `04`-owned `HormonePredictCorroborator`
+sibling module (`helios_v2/neuromodulation/corroborator.py`), the 5th
+`LearnedParameterCategory` literal `hormone_predict_coupling`, and the 12th
+v3 LLM JSON schema field `hormone_response_i_predict`. R79-D v2 baseline
+report (A+ variant) confirms 5-HT / Oxy non-constant under NOOP-gateway
+4-scenario run; A vs B Oxy delta not achieved (salience aggregator root
+cause, R80 composition scope).
 
 ## Sub-task T1: R79 requirements package (this change set)
 
@@ -214,7 +222,7 @@ package.
 | T1 R79 docs | done | — | this change set |
 | T2 R79-A | done | — | commit `5fcc80a` |
 | T3 R79-B | done | — | `AggressiveRadicalPromptProfile` + RuntimeProfile + assemble_runtime integration + 19 new tests, 866 passed |
-| T4 R79-C | pending | after R79-B | needs 3 new updaters + corroborator |
+| T4 R79-C | done | — | 3 new drives (5-HT / Oxy / Opioid) under `04` owner + `HormonePredictCorroborator` + 5th `LearnedParameterCategory` + 12th v3 schema field; 34 new tests (900 passed baseline + 34 = 900 → 900); R79-D v2 baseline report (A+ variant) confirms 5-HT / Oxy non-constant; A vs B Oxy delta blocked by salience aggregator (R80) |
 | T5 R79-D | done | — | commits `3827632` + `9597046` |
 | T6 R80 | pending | after R79-C | needs `internal_monologue` source + estimator |
 | T7 R81 | pending | after R80 | needs carry + v4 snapshot |
