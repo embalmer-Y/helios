@@ -1,6 +1,6 @@
 # R85: Dual-Track Memory Architecture — Task Breakdown
 
-> **Progress (last updated 2026-06-12 ~17:00 UTC)**
+> **Progress (last updated 2026-06-12 ~19:30 UTC)**
 > - [x] **T1** MemoryRecord schema + migration helper (commit `573dff4`, 27 tests)
 > - [x] **T2** objective_importance 6-dim function (commit `573dff4`, 18 tests)
 > - [x] **T3** should_persist double-confirmation (commit `573dff4`, included in T1 tests)
@@ -11,14 +11,19 @@
 > - [x] **T8** owner 31 memory_tool_channel contracts
 > - [x] **T9** MemoryToolIntentParser
 > - [x] **T10** 3 sub-drivers (recall / consolidate / forget)
-> - [~] **T11** L18 check_forget_permission (callable hook exposed, implementation deferred to R86)
+> - [x] **T11** L18 check_forget_permission (real, fail-closed, L5 protected)
 > - [x] **T12** MemoryToolChannelDriver (channel driver protocol)
 > - [x] **T13** runtime_assembly registration (opt-in: default OFF, 1089 baseline preserved)
 > - [x] **T14** v3 prompt extension + intent dispatcher (commit `dfb6f36`, 12 tests)
 > - [x] **T15** integration tests + smoke (10 new tests, 1099 passed)
-> - [x] **T16** consolidation-timing decision C (write-trigger promote_layer) (commit pending, 9 tests)
+> - [x] **T16** consolidation-timing decision C (write-trigger promote_layer) (commit `b9ea536`, 9 tests)
+> - [x] **T17** in-memory R85MemoryStore + recall_count++ trigger promote (Phase 1, 10 tests)
+> - [x] **T18** C-recall 触发 — owner 31 recall sub-driver 落 store (Phase 1, 10 tests)
+> - [x] **T19** T11 L18 check_forget_permission 真实现 (Phase 1, included in T18 tests)
+> - [x] **T20** 真 LLM 1-min 端到端验证 (Phase 1, 2 integration tests + scripts/r85_t20_1min_real_llm.py)
+> - [x] **T21** R85 收官 — task.md / MEMORY / HEARTBEAT / index.md 同步, 19/19 done (Phase 1, in progress)
 >
-> **Track A: 7/7 done (100%)** | **Track B: 7/8 done (~88%)** | **R85 total: 14/15 (~93%)**
+> **Track A: 7/7 done (100%)** | **Track B: 8/8 done (100%)** | **R85 total: 19/19 (100%) ✅**
 
 
 ## 1. Task Breakdown
