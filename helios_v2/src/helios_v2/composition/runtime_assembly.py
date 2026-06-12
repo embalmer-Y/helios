@@ -165,6 +165,7 @@ from helios_v2.persistence import (
     SemanticStoreBackedDirectedMemoryCandidateProvider,
     StoreBackedDirectedMemoryCandidateProvider,
 )
+from helios_v2.memory_tool_channel import MemoryToolChannelDriver
 from helios_v2.sensory import RawSignal, SensoryIngress, SensorySource
 from helios_v2.thought_gating import (
     ArousalAwareThoughtGatePath,
@@ -597,6 +598,9 @@ class RuntimeHandle:
     timeline_sink: InMemoryLogSink | None = None
     channel_subsystem: "ChannelSubsystem | None" = None
     experience_store: ExperienceStore | None = None
+    # R85 owner 31: memory_tool_channel driver is OPT-IN. None means not registered.
+    # Pass memory_tool_channel=True to assemble_runtime to auto-create and register.
+    memory_tool_channel_driver: "MemoryToolChannelDriver | None" = None
     experience_record_bridge: ExperienceRecordBridge | None = None
     memory_record_bridge: "MemoryRecordBridge | None" = None
     prior_thought_recall_holder: "PriorThoughtRecallHolder | None" = None
@@ -1002,6 +1006,8 @@ _RUNTIME_PROFILE_FIELD_NAMES: tuple[str, ...] = (
     "external_signal_source",
     "default_signal_mode",
     "internal_monologue_carry_provider",
+    "memory_tool_channel",
+    "memory_tool_channel_driver",
 )
 
 
@@ -1047,6 +1053,8 @@ class RuntimeProfile:
     default_signal_mode: str = "semantic"
     aggressive_radical_prompt_profile: "AggressiveRadicalPromptProfile | None" = None
     internal_monologue_carry_provider: "Callable[[], Mapping[str, object] | None] | None" = None
+    memory_tool_channel: bool = False  # R85 owner 31: opt-in (default OFF)
+    memory_tool_channel_driver: "MemoryToolChannelDriver | None" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1144,6 +1152,8 @@ def assemble_runtime(
     default_signal_mode: str | object = _UNSET,
     aggressive_radical_prompt_profile: "AggressiveRadicalPromptProfile | None | object" = _UNSET,
     internal_monologue_carry_provider: "Callable[[], Mapping[str, object] | None] | None | object" = _UNSET,
+    memory_tool_channel: bool | object = _UNSET,  # R85 owner 31: opt-in (default False)
+    memory_tool_channel_driver: "MemoryToolChannelDriver | None | object" = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1205,6 +1215,8 @@ def assemble_runtime(
         ("default_signal_mode", default_signal_mode),
         ("aggressive_radical_prompt_profile", aggressive_radical_prompt_profile),
         ("internal_monologue_carry_provider", internal_monologue_carry_provider),
+        ("memory_tool_channel", memory_tool_channel),
+        ("memory_tool_channel_driver", memory_tool_channel_driver),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1235,6 +1247,8 @@ def assemble_runtime(
     default_signal_mode = resolved_profile.default_signal_mode
     aggressive_radical_prompt_profile = resolved_profile.aggressive_radical_prompt_profile
     internal_monologue_carry_provider = resolved_profile.internal_monologue_carry_provider
+    memory_tool_channel = resolved_profile.memory_tool_channel
+    memory_tool_channel_driver = resolved_profile.memory_tool_channel_driver
 
     # R69 auto-provisioning: when default_signal_mode is "semantic" and the caller did not
     # inject an experience store and/or embedding gateway, create fresh in-memory backends so
@@ -1406,6 +1420,32 @@ def assemble_runtime(
     # no sampler is given, no interoceptive source is registered and the assembly is unchanged.
     if interoceptive_sampler is not None:
         ingress.register_source(RuntimeInteroceptiveSource(sampler=interoceptive_sampler))
+
+    # R85 owner 31: memory_tool_channel is OPT-IN. The driver is only registered when the
+    # caller explicitly passes memory_tool_channel=True (or a pre-built driver instance).
+    # Default-OFF keeps the legacy runtime contract stable (1089 tests pass).
+    if memory_tool_channel is _UNSET:
+        _memory_tool_channel_on = False
+    else:
+        _memory_tool_channel_on = bool(memory_tool_channel)
+    if memory_tool_channel_driver is _UNSET:
+        memory_tool_channel_driver = None
+    if memory_tool_channel_driver is None and _memory_tool_channel_on:
+        memory_tool_channel_driver = MemoryToolChannelDriver()
+    if memory_tool_channel_driver is not None and channel_subsystem is not None:
+        # Reuse the existing channel subsystem (channel_cli=True case).
+        if memory_tool_channel_driver.driver_id not in channel_subsystem._drivers:
+            channel_subsystem.register_driver(memory_tool_channel_driver)
+            channel_subsystem.apply_management_op(
+                memory_tool_channel_driver.driver_id, "connect", None
+            )
+    elif memory_tool_channel_driver is not None and channel_subsystem is None:
+        # No CLI subsystem was built — build a minimal one just to host the driver.
+        channel_subsystem = ChannelSubsystem()
+        channel_subsystem.register_driver(memory_tool_channel_driver)
+        channel_subsystem.apply_management_op(
+            memory_tool_channel_driver.driver_id, "connect", None
+        )
 
     # Internal monologue source (R80): opt-in. When a carry provider is supplied, register a
     # second-order stimulus source that emits the runtime's self-produced internal-monologue
@@ -1895,6 +1935,7 @@ def assemble_runtime(
         timeline_holder=timeline_holder,
         timeline_sink=timeline_sink,
         channel_subsystem=channel_subsystem,
+        memory_tool_channel_driver=memory_tool_channel_driver,
         experience_store=experience_store,
         experience_record_bridge=(
             ExperienceRecordBridge() if experience_store is not None else None
