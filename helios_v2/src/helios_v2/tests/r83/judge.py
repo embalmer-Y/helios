@@ -163,14 +163,21 @@ class JudgeProbe:
         The R79-D `RealLlmGateway` and `NoopLlmGateway` both implement
         `complete(request) -> LlmCompletion`. We construct a minimal
         request via the `LlmGatewayAPI` Protocol.
+
+        R83-rev-2026-06-12: `LlmRequest` requires `request_id` and
+        `target_profile` (immutable construction). We synthesize
+        both for the judge probe.
         """
+        import time
         from helios_v2.llm.contracts import LlmRequest, LlmMessage
 
         request = LlmRequest(
+            request_id=f"judge-{int(time.time() * 1000)}",
+            target_profile="r83-judge-probe",
             messages=[LlmMessage(role="user", content=prompt)],
         )
         completion = self.gateway.complete(request)
-        return completion.text or ""
+        return getattr(completion, "output_text", "") or ""
 
     def _parse_response(self, text: str) -> dict[str, Any] | None:
         """Parse the judge's JSON response. Fail-soft on parse error."""

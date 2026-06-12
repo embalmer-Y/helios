@@ -256,51 +256,64 @@ class LongRunner:
         records: list[dict] = []
         per_block: list[BlockSummary] = []
 
+        # R83-rev-2026-06-12: Use a single ScriptedCliSource with all
+        # variants flattened in catalog order. Previously each variant
+        # created a new source with the same `source_name="scripted_cli"`,
+        # so duplicate-registration guard skipped it, and the **old**
+        # source kept emitting its older script. Fix: one source, full
+        # script, simple tick loop.
+        all_variants: list[tuple[StateBlock, str]] = []
         for block in self.blocks:
-            block_records: list[dict] = []
             for variant in block.variants:
-                if time.time() >= deadline:
-                    _io.write_line(
-                        f"[r83] wall-clock budget hit at block {block.id!r}"
-                    )
-                    break
-                source = ScriptedCliSource([variant])
-                # Avoid duplicate-registration: only register if not present
-                if source.source_name not in handle.ingress._sources:
-                    handle.ingress.register_source(source)
-                inject_v3_prompt(handle)
-                t0 = time.time()
-                try:
-                    result = handle.tick()
-                    elapsed = time.time() - t0
-                except Exception as exc:  # noqa: BLE001
-                    _io.write_line(
-                        f"[r83] tick failed in block {block.id!r}: {exc!r}"
-                    )
-                    continue
-                rec = _result_to_record(result, block.id, variant, elapsed)
-                records.append(rec)
-                block_records.append(rec)
-            else:
-                # Only enter if the inner for-loop didn't break
-                a2 = _score_a2(block_records, block.expected_response)
-                hormone_deltas = _compute_hormone_deltas(block_records)
-                feeling_deltas = _compute_feeling_deltas(block_records)
-                summary = BlockSummary(
-                    state_id=block.id,
-                    n_ticks=len(block_records),
-                    a2_score=a2,
-                    judge_a1=None,
-                    judge_a4=None,
-                    judge_a6=None,
-                    judge_reasoning="",
-                    hormone_deltas=hormone_deltas,
-                    feeling_deltas=feeling_deltas,
+                all_variants.append((block, variant))
+        flat_script: list[str] = [v for _, v in all_variants]
+        source = ScriptedCliSource(flat_script)
+        if source.source_name not in handle.ingress._sources:
+            handle.ingress.register_source(source)
+        inject_v3_prompt(handle)
+
+        for tick_idx, (block, variant) in enumerate(all_variants):
+            if time.time() >= deadline:
+                _io.write_line(
+                    f"[r83] wall-clock budget hit at block {block.id!r}"
                 )
-                per_block.append(summary)
+                break
+            t0 = time.time()
+            try:
+                result = handle.tick()
+                elapsed = time.time() - t0
+            except Exception as exc:  # noqa: BLE001
+                _io.write_line(
+                    f"[r83] tick failed in block {block.id!r}: {exc!r}"
+                )
                 continue
-            # If we hit a deadline mid-block, skip scoring
-            break
+            rec = _result_to_record(result, block.id, variant, elapsed, gateway)
+            records.append(rec)
+
+        # Group records by block (since they are now in catalog order)
+        from collections import defaultdict
+        by_block: dict[str, list[dict]] = defaultdict(list)
+        for rec in records:
+            by_block[rec["state_id"]].append(rec)
+        for block in self.blocks:
+            block_records = by_block.get(block.id, [])
+            if not block_records:
+                continue
+            a2 = _score_a2(block_records, block.expected_response)
+            hormone_deltas = _compute_hormone_deltas(block_records)
+            feeling_deltas = _compute_feeling_deltas(block_records)
+            summary = BlockSummary(
+                state_id=block.id,
+                n_ticks=len(block_records),
+                a2_score=a2,
+                judge_a1=None,
+                judge_a4=None,
+                judge_a6=None,
+                judge_reasoning="",
+                hormone_deltas=hormone_deltas,
+                feeling_deltas=feeling_deltas,
+            )
+            per_block.append(summary)
 
         # Write the JSONL trail
         with jsonl_path.open("w", encoding="utf-8") as f:
@@ -376,6 +389,7 @@ def _result_to_record(
     state_id: str,
     stimulus_text: str,
     elapsed: float,
+    gateway: Any = None,
 ) -> dict:
     """Convert a helios_v2 runtime `result` into a per-tick record dict.
 
@@ -392,7 +406,7 @@ def _result_to_record(
     hormone_state = get_hormone_state_from_result(result)
     feeling_state = get_feeling_state_from_result(result)
     salience = get_salience_from_result(result)
-    llm_output = _extract_llm_envelope(result)
+    llm_output = _extract_llm_envelope(gateway)
     return {
         "tick_id": getattr(result, "tick_id", 0),
         "stimulus_text": stimulus_text,
@@ -406,21 +420,25 @@ def _result_to_record(
     }
 
 
-def _extract_llm_envelope(result: Any) -> dict:
-    """Extract the LLM envelope from the latest `internal_monologue`
-    stage or the embodied-prompt stage."""
-    stage_results = getattr(result, "stage_results", {}) or {}
-    for stage_name in ("internal_monologue_runtime", "embodied_prompt_runtime"):
-        block = stage_results.get(stage_name)
-        if block is None:
-            continue
-        state = getattr(block, "state", None)
-        if state is None:
-            continue
-        env = getattr(state, "last_envelope", None) or getattr(state, "envelope", None)
-        if isinstance(env, dict):
-            return dict(env)
-        # Some stages stash the envelope under "envelope" key
-        if isinstance(state, dict) and "envelope" in state and isinstance(state["envelope"], dict):
-            return dict(state["envelope"])
-    return {}
+def _extract_llm_envelope(gateway: Any = None) -> dict:
+    """Extract the LLM envelope from the gateway's most recent captured
+    request.
+
+    The R79-D `RealLlmGateway` and `NoopLlmGateway` both maintain a
+    `captured: list[LlmRequestLog]` list. Each captured entry has a
+    `parsed_json` field which is the 11-field v3 envelope (parsed
+    from the LLM's ```json``` block). The most recent entry is the
+    current tick's LLM call.
+
+    Returns an empty dict if gateway is None or `captured` is empty.
+    """
+    if gateway is None:
+        return {}
+    captured = getattr(gateway, "captured", None)
+    if not captured:
+        return {}
+    last = captured[-1]
+    parsed = getattr(last, "parsed_json", None)
+    if not isinstance(parsed, dict):
+        return {}
+    return dict(parsed)

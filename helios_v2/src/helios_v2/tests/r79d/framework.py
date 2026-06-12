@@ -484,13 +484,31 @@ def _build_v3_placeholders(handle, path_cls, result):
             feelings["arousal"] = feeling_obj.arousal
             feelings["valence"] = feeling_obj.valence
             feelings["tension"] = feeling_obj.tension
+        # R83-rev-2026-06-12: when prior_state is None (first tick), fall back
+        # to rest-state defaults so the LLM sees a body, not "(empty)".
+        if not hormones:
+            hormones = {fld: 0.5 for fld in (
+                "dopamine", "norepinephrine", "serotonin", "acetylcholine",
+                "cortisol", "oxytocin", "opioid_tone", "excitation", "inhibition",
+            )}
+        if not feelings:
+            feelings = {"arousal": 0.5, "valence": 0.5, "tension": 0.5, "comfort": 0.5}
 
     # Read the most recent stimulus from the script source if available.
     focused_text = ""
     try:
         from helios_v2.tests.r79d.framework import ScriptedCliSource  # local
-        sources = getattr(handle.ingress, "_sources", None) or []
-        for src in sources:
+        sources = getattr(handle.ingress, "_sources", None)
+        # R83-rev-2026-06-12: _sources is a dict keyed by source_name,
+        # not a list. Iterate values, not keys, so we actually find
+        # the ScriptedCliSource.
+        if isinstance(sources, dict):
+            iter_sources = list(sources.values())
+        elif sources is None:
+            iter_sources = []
+        else:
+            iter_sources = list(sources)
+        for src in iter_sources:
             if isinstance(src, ScriptedCliSource):
                 idx = max(0, src.index - 1)
                 if 0 <= idx < len(src.script):
