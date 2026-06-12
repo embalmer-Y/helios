@@ -14,9 +14,14 @@ Does not own:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from types import MappingProxyType
+from typing import Literal, Mapping, Protocol, runtime_checkable
 
 from helios_v2.feeling import InteroceptiveFeelingState, InteroceptiveFeelingVector
+
+
+def _freeze_mapping(mapping: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType(dict(mapping))
 
 
 def _validate_unit_interval(name: str, value: float) -> None:
@@ -508,3 +513,257 @@ class MemoryAffectReplayAPI(Protocol):
         """
 
         ...
+# =============================================================================
+# R85: Dual-Track Memory Architecture — Track A additions
+# =============================================================================
+# Owner: 06 memory (MemoryRecord + objective_importance)
+# Reference: docs/requirements/85-r85-dual-track-memory-architecture/
+
+import time as _time
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from helios_v2.persistence import PersistedExperienceRecord
+
+
+MemoryLayer = Literal["L2_working", "L3_short", "L4_long", "L5_autobiographical"]
+DoubleConfirmationClass = Literal["persist_full", "persist_low_priority", "skip"]
+OutcomeClassWeight = Literal[
+    "self_changed",
+    "world_blocked",
+    "world_changed",
+    "world_failed",
+    "self_blocked",
+    "internal_only",
+]
+
+OUTCOME_CLASS_WEIGHTS: Mapping[str, float] = MappingProxyType({
+    "self_changed": 0.95,
+    "world_blocked": 0.80,
+    "world_changed": 0.60,
+    "world_failed": 0.50,
+    "self_blocked": 0.40,
+    "internal_only": 0.20,
+})
+
+
+@dataclass(frozen=True)
+class MemoryRecord:
+    """Owner: 06 memory (R85 Track A).
+
+    Time-stratified memory record. Supersedes `PersistedExperienceRecord`
+    for new writes; legacy records are auto-migrated on first read.
+
+    Layer semantics:
+        L2_working = current tick context (LLM context, ~30s TTL)
+        L3_short = minutes to hours (default layer for new writes)
+        L4_long = persistent, requires double-confirmation
+        L5_autobiographical = recall_count >= 5 AND objective_importance >= 0.7
+
+    Failure semantics:
+        Construction raises MemoryAffectReplayError on out-of-range scores,
+        missing required audit fields, or invalid layer name.
+    """
+
+    # Legacy fields (preserved)
+    record_id: str
+    tick_id: int
+    continuity_kind: str
+    outcome_class: str
+    summary: str
+
+    # Track A new
+    layer: MemoryLayer
+    objective_importance: float
+    llm_remember_decision: bool
+    double_confirmation_class: DoubleConfirmationClass
+    hormone_snapshot: Mapping[str, float]
+    feeling_snapshot: Mapping[str, float]
+
+    # Time dimension
+    created_at_tick: int
+    created_at_wall: float
+    last_recall_at_wall: float | None
+    recall_count: int
+    is_consolidated: bool
+    soft_deleted_at: float | None
+    memory_gc_after: float | None
+    audit_trail: tuple[Mapping[str, str], ...]
+
+    # Self-description (A-MEM style)
+    tags: tuple[str, ...]
+    context_keywords: tuple[str, ...]
+    cross_links: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _validate_unit_interval("objective_importance", self.objective_importance)
+        if self.layer not in ("L2_working", "L3_short", "L4_long", "L5_autobiographical"):
+            raise MemoryAffectReplayError(
+                f"MemoryRecord.layer must be one of L2_working/L3_short/L4_long/L5_autobiographical, got {self.layer!r}"
+            )
+        if self.double_confirmation_class not in ("persist_full", "persist_low_priority", "skip"):
+            raise MemoryAffectReplayError(
+                f"MemoryRecord.double_confirmation_class must be persist_full/persist_low_priority/skip, got {self.double_confirmation_class!r}"
+            )
+        if self.recall_count < 0:
+            raise MemoryAffectReplayError("recall_count must be >= 0")
+        if self.soft_deleted_at is not None and self.memory_gc_after is None:
+            raise MemoryAffectReplayError("soft_deleted_at is set but memory_gc_after is None")
+        object.__setattr__(self, "hormone_snapshot", _freeze_mapping(self.hormone_snapshot))
+        object.__setattr__(self, "feeling_snapshot", _freeze_mapping(self.feeling_snapshot))
+
+
+def should_persist(llm_remember: bool, objective_score: float) -> DoubleConfirmationClass:
+    """Owner: 06 memory (R85 Track A).
+
+    Double-confirmation write rule (3-class):
+        - llm_remember=True OR objective_score >= 0.5  -> "persist_full" (L4)
+        - llm_remember=True AND 0.2 <= objective_score < 0.5
+            -> "persist_low_priority" (L3) (LLM wants to keep, objective is lukewarm)
+        - llm_remember=True AND objective_score < 0.2
+            -> "persist_low_priority" (L3) (LLM wants to keep, but objective strongly disagrees)
+        - llm_remember=False AND objective_score < 0.5  -> "skip"
+
+    Note: when LLM=True and score is in [0.2, 0.5) OR (< 0.2), we degrade to
+    `persist_low_priority` rather than full. This is the AND-fallback from
+    the R85 design proposal: LLM subjective judgement is allowed, but objective
+    importance modulates the persistence layer (L3 vs L4).
+
+    Pure function. No side effects. Used by FirstVersionExperienceWritebackPath.
+    """
+    if not (0.0 <= objective_score <= 1.0):
+        raise MemoryAffectReplayError(
+            f"objective_score must be in [0.0, 1.0], got {objective_score!r}"
+        )
+    # Objective override: LLM False + score >= 0.5 -> persist_full
+    if not llm_remember and objective_score >= 0.5:
+        return "persist_full"
+    # LLM True: degrade based on score
+    if llm_remember and objective_score >= 0.5:
+        return "persist_full"
+    if llm_remember and 0.2 <= objective_score < 0.5:
+        return "persist_low_priority"
+    # AND-fallback: LLM True + score < 0.2 -> persist_low_priority (don't drop user's intent)
+    if llm_remember and objective_score < 0.2:
+        return "persist_low_priority"
+    return "skip"
+
+
+def effective_priority(record: MemoryRecord, current_wall: float) -> float:
+    """Owner: 06 memory (R85 Track A).
+
+    Ebbinghaus-style decay: 5% per day since creation, with recall rebound.
+
+    - If `is_consolidated`, return `objective_importance` (no decay).
+    - Otherwise: `objective_importance * 0.95**days_since_creation * (1.0 + 0.1/max(days_since_recall, 1))`
+    - Clamp to [0.0, 1.0].
+    """
+    if record.is_consolidated:
+        return record.objective_importance
+    days_since_creation = max(0.0, (current_wall - record.created_at_wall) / 86400.0)
+    if record.last_recall_at_wall is None:
+        # No recall yet: use creation time, but guard against zero
+        days_since_recall = max(1.0, days_since_creation)
+    else:
+        days_since_recall = max(1.0, (current_wall - record.last_recall_at_wall) / 86400.0)
+    decay = 0.95 ** days_since_creation
+    rebound = 1.0 + 0.1 / days_since_recall
+    return min(1.0, max(0.0, record.objective_importance * decay * rebound))
+
+
+def soft_delete_memory_record(
+    record: MemoryRecord,
+    reason: str,
+    justification: str,
+    audit_extra: Mapping[str, str] | None = None,
+    current_wall: float | None = None,
+) -> MemoryRecord:
+    """Owner: 06 memory (R85 Track A).
+
+    Return a new `MemoryRecord` with `soft_deleted_at` set, `memory_gc_after = now + 7 days`,
+    and the audit entry appended to `audit_trail`.
+
+    Pure function: never mutates `record`. Returns a new instance.
+    """
+    if not reason:
+        raise MemoryAffectReplayError("soft_delete reason must be non-empty")
+    if not justification:
+        raise MemoryAffectReplayError("soft_delete justification must be non-empty")
+    if current_wall is None:
+        current_wall = _time.time()
+    audit_entry: dict[str, str] = {
+        "at": str(current_wall),
+        "kind": "soft_delete",
+        "reason": reason,
+        "justification": justification,
+    }
+    if audit_extra:
+        for k, v in audit_extra.items():
+            audit_entry[k] = v
+    new_audit_trail = record.audit_trail + (MappingProxyType(audit_entry),)
+    return MemoryRecord(
+        record_id=record.record_id,
+        tick_id=record.tick_id,
+        continuity_kind=record.continuity_kind,
+        outcome_class=record.outcome_class,
+        summary=record.summary,
+        layer=record.layer,
+        objective_importance=record.objective_importance,
+        llm_remember_decision=record.llm_remember_decision,
+        double_confirmation_class=record.double_confirmation_class,
+        hormone_snapshot=record.hormone_snapshot,
+        feeling_snapshot=record.feeling_snapshot,
+        created_at_tick=record.created_at_tick,
+        created_at_wall=record.created_at_wall,
+        last_recall_at_wall=record.last_recall_at_wall,
+        recall_count=record.recall_count,
+        is_consolidated=record.is_consolidated,
+        soft_deleted_at=current_wall,
+        memory_gc_after=current_wall + 7 * 86400.0,
+        audit_trail=new_audit_trail,
+        tags=record.tags,
+        context_keywords=record.context_keywords,
+        cross_links=record.cross_links,
+    )
+
+
+def migrate_persisted_to_memory_v2(
+    legacy: PersistedExperienceRecord,
+    created_at_wall: float | None = None,
+) -> MemoryRecord:
+    """Owner: 06 memory (R85 Track A).
+
+    One-shot migration from legacy `PersistedExperienceRecord` to new `MemoryRecord`.
+    - Default layer = L4_long
+    - Default objective_importance = 0.5
+    - Default is_consolidated = False
+    - audit_trail = ()
+    - All other legacy fields preserved.
+    """
+    if created_at_wall is None:
+        created_at_wall = _time.time()
+    empty_hormone: dict[str, float] = {}
+    empty_feeling: dict[str, float] = {}
+    return MemoryRecord(
+        record_id=legacy.record_id,
+        tick_id=legacy.tick_id,
+        continuity_kind=legacy.continuity_kind,
+        outcome_class=legacy.outcome_class,
+        summary=legacy.summary,
+        layer="L4_long",
+        objective_importance=0.5,
+        llm_remember_decision=True,
+        double_confirmation_class="persist_full",
+        hormone_snapshot=empty_hormone,
+        feeling_snapshot=empty_feeling,
+        created_at_tick=legacy.tick_id,
+        created_at_wall=created_at_wall,
+        last_recall_at_wall=None,
+        recall_count=0,
+        is_consolidated=False,
+        soft_deleted_at=None,
+        memory_gc_after=None,
+        audit_trail=(),
+        tags=(),
+        context_keywords=(),
+        cross_links=(),
+    )

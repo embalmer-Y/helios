@@ -569,3 +569,157 @@ class SalienceGatedReplayCandidateSelector(ReplayCandidateSelector):
             if "high_affect_intensity" not in reasons:
                 reasons.insert(0, "high_affect_intensity")
         return tuple(reasons)
+# =============================================================================
+# R85: objective_importance + promote_layer implementations
+# =============================================================================
+# Owner: 06 memory
+
+from helios_v2.memory.contracts import (
+    MemoryRecord,
+    OUTCOME_CLASS_WEIGHTS,
+    DoubleConfirmationClass,
+)
+
+
+def _safe_get(mapping: Mapping[str, float], key: str, default: float = 0.5) -> float:
+    """Read a float from a mapping with bounds checking; default to 0.5 (mid)."""
+    val = mapping.get(key, default)
+    if not isinstance(val, (int, float)):
+        return default
+    return min(1.0, max(0.0, float(val)))
+
+
+def _novelty_cosine(
+    stimulus_text: str,
+    recent_summaries: Sequence[str],
+    embed_callable: Callable[[str], Sequence[float]] | None = None,
+) -> float:
+    """Compute novelty as 1 - cosine similarity to recent records.
+
+    If `embed_callable` is None, falls back to length-based proxy.
+    """
+    if not recent_summaries:
+        return 0.5  # neutral novelty for empty history
+    if embed_callable is None:
+        # Recency proxy: longer stimulus = more novel
+        return min(1.0, len(stimulus_text) / 200.0)
+    try:
+        v = embed_callable(stimulus_text)
+        if not v:
+            return 0.5
+        sims = []
+        for r in recent_summaries[-20:]:
+            rv = embed_callable(r)
+            if not rv:
+                continue
+            dot = sum(a * b for a, b in zip(v, rv))
+            norm_v = sum(a * a for a in v) ** 0.5
+            norm_rv = sum(a * a for a in rv) ** 0.5
+            if norm_v == 0 or norm_rv == 0:
+                continue
+            sims.append(dot / (norm_v * norm_rv))
+        if not sims:
+            return 0.5
+        max_sim = max(sims)
+        return min(1.0, max(0.0, 1.0 - max_sim))
+    except Exception:
+        return 0.5
+
+
+def objective_importance(
+    stimulus_text: str,
+    hormone_snapshot: Mapping[str, float],
+    feeling_snapshot: Mapping[str, float],
+    outcome_class: str,
+    recent_summaries: Sequence[str] = (),
+    embed_callable: Callable[[str], Sequence[float]] | None = None,
+) -> float:
+    """Owner: 06 memory (R85 Track A).
+
+    Compute objective importance of a stimulus independently of LLM judgment.
+
+    Formula (6 dimensions, weights sum to 1.0):
+        0.25 * stimulus_intensity       (length proxy, 0..1)
+      + 0.20 * cortisol                  (stress response, [0,1])
+      + 0.15 * arousal                   (feeling, [0,1])
+      + 0.15 * outcome_class_weight      ([0.20..0.95])
+      + 0.15 * novelty                   (1 - max cosine, [0,1])
+      + 0.10 * (1 - social_safety)       (relationship risk, [0,1])
+
+    Returns a value in [0.0, 1.0].
+    """
+    if not stimulus_text:
+        return 0.0
+    # 1. stimulus_intensity (length proxy: 0 chars -> 0, 200+ chars -> 1.0)
+    intensity = min(1.0, len(stimulus_text) / 200.0)
+    # 2. cortisol (stress)
+    cortisol = _safe_get(hormone_snapshot, "cortisol", 0.5)
+    # 3. arousal
+    arousal = _safe_get(feeling_snapshot, "arousal", 0.5)
+    # 4. outcome_class_weight
+    oc_weight = OUTCOME_CLASS_WEIGHTS.get(outcome_class, 0.5)
+    # 5. novelty
+    novelty = _novelty_cosine(stimulus_text, recent_summaries, embed_callable)
+    # 6. (1 - social_safety)
+    social_safety = _safe_get(feeling_snapshot, "social_safety", 0.5)
+    relationship_risk = 1.0 - social_safety
+
+    score = (
+        0.25 * intensity
+        + 0.20 * cortisol
+        + 0.15 * arousal
+        + 0.15 * oc_weight
+        + 0.15 * novelty
+        + 0.10 * relationship_risk
+    )
+    return min(1.0, max(0.0, score))
+
+
+def promote_layer(record: MemoryRecord) -> MemoryRecord:
+    """Owner: 06 memory (R85 Track A).
+
+    Apply layer promotion rules per R85 design:
+        L3_short -> L4_long when recall_count >= 2 (synaptic tagging)
+        L4_long -> L5_autobiographical when recall_count >= 5 AND objective_importance >= 0.7
+        (Other transitions are no-ops.)
+
+    Returns a new MemoryRecord with the promoted layer and (for L5) `is_consolidated=True`.
+    """
+    new_layer = record.layer
+    new_consolidated = record.is_consolidated
+    if record.layer == "L3_short" and record.recall_count >= 2:
+        new_layer = "L4_long"
+        new_consolidated = True
+    elif (
+        record.layer == "L4_long"
+        and record.recall_count >= 5
+        and record.objective_importance >= 0.7
+    ):
+        new_layer = "L5_autobiographical"
+        new_consolidated = True
+    if new_layer == record.layer and new_consolidated == record.is_consolidated:
+        return record  # no-op
+    return MemoryRecord(
+        record_id=record.record_id,
+        tick_id=record.tick_id,
+        continuity_kind=record.continuity_kind,
+        outcome_class=record.outcome_class,
+        summary=record.summary,
+        layer=new_layer,
+        objective_importance=record.objective_importance,
+        llm_remember_decision=record.llm_remember_decision,
+        double_confirmation_class=record.double_confirmation_class,
+        hormone_snapshot=record.hormone_snapshot,
+        feeling_snapshot=record.feeling_snapshot,
+        created_at_tick=record.created_at_tick,
+        created_at_wall=record.created_at_wall,
+        last_recall_at_wall=record.last_recall_at_wall,
+        recall_count=record.recall_count,
+        is_consolidated=new_consolidated,
+        soft_deleted_at=record.soft_deleted_at,
+        memory_gc_after=record.memory_gc_after,
+        audit_trail=record.audit_trail,
+        tags=record.tags,
+        context_keywords=record.context_keywords,
+        cross_links=record.cross_links,
+    )

@@ -3181,3 +3181,74 @@ class AggressiveRadicalChannelArbitrationPostProcessor:
             op=self._OP_NAME,
             outcome=outcome,
         )
+
+@dataclass
+class R85MemoryClassifierBridge:
+    """Owner: composition (R85 Track A glue).
+
+    Purpose:
+        Decide which writeback records graduate to MemoryRecord (L3 / L4) and which are
+        skipped, using the `should_persist` (LLM x objective) double confirmation rule.
+
+    Notes:
+        - Reads `PersistedExperienceRecord` items from an upstream source (typically
+          `ExperienceRecordBridge.build_records`).
+        - For each record, computes an objective importance score from its summary text
+          and the supplied hormone / feeling snapshot.
+        - Treats LLM `remember_this=True` as the LLM-positive input; if the source records
+          carry no LLM signal, the bridge defaults to `llm_remember=True` (legacy behavior:
+          the existing writeback layer already filtered by LLM).
+        - Returns a tuple of `MemoryRecord` items; skip is represented by absence.
+        - Pure function, no I/O, no clock reads (caller passes `created_at_wall`).
+    """
+
+    def __init__(
+        self,
+        *,
+        llm_remember_default: bool = True,
+    ) -> None:
+        self._llm_remember_default = bool(llm_remember_default)
+
+    def build_memory_records(
+        self,
+        persisted_records: tuple["PersistedExperienceRecord", ...],
+        *,
+        tick_id: int,
+        hormone_snapshot: "Mapping[str, float] | None" = None,
+        feeling_snapshot: "Mapping[str, float] | None" = None,
+        llm_remember_per_record: "Mapping[str, bool] | None" = None,
+        created_at_wall: float,
+        recent_summaries: "tuple[str, ...]" = (),
+    ) -> "tuple[MemoryRecord, ...]":
+        from helios_v2.memory.classifier import classify_for_persistence, make_memory_record
+
+        out: list = []
+        h = dict(hormone_snapshot or {})
+        f = dict(feeling_snapshot or {})
+        lpr = dict(llm_remember_per_record or {})
+        for pr in persisted_records:
+            llm_remember = lpr.get(pr.record_id, self._llm_remember_default)
+            c = classify_for_persistence(
+                llm_remember=llm_remember,
+                stimulus_text=pr.summary or "",
+                hormone_snapshot=h,
+                feeling_snapshot=f,
+                outcome_class=pr.outcome_class,
+                recent_summaries=recent_summaries,
+            )
+            if c.target_layer is None:
+                continue
+            mem = make_memory_record(
+                record_id=f"memory:{pr.record_id}",
+                tick_id=tick_id,
+                outcome_class=pr.outcome_class,
+                continuity_kind=pr.continuity_kind,
+                summary=pr.summary or "",
+                classification=c,
+                llm_remember=llm_remember,
+                hormone_snapshot=h,
+                feeling_snapshot=f,
+                created_at_wall=created_at_wall,
+            )
+            out.append(mem)
+        return tuple(out)

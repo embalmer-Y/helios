@@ -37,6 +37,23 @@ from .engine import (
     MemoryFormationPath,
     ReplayCandidateSelector,
     SalienceGatedReplayCandidateSelector,
+    objective_importance,
+    promote_layer,
+)
+from .contracts import (
+    MemoryRecord,
+    MemoryLayer,
+    DoubleConfirmationClass,
+    OUTCOME_CLASS_WEIGHTS,
+    should_persist,
+    effective_priority,
+    soft_delete_memory_record,
+    migrate_persisted_to_memory_v2,
+)
+from .classifier import (
+    MemoryClassification,
+    classify_for_persistence,
+    make_memory_record,
 )
 
 __all__ = [
@@ -47,12 +64,17 @@ __all__ = [
     "MemoryAffectReplayEngine",
     "MemoryAffectReplayError",
     "MemoryBindingContext",
+    "MemoryClassification",
     "MemoryContentPacket",
     "MemoryFamily",
     "MemoryFormationPath",
     "MemoryFormationState",
     "MemoryLearnedParameterCategory",
+    "MemoryRecord",
+    "MemoryLayer",
     "MemoryReplayCandidate",
+    "DoubleConfirmationClass",
+    "OUTCOME_CLASS_WEIGHTS",
     "PredictionMismatchEvidence",
     "PublishMemoryFormationStateOp",
     "PublishReplayCandidatesOp",
@@ -62,5 +84,13 @@ __all__ = [
     "ReplayCandidateSelector",
     "ReplayReason",
     "SalienceGatedReplayCandidateSelector",
+    "classify_for_persistence",
+    "effective_priority",
+    "make_memory_record",
+    "migrate_persisted_to_memory_v2",
+    "objective_importance",
+    "promote_layer",
+    "should_persist",
+    "soft_delete_memory_record",
     "validate_prediction_mismatch_evidence",
 ]
