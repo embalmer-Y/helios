@@ -1,6 +1,6 @@
 # Helios v2 Architecture Boundaries
 
-> Status: boundary-truth snapshot, last synced R83 (10-min preflight + 6-axis Turing-style evaluation; see §10.e)
+> Status: boundary-truth snapshot, last synced R84 (P5 memory-fidelity probe — A3 from stub 0.5 to real 0.600; see §10.f)
 > Scope: implementation-aligned owner and dependency truth for `helios_v2`
 
 ## 1. Purpose
@@ -379,18 +379,41 @@ R83 is the **final acceptance gate** of the R79 plan. It adds a 10-minute end-to
 
 **Owner boundary**:
 
-- `helios_v2.tests.r83` (new package, NOT a product owner; sits in the test tree) introduces the `LongRunner` dataclass (consumes `ScriptedCliSource` + `NoopLlmGateway` / `RealLlmGateway` + `assemble_runtime(deterministic_thought=False, gateway=gateway)`), the `JudgeProbe` (fail-soft external LLM judge), the `MemoryProbe` stub (returns 0.5 with `not-implemented` reason), the `Verdict` frozen dataclass + `compute()` static method, and the `R83ReportBuilder` Markdown writer. None of these modules mutate any owner state; they are pure read-side consumers.
+- `helios_v2.tests.r83` (new package, NOT a product owner; sits in the test tree) introduces the `LongRunner` dataclass (consumes `ScriptedCliSource` + `NoopLlmGateway` / `RealLlmGateway` + `assemble_runtime(deterministic_thought=False, gateway=gateway)`), the `JudgeProbe` (fail-soft external LLM judge), the `MemoryProbe` (R84-replaced: real R10 + R15 + experience_store end-to-end probe; was a stub returning 0.5 — see §10.f), the `Verdict` frozen dataclass + `compute()` static method, and the `R83ReportBuilder` Markdown writer. None of these modules mutate any owner state; they are pure read-side consumers.
 - `helios_v2.evaluation.r82_drift` (the `17 evaluation` owner) is reused as-is: R83's `LongRunner._score_a5` consumes the R79-D JSONL via `AggressiveRadicalDriftEvaluator.evaluate()` and projects `overall_drift_score` into the A5 axis score via `0.5 + min(drift * 4.0, 0.5)`. The evaluator is **not modified** by R83.
 - `helios_v2.tests.r79d.framework` (the R79-D baseline framework) is reused as-is: R83's `LongRunner.run` calls `inject_v3_prompt(handle)` and reads `ScriptedCliSource` / `RealLlmGateway` / `NoopLlmGateway` directly. R83 does not modify any R79-D module.
 
 **Cross-owner reads**: R83 reads from the R79-D JSONL trail (via R82's evaluator) and from the live `helios_v2` runtime (via `assemble_runtime` + `handle.tick()`). R83 does not write to the trail except for its own `r83_longrun.jsonl` (which is a sibling, not a consumer, of the R79-D trail).
 
-**No new owner is created and no owner boundary is altered**. R83's 8-state × 5-variant = 40-stimulus catalog is deterministic and reproducible (no LLM-generated stimuli). The 6 axes (A1 linguistic / A2 bio / A3 memory / A4 agency / A5 cross-tick / A6 coherence) are computed by independent evaluators: A1/A4/A6 by `JudgeProbe` (external LLM, fail-soft), A2 by `_score_a2` (algorithmic, 6 expected_response family rules), A3 by `MemoryProbe` stub (P5 unblocker pending), A5 by R82 drift evaluator.
+**No new owner is created and no owner boundary is altered**. R83's 8-state × 5-variant = 40-stimulus catalog is deterministic and reproducible (no LLM-generated stimuli). The 6 axes (A1 linguistic / A2 bio / A3 memory / A4 agency / A5 cross-tick / A6 coherence) are computed by independent evaluators: A1/A4/A6 by `JudgeProbe` (external LLM, fail-soft), A2 by `_score_a2` (algorithmic, 6 expected_response family rules), A3 by `MemoryProbe` (R84: real R10 + R15 + experience_store end-to-end probe; was a stub in R83), A5 by R82 drift evaluator.
 
-**Acceptance** (32 unit tests):
+**Acceptance** (40 unit tests, including R84 additions):
 
 - 32 R83 unit tests in `tests/test_r83_smoke.py` (8 catalog / 4 StateBlock validation / 4 verdict / 3 A2 algorithmic / 2 A2 clamping / 2 R83Scores.mean/.min / 2 _delta / 4 LongRunner smoke / 2 judge probe / 2 CLI / 1 memory stub / 1 report builder / 1 _io wrapper / 1 R21 self-guard).
-- Full suite: 979 passed (947 R82 baseline + 32 R83 new + 0 regression); R21 ad-hoc logging guard 1/1 green; composition owner-boundary guard green.
+- 8 R84 unit tests added to `tests/test_r83_smoke.py` (no-records fallback / no-handle fallback / no-store fallback / real handle returns sub-metrics / 8-state per-state breakdown / recall-hit-rate-zero / latency-score formula / end-to-end CLI smoke).
+- Full suite: 987 passed (979 R83 baseline + 8 R84 new + 0 regression); R21 ad-hoc logging guard 1/1 green; composition owner-boundary guard green.
+
+## 10.f R84 P5 Memory-Fidelity Probe (baseline_implementation)
+
+R84 is the **first P5 wiring task**: it replaces the R83 A3 axis stub with a real end-to-end probe that exercises the runtime's R10 directed-retrieval path + R15 experience-writeback path + persistence experience_store. R84 is a *consumer* of owners 10, 15, and 17 (persistence); it modifies **only** the `tests/r83/` module tree (specifically `memory_probe.py`, `long_runner.py`, `__main__.py`, `report_builder.py`). No owner code is modified.
+
+**Boundary shape**:
+
+- `helios_v2.tests.r83.memory_probe` (R84: replaced the stub with a real implementation) introduces `MemoryProbe` (handle-bound probe), `MemoryProbeResult` (frozen dataclass: score / reasoning / 3 sub-metrics / per-state breakdown / n_probes_succeeded / n_probes_failed), and `PerStateA3Breakdown` (frozen dataclass: state_id / n_ticks / n_remember_this_true / retrieval_latency_ms / recall_hit_rate / writeback_persistence_rate / latency_score / a3_score / probe_reasoning). The probe is fail-soft: no-handle / no-store / all-probes-failed ⇒ A3=0.5 with a discriminating reasoning string (no more literal `not-implemented`).
+- `helios_v2.tests.r83.long_runner` (R84: edit) gains `memory_probe_factory: Callable[[handle], MemoryProbe]` field. After the 40-tick preflight completes, the runner invokes the factory with the live `handle` and replaces the A3 stub 0.5 with the real probe's score. `R83Scores` gains `a3_sub_metrics: MemoryProbeResult | None` + `a3_per_state: tuple[PerStateA3Breakdown, ...]` fields.
+- `helios_v2.tests.r83.__main__` (R84: edit) constructs `MemoryProbe(handle=handle)` factory and passes it to `LongRunner(...)`. CLI flags are unchanged.
+- `helios_v2.tests.r83.report_builder` (R84: edit) emits an "A3 memory-fidelity sub-metrics (R84)" section with retrieval latency / recall hit rate / writeback persistence + 8 per-state breakdown rows.
+
+**Cross-owner reads**: R84 reads from `handle.experience_store` (persistence owner, R78-wired auto-store) and exercises the public R10 path API (`FirstVersionDirectedRetrievalPath.plan_and_select` + `StoreBackedDirectedMemoryCandidateProvider`) and the persistence store APIs (`count()` / `read_recent()`). R84 does not modify any owner code.
+
+**R10 + R15 wiring is already complete** (R78 closed the de-shim gap; R10 retrieval engine + R15 writeback engine + experience_store are wired into `assemble_runtime`). R83's `MemoryProbe` was a stub because the A3 evaluation was deferred until the P5 unblocker landed; R84 is the unblocker. After R84 ships, A3 is measured on every R83 run, and R85+ can use the A3 numbers to actually update `mandatory_learned_parameters`.
+
+**Acceptance** (8 R84 unit tests):
+
+- 8 R84 unit tests in `tests/test_r83_smoke.py` (no-records fallback / no-handle fallback / no-store fallback / real handle returns sub-metrics / 8-state per-state breakdown / recall-hit-rate-zero / latency-score formula / end-to-end CLI smoke).
+- Full suite: 987 passed (979 R83 baseline + 8 R84 new + 0 regression); R21 ad-hoc logging guard 1/1 green; noop-run A3 = 0.600 (real sub-metrics: latency=0.7ms, recall=0.00, persistence=1.00) instead of stub 0.500.
+
+**No new owner is created and no owner boundary is altered**.
 
 ## 11. Startup Gate Rule
 

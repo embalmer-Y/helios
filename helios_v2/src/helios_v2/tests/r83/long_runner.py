@@ -64,6 +64,9 @@ class R83Scores:
     per_block: tuple[BlockSummary, ...]
     total_ticks: int
     elapsed_seconds: float
+    # R84: optional A3 sub-metric details (set when MemoryProbe ran).
+    a3_sub_metrics: Any = None  # MemoryProbeResult | None
+    a3_per_state: tuple = ()  # tuple[PerStateA3Breakdown, ...]
 
     def mean(self) -> float:
         return (
@@ -210,11 +213,18 @@ class LongRunner:
     Reuses the R79-D framework's `ScriptedCliSource` and gateway
     primitives. R83 is a pure driver — it observes the runtime but
     does not steer it.
+
+    R84: optionally accepts a `memory_probe_factory: Callable[[Any],
+    MemoryProbe]`. When provided, the factory is invoked after the
+    40-tick run completes (with the live `handle` as the only
+    argument) and the resulting probe's `score()` is used to set A3
+    instead of the stub 0.5.
     """
 
     blocks: list[StateBlock] = field(default_factory=load_state_blocks)
     n_ticks_per_block: int = 5
     noop: bool = False
+    memory_probe_factory: Any = None  # R84: Callable[[handle], MemoryProbe]
 
     def run(
         self,
@@ -333,8 +343,28 @@ class LongRunner:
         else:
             a2 = 0.5
 
-        # A3 is set by the CLI layer (MemoryProbe); default 0.5
+        # A3 is set by the MemoryProbe (R84: real; R83-baseline: stub 0.5).
+        # When `self.memory_probe_factory` is provided, the factory is
+        # called with the live `handle`, the resulting probe is invoked
+        # against the runtime's experience_store, and its score is used.
+        # Otherwise fall back to the stub 0.5 for backward compat.
         a3 = 0.5
+        a3_result: Any = None
+        if self.memory_probe_factory is not None and handle is not None:
+            try:
+                probe = self.memory_probe_factory(handle)
+                a3_result = probe.score(jsonl_path)
+                a3 = a3_result.score
+                _io.write_line(
+                    f"[r83] MemoryProbe: a3={a3:.3f} "
+                    f"reason={a3_result.reasoning[:80]!r}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                _io.write_line(
+                    f"[r83] MemoryProbe failed: {type(exc).__name__}: {exc}; "
+                    f"falling back to 0.5"
+                )
+                a3 = 0.5
 
         scores = R83Scores(
             a1_linguistic_naturalness=a1,
@@ -347,6 +377,8 @@ class LongRunner:
             per_block=tuple(per_block),
             total_ticks=len(records),
             elapsed_seconds=duration_minutes * 60.0,
+            a3_sub_metrics=a3_result,
+            a3_per_state=a3_result.per_state if a3_result is not None else (),
         )
         return scores
 

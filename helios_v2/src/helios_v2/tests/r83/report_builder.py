@@ -73,6 +73,48 @@ class R83ReportBuilder:
             desc = AXIS_DESCRIPTIONS.get(axis, "")
             lines.append(f"| `{axis}` | {desc} | `{value:.3f}` |")
         lines.append("")
+
+        # R84: A3 sub-metric breakdown (when MemoryProbe ran)
+        a3_sub = self.scores.a3_sub_metrics
+        a3_per_state = self.scores.a3_per_state
+        if a3_sub is not None and (a3_per_state or a3_sub.reasoning):
+            lines.append("## A3 memory-fidelity sub-metrics (R84)")
+            lines.append("")
+            if a3_sub.retrieval_latency_ms is not None:
+                lines.append(
+                    f"- **Retrieval latency (avg)**: `{a3_sub.retrieval_latency_ms:.2f}ms`"
+                )
+            if a3_sub.recall_hit_rate is not None:
+                lines.append(
+                    f"- **Recall hit rate (avg)**: `{a3_sub.recall_hit_rate:.3f}`"
+                )
+            if a3_sub.writeback_persistence_rate is not None:
+                lines.append(
+                    f"- **Writeback persistence (avg)**: "
+                    f"`{a3_sub.writeback_persistence_rate:.3f}`"
+                )
+            lines.append(
+                f"- **Probes succeeded / total**: "
+                f"`{a3_sub.n_probes_succeeded} / "
+                f"{a3_sub.n_probes_succeeded + a3_sub.n_probes_failed}`"
+            )
+            lines.append(f"- **Reasoning**: `{a3_sub.reasoning}`")
+            lines.append("")
+            if a3_per_state:
+                lines.append("| State | n_ticks | n_remember | "
+                             "latency_ms | recall | persistence | A3 |")
+                lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+                for ps in a3_per_state:
+                    lat = (f"{ps.retrieval_latency_ms:.1f}"
+                           if ps.retrieval_latency_ms is not None else "—")
+                    lines.append(
+                        f"| `{ps.state_id}` | `{ps.n_ticks}` | "
+                        f"`{ps.n_remember_this_true}` | {lat} | "
+                        f"`{ps.recall_hit_rate:.2f}` | "
+                        f"`{ps.writeback_persistence_rate:.2f}` | "
+                        f"`{ps.a3_score:.3f}` |"
+                    )
+                lines.append("")
         lines.append("## Per-block detail (A2 algorithmic scores)")
         lines.append("")
         lines.append("| State | n_ticks | A2 | Judge A1 | Judge A4 | Judge A6 |")

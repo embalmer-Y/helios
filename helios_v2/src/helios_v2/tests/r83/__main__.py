@@ -64,8 +64,13 @@ def main(argv: list[str] | None = None) -> int:
     _io.write_line(f"[r83] no_judge: {args.no_judge}")
     _io.write_line(f"[r83] output_dir: {output_dir}")
 
-    # Build the long runner
-    runner = LongRunner(noop=args.noop)
+    # Build the long runner. R84 wires the MemoryProbe factory so
+    # A3 is real (R10 + R15 + experience_store) instead of stub 0.5.
+    from .memory_probe import MemoryProbe
+    runner = LongRunner(
+        noop=args.noop,
+        memory_probe_factory=lambda handle: MemoryProbe(handle=handle),
+    )
     scores = runner.run(
         duration_minutes=args.duration,
         output_dir=output_dir,
