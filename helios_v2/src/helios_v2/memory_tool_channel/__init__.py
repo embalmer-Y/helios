@@ -33,6 +33,11 @@ from .engine import (
     apply_quota_and_governance,
     QuotaGate,
 )
+from .sub_drivers import (
+    SubDriverDeps,
+    build_sub_drivers,
+    default_sub_driver_deps,
+)
 
 __all__ = [
     # Constants
@@ -46,6 +51,7 @@ __all__ = [
     "MemoryToolResult",
     "MemoryToolQuotaConfig",
     "MemoryToolChannelState",
+    "SubDriverDeps",
     # Errors
     "MemoryToolChannelError",
     # Engine
@@ -54,4 +60,6 @@ __all__ = [
     "MemoryToolChannelDriver",
     "apply_quota_and_governance",
     "QuotaGate",
+    "build_sub_drivers",
+    "default_sub_driver_deps",
 ]

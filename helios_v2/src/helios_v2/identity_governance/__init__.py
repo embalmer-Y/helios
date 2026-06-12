@@ -21,6 +21,7 @@ from .contracts import (
     RevisionStatus,
 )
 from .engine import FirstVersionIdentityGovernancePath, IdentityGovernanceEngine
+from .forget_permission import GovernanceVerdict, check_forget_permission
 
 __all__ = [
     "AppliedIdentityState",
@@ -30,6 +31,7 @@ __all__ = [
     "GovernancePressureLevel",
     "GovernancePressureState",
     "GovernanceRejectionReason",
+    "GovernanceVerdict",
     "IdentityGovernanceAPI",
     "IdentityGovernanceConfig",
     "IdentityGovernanceEngine",
@@ -43,4 +45,5 @@ __all__ = [
     "PublishRevisionDecisionOp",
     "RevisionDecision",
     "RevisionStatus",
+    "check_forget_permission",
 ]
