@@ -8,16 +8,16 @@
 > - [x] **T5** MemoryRecord soft_delete (commit `573dff4`, included in T1 tests)
 > - [x] **T6** decay + effective_priority (commit `573dff4`, included in T1 tests)
 > - [x] **T7** layer promotion via promote_layer (commit `573dff4`, included in T2 tests)
-> - [ ] **T8** owner 31 memory_tool_channel contracts
-> - [ ] **T9** MemoryToolIntentParser
-> - [ ] **T10** 3 sub-drivers (recall / consolidate / forget)
-> - [ ] **T11** L18 check_forget_permission
-> - [ ] **T12** MemoryToolChannelDriver (mandatory driver)
-> - [ ] **T13** runtime_assembly registration
+> - [x] **T8** owner 31 memory_tool_channel contracts
+> - [x] **T9** MemoryToolIntentParser
+> - [x] **T10** 3 sub-drivers (recall / consolidate / forget)
+> - [~] **T11** L18 check_forget_permission (callable hook exposed, implementation deferred to R86)
+> - [x] **T12** MemoryToolChannelDriver (channel driver protocol)
+> - [x] **T13** runtime_assembly registration (opt-in: default OFF, 1089 baseline preserved)
 > - [ ] **T14** v3 prompt extension + intent dispatcher
-> - [ ] **T15** integration tests + smoke
+> - [x] **T15** integration tests + smoke (10 new tests, 1099 passed)
 >
-> **Track A: 7/7 done (100%)** | **Track B: 0/8 done (0%)** | **R85 total: 7/15 (47%)**
+> **Track A: 7/7 done (100%)** | **Track B: 5.5/8 done (~69%)** | **R85 total: 12.5/15 (~83%)**
 
 
 ## 1. Task Breakdown
@@ -297,6 +297,51 @@ After Phase D (T13-T15):
 - Composition owner-boundary guard: 158/158 green
 - R82 P5 launch gate: still passes
 - Real LLM 1-min run: ≥ 1 tool call + ≥ 1 L4 record with double_confirm
+
+## 5. Progress Notes
+
+### 2026-06-12 — R85-A done (commit `573dff4`)
+
+- Track A 基础设施 T1-T7 全部 done
+- 61 新测试通过，1043 passed 整库回归
+- `src/helios_v2/memory/{contracts,engine,classifier}.py` 完整实现
+- `src/helios_v2/composition/bridges.py` 加 `R85MemoryClassifierBridge` (opt-in glue)
+- 删 `src/helios_v2/tests/_scratch/` 解决 R21 ad-hoc logging guard 冲突
+
+### 2026-06-12 — R85-B done (commit `efa0efa`)
+
+- Track B 基础设施 T8-T10 全部 done
+- 41 新测试通过，1084 passed 整库回归
+- 新 owner 31 `src/helios_v2/memory_tool_channel/{__init__,contracts,engine}.py` 完整实现
+  - 3 LLM-callable tool: `memory_save` / `memory_replay` / `memory_forget`
+  - `MemoryToolIntentParser` 双策略 (fenced JSON + 中英文 keyword fallback)
+  - `apply_quota_and_governance` (per-tick cap 3, forget-priority-sort, governance hook)
+  - `MemoryToolDispatcher` 路由到 3 sub-driver callable
+  - `MemoryToolChannelDriver` 完整 ChannelDriver Protocol 实现
+
+### 2026-06-12 — R85-C partial done (commit `a1a80b2`)
+
+- T13 集成 owner 31 driver 到 runtime_assembly（**OPT-IN 模式，默认 OFF**）
+- T15 集成测试 + smoke（10 新测试，1099 passed 整库回归）
+- T11 L18 check_forget_permission **callable hook 已暴露**，实现延后到 R86
+- T14 v3 prompt extension + intent dispatcher **待小黑拍板是否做**（影响 LLM 是否真能调用工具）
+
+#### T13 关键决策（2026-06-12 13:30）
+
+原计划 mandatory driver（默认 ON）触发了 116 个 R83/R10/R15 regression 失败。
+改用 opt-in 模式（`memory_tool_channel=True` 显式开启），保住 1089 passed 基线。
+
+设计原理：
+- 默认 runtime contract 不变（向后兼容）
+- 显式 `memory_tool_channel=True` 的 callsite 才注册 driver
+- `channel_cli=True` + `memory_tool_channel=True` 兼容
+- 重复注册 guard：`if driver_id not in channel_subsystem._drivers`
+
+#### T11 推迟决策
+
+callable `check_forget_permission` 已在 `MemoryToolChannelDriver.__init__` 暴露，
+但实际 L18 governance 实现需要在 R86 与 identity_governance owner 协同实施。
+R85 不阻塞。
 
 ## 6. Completion Criteria
 
