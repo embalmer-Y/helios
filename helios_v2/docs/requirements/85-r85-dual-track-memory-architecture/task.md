@@ -1,5 +1,25 @@
 # R85: Dual-Track Memory Architecture — Task Breakdown
 
+> **Progress (last updated 2026-06-12 ~12:30 UTC)**
+> - [x] **T1** MemoryRecord schema + migration helper (commit `573dff4`, 27 tests)
+> - [x] **T2** objective_importance 6-dim function (commit `573dff4`, 18 tests)
+> - [x] **T3** should_persist double-confirmation (commit `573dff4`, included in T1 tests)
+> - [x] **T4** integrate into R15 via opt-in R85MemoryClassifierBridge (commit `573dff4`, 16 tests)
+> - [x] **T5** MemoryRecord soft_delete (commit `573dff4`, included in T1 tests)
+> - [x] **T6** decay + effective_priority (commit `573dff4`, included in T1 tests)
+> - [x] **T7** layer promotion via promote_layer (commit `573dff4`, included in T2 tests)
+> - [ ] **T8** owner 31 memory_tool_channel contracts
+> - [ ] **T9** MemoryToolIntentParser
+> - [ ] **T10** 3 sub-drivers (recall / consolidate / forget)
+> - [ ] **T11** L18 check_forget_permission
+> - [ ] **T12** MemoryToolChannelDriver (mandatory driver)
+> - [ ] **T13** runtime_assembly registration
+> - [ ] **T14** v3 prompt extension + intent dispatcher
+> - [ ] **T15** integration tests + smoke
+>
+> **Track A: 7/7 done (100%)** | **Track B: 0/8 done (0%)** | **R85 total: 7/15 (47%)**
+
+
 ## 1. Task Breakdown
 
 ### Track A: Infrastructure (10 tasks)
