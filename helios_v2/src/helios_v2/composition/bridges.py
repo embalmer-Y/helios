@@ -1899,6 +1899,10 @@ class FirstVersionEmbodiedPromptRequestBridge:
     """
 
     ready_channels: tuple[str, ...] = ()
+    # R85 T14: when True, the embodied prompt appends the memory-tool section so
+    # the LLM knows it can emit fenced-json memory_save / memory_replay / memory_forget
+    # tool calls. Default-off to keep the v1 fallback prompt byte-for-byte unchanged.
+    memory_tool_channel_enabled: bool = False
 
     def build_requests(
         self,
@@ -1924,6 +1928,7 @@ class FirstVersionEmbodiedPromptRequestBridge:
             "available_channels": _resolved_channels,
             "available_ops": ("reply_message",),
             "forbidden_capabilities": ("direct_execution", "invented_channel"),
+            "memory_tool_channel_enabled": bool(self.memory_tool_channel_enabled),
         }
         identity_boundary_summary = {
             "identity_boundary": "identity revision remains proposal-only and governance-validated",
@@ -2218,6 +2223,9 @@ class SemanticEmbodiedPromptRequestBridge:
     """
 
     ready_channels: tuple[str, ...] = ()
+    # R85 T14: see FirstVersionEmbodiedPromptRequestBridge docstring.
+    memory_tool_channel_enabled: bool = False
+
 
     def build_requests(
         self,
@@ -2246,6 +2254,7 @@ class SemanticEmbodiedPromptRequestBridge:
             "available_channels": _resolved_channels,
             "available_ops": ("reply_message",),
             "forbidden_capabilities": ("direct_execution", "invented_channel"),
+            "memory_tool_channel_enabled": bool(self.memory_tool_channel_enabled),
         }
         identity_boundary_summary = {
             "identity_boundary": "identity revision remains proposal-only and governance-validated",

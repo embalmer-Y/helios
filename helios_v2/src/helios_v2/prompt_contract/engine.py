@@ -230,6 +230,26 @@ Hard rules:
 """
 
 
+_R85_MEMORY_TOOL_PROMPT_SECTION = """\
+
+Memory tools (R85). You have three optional tools for managing your own memory. You do not have to use them — only call a tool when the moment genuinely calls for it. You can issue AT MOST 3 tool calls per tick (forget is limited to 1).
+
+The three tools:
+- memory_save — save something to long-term memory. Use when this moment is worth keeping (a promise, a name, a feeling, a plan).
+- memory_replay — pull something back from memory. Use when you want to think about something earlier.
+- memory_forget — softly delete a memory (governance-checked; not all memories are forgettable). Use sparingly.
+
+Preferred form: emit ONE fenced ```json memory_tool block, with a JSON array of tool calls. Example:
+```json memory_tool
+[{"tool": "memory_save", "content": "the user just called me by my name for the first time", "confidence": 0.9}]
+```
+
+Fallback (Chinese keywords, if you cannot use fenced blocks): at the end of your response, on its own line, write either 记住:<text>, 回想:<query>, or 忘记:<record_id_or_text>.
+
+Tools are optional. If the moment does not call for a tool, do not emit one. If your response is already a JSON object as described above, that is fine — no tools needed.
+"""
+
+
 # Mandatory layer count for the v3 contract: present_field, embodied_state,
 # attention_breakdown, channel_catalog, response_schema, v3_system_prompt.
 # Kept private to the engine module — not part of the owner public surface.
@@ -277,6 +297,10 @@ class AggressiveRadicalEmbodiedPromptPath(EmbodiedPromptPath):
             ready_channels=", ".join(ready_channels) if ready_channels else "(none — you cannot act right now)",
             ready_channel_list_for_validation=ready_channel_list_for_validation,
         )
+        # R85 T14: append the memory-tool section if capability_summary
+        # signals that the memory_tool_channel driver is present.
+        if capability_summary.get("memory_tool_channel_enabled"):
+            system_prompt = system_prompt + _R85_MEMORY_TOOL_PROMPT_SECTION
 
         layers = (
             PromptContractLayer(

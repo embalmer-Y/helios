@@ -1809,10 +1809,12 @@ def assemble_runtime(
             request_provider=(
                 SemanticEmbodiedPromptRequestBridge(
                     ready_channels=_resolved_ready_channels,
+                    memory_tool_channel_enabled=bool(memory_tool_channel_driver),
                 )
                 if semantic_memory_enabled
                 else FirstVersionEmbodiedPromptRequestBridge(
                     ready_channels=_resolved_ready_channels,
+                    memory_tool_channel_enabled=bool(memory_tool_channel_driver),
                 )
             ),
         ),

@@ -53,6 +53,10 @@ class TickRecord:
     salience: dict
     llm_output: dict
     delta: dict
+    # R85 T14: memory tool calls (parsed from LLM output)
+    tool_calls: tuple[dict, ...] = ()
+    # R85 T14: tool dispatch results (post-quota/governance)
+    tool_results: tuple[dict, ...] = ()
 
 
 @dataclass
@@ -408,10 +412,13 @@ def inject_v3_prompt(handle, v3_prompt_text: str | None = None):
     # tick. v3_build_messages reads it lazily so we don't have to thread
     # the result through LlmBackedInternalThoughtPath's _build_messages
     # signature.
-    _r79d_state = {"last_result": None}
+    _r79d_state = {"last_result": None, "last_tool_calls": ()}
 
     def v3_build_messages(self_engine, request, retrieval_bundle, continuation_state):
-        from helios_v2.prompt_contract.engine import _AGGRESSIVE_RADICAL_V3_SYSTEM_PROMPT as _V3_TEMPLATE
+        from helios_v2.prompt_contract.engine import (
+            _AGGRESSIVE_RADICAL_V3_SYSTEM_PROMPT as _V3_TEMPLATE,
+            _R85_MEMORY_TOOL_PROMPT_SECTION,
+        )
         last_result = _r79d_state["last_result"]
         if v3_prompt_text is not None:
             system_content = v3_prompt_text
@@ -419,6 +426,10 @@ def inject_v3_prompt(handle, v3_prompt_text: str | None = None):
             # Build the four {placeholder} values freshly each tick.
             v3_kwargs = _build_v3_placeholders(handle, AggressiveRadicalEmbodiedPromptPath, last_result)
             system_content = _V3_TEMPLATE.format(**v3_kwargs)
+        # R85 T14: when the handle has a registered memory_tool_channel driver,
+        # append the section so the LLM knows it can emit memory-tool calls.
+        if getattr(handle, "memory_tool_channel_driver", None) is not None:
+            system_content = system_content + _R85_MEMORY_TOOL_PROMPT_SECTION
         system_msg = LlmMessage(role="system", content=system_content)
         user_lines = []
         user_lines.append("# Current body state (first-person sense of your own chemistry & feeling)")
@@ -429,6 +440,14 @@ def inject_v3_prompt(handle, v3_prompt_text: str | None = None):
         # lose track of it across the system/user boundary.
         user_lines.append("(body state snapshot is in the system prompt; it will update next tick)")
         user_lines.append("")
+        # R85 T14: surface the previous tick's admitted memory tool calls so
+        # the LLM can see what it just asked to save / replay / forget.
+        last_tool_calls = _r79d_state.get("last_tool_calls") or ()
+        if last_tool_calls:
+            user_lines.append("# Memory tool calls admitted last tick (R85)")
+            for c in last_tool_calls:
+                user_lines.append(f"- {c['tool']}: {c['content'][:80]!r}")
+            user_lines.append("")
         if retrieval_bundle.short_term_context:
             for i, ctx in enumerate(retrieval_bundle.short_term_context):
                 user_lines.append(f"# Recent stimulus #{i+1} (short-term context)")
@@ -631,6 +650,48 @@ def run_experiment(config: ExperimentConfig) -> dict:
         llm_parsed = llm.parsed_json if llm else None
         llm_usage = llm.usage if llm else {}
 
+        # R85 T14: parse LLM raw output for memory-tool calls and dispatch via
+        # the registered driver (if any). Tool results are recorded in the
+        # TickRecord and also stored in the v3 prompt state for the next tick.
+        tool_calls: tuple[dict, ...] = ()
+        tool_results: tuple[dict, ...] = ()
+        mtc_driver = getattr(handle, "memory_tool_channel_driver", None)
+        if mtc_driver is not None and llm is not None and llm.raw_response_text:
+            from helios_v2.memory_tool_channel import MemoryToolIntentParser
+            parser = MemoryToolIntentParser()
+            intents = parser.parse(llm.raw_response_text, tick_id=tick_id)
+            admitted = mtc_driver.set_intents(intents, tick_id=tick_id)
+            # Serialize for the record (calls + results are dataclasses)
+            tool_calls = tuple(
+                {
+                    "tool": c.tool,
+                    "content": c.content,
+                    "record_id_hint": c.record_id_hint,
+                    "confidence": c.confidence,
+                    "intent_id": c.intent_id,
+                }
+                for c in admitted
+            )
+            # Store admitted calls + dispatch results in the v3 prompt state
+            # so the LLM sees the previous tick's tool actions next tick.
+            r79d_v3_state = getattr(handle, "_r79d_v3_state", None)
+            if r79d_v3_state is not None:
+                r79d_v3_state["last_tool_calls"] = tool_calls
+            # Also dispatch if a sub-driver dispatcher is available
+            mtc_dispatcher = getattr(mtc_driver, "_dispatcher", None)
+            if mtc_dispatcher is not None and admitted:
+                results = mtc_dispatcher.dispatch(admitted)
+                tool_results = tuple(
+                    {
+                        "call_id": r.call_id,
+                        "tool": r.tool,
+                        "status": r.status,
+                        "record_id": r.record_id,
+                        "result_summary": r.result_summary,
+                    }
+                    for r in results
+                )
+
         rec = TickRecord(
             tick_id=tick_id,
             stimulus_text=effective_script[tick_id-1],
@@ -651,6 +712,8 @@ def run_experiment(config: ExperimentConfig) -> dict:
                 "usage": llm_usage or {},
             },
             delta=delta,
+            tool_calls=tool_calls,
+            tool_results=tool_results,
         )
         records.append(rec)
         prior_h = h
