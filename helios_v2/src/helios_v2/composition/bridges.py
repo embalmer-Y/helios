@@ -3230,6 +3230,7 @@ class R85MemoryClassifierBridge:
         recent_summaries: "tuple[str, ...]" = (),
     ) -> "tuple[MemoryRecord, ...]":
         from helios_v2.memory.classifier import classify_for_persistence, make_memory_record
+        from helios_v2.memory.engine import promote_layer
 
         out: list = []
         h = dict(hormone_snapshot or {})
@@ -3259,5 +3260,12 @@ class R85MemoryClassifierBridge:
                 feeling_snapshot=f,
                 created_at_wall=created_at_wall,
             )
-            out.append(mem)
+            # T16 consolidation-timing decision C: write-trigger.
+            # Apply promote_layer() on the just-built record. For fresh records this is
+            # a no-op (recall_count=0). Once an external store layer (R86+) starts
+            # tracking recall_count across ticks, this call becomes the consolidation
+            # entry point for the write hot path. Recall-trigger C and idle-fallback D are
+            # explicitly deferred to R86 per the 2026-06-12 16:50 UTC decision.
+            promoted = promote_layer(mem)
+            out.append(promoted)
         return tuple(out)

@@ -1,6 +1,6 @@
 # R85: Dual-Track Memory Architecture — Task Breakdown
 
-> **Progress (last updated 2026-06-12 ~12:30 UTC)**
+> **Progress (last updated 2026-06-12 ~17:00 UTC)**
 > - [x] **T1** MemoryRecord schema + migration helper (commit `573dff4`, 27 tests)
 > - [x] **T2** objective_importance 6-dim function (commit `573dff4`, 18 tests)
 > - [x] **T3** should_persist double-confirmation (commit `573dff4`, included in T1 tests)
@@ -14,10 +14,11 @@
 > - [~] **T11** L18 check_forget_permission (callable hook exposed, implementation deferred to R86)
 > - [x] **T12** MemoryToolChannelDriver (channel driver protocol)
 > - [x] **T13** runtime_assembly registration (opt-in: default OFF, 1089 baseline preserved)
-> - [ ] **T14** v3 prompt extension + intent dispatcher
+> - [x] **T14** v3 prompt extension + intent dispatcher (commit `dfb6f36`, 12 tests)
 > - [x] **T15** integration tests + smoke (10 new tests, 1099 passed)
+> - [x] **T16** consolidation-timing decision C (write-trigger promote_layer) (commit pending, 9 tests)
 >
-> **Track A: 7/7 done (100%)** | **Track B: 5.5/8 done (~69%)** | **R85 total: 12.5/15 (~83%)**
+> **Track A: 7/7 done (100%)** | **Track B: 7/8 done (~88%)** | **R85 total: 14/15 (~93%)**
 
 
 ## 1. Task Breakdown
@@ -342,6 +343,69 @@ After Phase D (T13-T15):
 callable `check_forget_permission` 已在 `MemoryToolChannelDriver.__init__` 暴露，
 但实际 L18 governance 实现需要在 R86 与 identity_governance owner 协同实施。
 R85 不阻塞。
+
+### 2026-06-12 — R85-T14 done (commit `dfb6f36`)
+
+- v3 prompt 加 `_R85_MEMORY_TOOL_PROMPT_SECTION` constant (~700 chars)
+  - 描述 memory_save / memory_replay / memory_forget 3 个 tool
+  - 包含 fenced-JSON 调用示例
+  - 包含中英文 keyword fallback 说明
+- `AggressiveRadicalEmbodiedPromptPath.build` 在
+  `capability_summary["memory_tool_channel_enabled"]` 为 True 时追加 section
+- `FirstVersionEmbodiedPromptRequestBridge` / `SemanticEmbodiedPromptRequestBridge`
+  都加 `memory_tool_channel_enabled: bool = False` 字段
+- `assemble_runtime` 把 driver 存在性 plumb 到 bridge 的 capability_summary
+- R79-D framework 集成:
+  - `TickRecord` 加 `tool_calls` / `tool_results` 字段
+  - `run_experiment` 每 tick 跑 `MemoryToolIntentParser` → `driver.set_intents` → 可选 `dispatcher.dispatch`
+  - `v3_build_messages` 在 `handle.memory_tool_channel_driver` 存在时
+    把 section 追加到 v3 system prompt
+  - `v3_build_messages` 把上 tick admitted 的 tool calls 写到 user message 的
+    "Memory tool calls admitted last tick (R85)" section
+- 新文件 `tests/test_r85_t14_integration.py` — 12 个测试全部通过
+- Smoke (`/tmp/exp1/r85_t14_smoke.py`): opt-in driver + parser + dispatch green;
+  v3 system prompt 包含 memory tool section
+- 1111 passed 整库回归（1099 baseline + 12 T14 新增）
+- R21 ad-hoc logging guard clean
+
+T14 让 LLM 真正能发出 memory tool 调用（通过 fenced-JSON 或 keyword fallback），
+配合 T13 的 opt-in driver 注册，整套 owner 31 → v3 prompt → LLM → driver → sub-driver
+→ 结果回喂下 tick 链路打通。
+
+R85 total 进度: 13.5/15 (~90%)
+- T11 L18 governance 实现留到 R86
+- 巩固时机 5 候选方案待小黑拍板
+- 真 LLM 1-min 端到端验证待做
+
+### 2026-06-12 — R85 consolidation-timing 拍板 (5 候选 → C 写入+recall 触发, D idle 兜底留 R86)
+
+小黑拍板 C+D 组合的"方案 2"（composition 层做、不在 dispatcher / record 内部）。
+
+- **C（write + recall hot path 触发单条 promote_layer）**:
+  - write 路径: T16 在 `R85MemoryClassifierBridge.build_memory_records` 末尾调 `promote_layer`
+  - recall 路径: 推迟到 R86，等 R85 record store 实际落地再挂
+- **D（idle 兜底 batch 重检）**: 推迟到 R86 的 runtime lifecycle hooks 工作
+  - 语义契约已定: "consolidation 是 runtime 责任"
+  - 实施延后: `RuntimeHandle.register_idle_hook` + `heliosd` 心跳回调注册
+- 选 C+D 而非 A（每 tick）的原因: 避免全表扫描，写入/recall 是 LLM 主导的真实 trigger 点
+- 选 β 实施范围（仅 write-trigger）而非 α/γ（含 record store）的原因: 保住 R85 14/15 进度，recall-trigger 跟着 record store 一起做更自然
+
+### 2026-06-12 — R85-T16 done (commit pending)
+
+- T16 consolidation-timing decision C: write-trigger
+- 在 `R85MemoryClassifierBridge.build_memory_records` 末尾追加 `promote_layer(mem)` 调用
+- 新建 record 永远是 L3 + recall=0，promote 实际是 no-op；但 hot path 上 wire-in 完成
+- 未来 R85 record store 落地后，recall_count 可以跨 tick 累积，wire-in 立即生效
+- `pyproject.toml` 加 `[tool.pytest.ini_options]` 排除 `scratch_r79b` 等目录
+- 9 个 T16 测试覆盖: 触发性 / no-op / 多 record / 真实 engine 函数 / 幂等 / 空入 / lazy import / L3→L4 / L4→L5
+- 1120 passed 整库回归（1099 baseline + 12 T14 + 9 T16）
+- R21 ad-hoc logging guard clean
+
+R85 total 进度: 14/15 (~93%)
+- T11 L18 governance 实现留到 R86
+- 巩固时机 recall-trigger 路径留到 R86
+- 巩固时机 D (idle 兜底) 留到 R86
+- 真 LLM 1-min 端到端验证待做
 
 ## 6. Completion Criteria
 
