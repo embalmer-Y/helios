@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R82. Test baseline: 886 passed (network-free).
+> Status: living owner reference. Last synced: R83. Test baseline: 888 passed / 2 skipped (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
