@@ -1,6 +1,6 @@
 # Helios v2 开发路线图（活文档）
 
-> 状态：活文档（前向开发规划）。最近同步：R83。
+> 状态：活文档（前向开发规划）。最近同步：R84。
 > 角色：记录"下一步做什么、大概是哪些 requirement、每个做什么"，避免反复重新推导。
 > 配套：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定验收标准、P0→P7 阶段路线图（上位约束）。
@@ -13,12 +13,13 @@
 
 ## 1. 当前状态（截至最近同步）
 
-- main 测试基线：888 passed / 3 skipped（离线）。
+- main 测试基线：912 passed / 4 skipped（离线）。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
   - G0 长跑稳定（R83：10万 tick legacy-constant 跑通，无崩溃，内存 peak 5.6MB 持平，零泄漏）。
   - G1 owner 有界性（R83 harness：04/05/09/18 逐 tick 有界、无 NaN、无发散，可证伪）。
   - G2 形成/检索/重启接续此前已成立（R45/R34/R42）。
+- **P4 已开篇**：R84 交付首个 effector driver（沙箱化 OS 文件 driver）+ 工具结果 reafference 回流 `02` 闭环机制 + channel-bound 装配泛化为可注册一组 driver。
 - 真实信号驱动：`02–10` 默认语义链、`04` 七通道+双时标+R81 对账、`11` LLM、`18` autonomy。
 - 仍 `baseline_real`：`12–16` 外化链（草稿非授权，无真实外部执行）、`17`（对账逻辑真实但仍标注"流程完成≠真实送达"）。
 
@@ -34,24 +35,28 @@
 | R81 | Hormone-Predict Corroboration | P3 情感链收口；项目首条"模型断言 + owner 对账"路径，P5 学习雏形。 |
 | R82 | 标准生产装配 + 持久化默认化 | `assemble_production_runtime()` 默认 SQLite + R42 checkpoint + embedding；收口 G2。 |
 | R83 | 长跑稳定 + owner 有界性 harness | 可复现长跑 + 逐 owner 有界性 + JSONL 轨迹；CI 档 + opt-in 10万/真实 LLM 档；收口 G0/G1。 |
+| R84 | OS 文件 channel driver（沙箱化 effector） | P4 开篇 + 首个 effector driver（FG-4）。`fs_read/fs_write/fs_list/fs_modify` 限定 sandbox root（`resolve()`+relative 校验，绝对外/`..`/软链逃逸拒绝），异步注入式 executor（测试 inline 确定性 / 生产 ThreadPool 真异步），结果作为 `tool_result` 带 correlation provenance 回流 `02`（efference→reafference 闭环）。失败写回（绝不冒充成功）；写操作受 `allow_write` 门控；readiness=sandbox 存在。channel-bound 装配泛化为 `RuntimeProfile.channel_drivers`（CLI+effector 共存）。纯传输/effector，无认知策略；stdlib-only，无进程/网络。888→912 测试绿。 |
 
-## 3. 近期队列：P4 工具入口 + P0–P3 100% 收尾
+## 3. 近期队列：P4 工具 + P0–P3 100% 收尾
 
-### R84 — OS Channel Driver：文件操作（沙箱化）
-- 做什么：`30` 框架下新增 OS 文件驱动（读/写/列目录/改文件，限定 sandbox root + 路径逃逸防护）；执行结果作为 inbound `RawSignal` 回流 `02`。
-- 意义：FG-4 工具回流闭环的第一条端到端链；最干净、风险最低的 P4 切片。
-- 触及：`helios_v2.channel.drivers.*`、composition channel-bound 装配 seam。依赖：R30/R31。
+### R85 — LLM 驱动的 planner 工具选择（autonomous tool use）
+- 做什么：让 `11` 思考产生工具意图 → `12` 行动外化 → `13` planner 经 function-calling **自主选择/绑定/发起** `fs_*`（及后续 driver）op，取代 R84 端到端验证里"确定性注入决策"的占位。结果回流 `02` 后 `11` 能据此再思考。
+- 意义：收口 FG-4.2/4.3 真正的"思考→工具→观察→再思考"自主闭环（R84 只交付 effector 与回流机制，不含自主选择）。
+- 触及：`helios_v2.internal_thought`（工具意图结构化输出）、`helios_v2.action_externalization`、`helios_v2.planner_bridge`（function-calling 选择/绑定）、`25` LLM 工具调用、composition 装配 seam。依赖：R84、R26/R27。
+- **开工前需确认**：工具意图的结构化 schema 形状、planner 绑定 op→driver 的选择策略边界（owner 归属：选择归 `13`，绝不回灌 `11`）。
 
-### R85 — OS Channel Driver：命令执行 + 治理 fail-closed ⚠️ 高风险
+### R86 — OS Channel Driver：命令执行 + 治理 fail-closed ⚠️ 高风险
 - 做什么：命令执行驱动，default-deny + allowlist；high-risk op（`rm -rf`/`sudo`/写 helios 自身代码）经 `13` planner + `14` 治理 fail-closed 强校验兜底；失败/拒绝/不可用正式写回。
 - 意义：达 Claude Code CLI 级本机操作能力，但受治理。
-- 触及：新驱动 + `13`/`14` 治理路径。依赖：R84。
+- 触及：新驱动（复用 R84 的 effector + executor + reafference 范式）+ `13`/`14` 治理路径。依赖：R84、R85。
 - **开工前需主人拍板**：allowlist 粒度、sandbox root 选址、哪些算 high-risk、首版是否禁止写自身代码（建议禁，留 P7）。
 
-### R86 — Consequence-Truth 对账升级
-- 做什么：借 R84/R85 的真实 effector，把 `17`/`23` 的 consequence corroboration 从"流程完成诚实标注"升级为**真实送达可证伪**（收口阻塞点 B4）；先侦察 `_SHIM_DERIVED_DIMENSIONS` 覆盖度再补判别。
+### R87 — Consequence-Truth 对账升级
+- 做什么：借 R84/R86 的真实 effector，把 `17`/`23` 的 consequence corroboration 从"流程完成诚实标注"升级为**真实送达可证伪**（收口阻塞点 B4）；先侦察 `_SHIM_DERIVED_DIMENSIONS` 覆盖度再补判别。
 - 意义：完成后跑 P0–P3 退出再评估（沿用 R64/R72/R73 模式）→ **正式宣告 P0–P3 达 100%**。
-- 触及：`helios_v2.evaluation`、`23`。依赖：R32、R84/R85。
+- 触及：`helios_v2.evaluation`、`23`。依赖：R32、R84/R86。
+
+> 编号说明：R85–R87 为建议编号，按创建顺序落定，可能顺移；P5/并行轨各项（原 R87–R97）相应顺延一位。
 
 ## 4. 中期队列：P5 评估框架 + 内心独白
 
@@ -100,15 +105,20 @@
 
 | 阶段 | 内容 | 对应 Req |
 | --- | --- | --- |
-| P0–P3 收尾 | G0/G1/G2 已签收；B4 真实送达对账 + 退出再评估 | R84–R86 |
-| P5 评估框架 | 漂移评估 + 图灵 harness + 记忆探针 | R87–R89 |
-| P5 内心独白 | 二阶刺激回流 + 跨 tick carry | R90–R91 |
-| P5 双轨记忆 | schema/分层/重要性/衰减/ANN/记忆工具/forget 治理 | R92–R97 |
-| P4 通道生态 | OS（R84/R85）+ QQ/飞书/语音/WeChat | R84–R85, 并行轨 |
+| P4 工具入口 | OS 文件 effector（已交付）+ LLM 自主工具选择 + OS 命令执行 | R84（done）, R85, R86 |
+| P0–P3 收尾 | B4 真实送达对账 + 退出再评估 | R87 |
+| P5 评估框架 | 漂移评估 + 图灵 harness + 记忆探针 | R88–R90 |
+| P5 内心独白 | 二阶刺激回流 + 跨 tick carry | R91–R92 |
+| P5 双轨记忆 | schema/分层/重要性/衰减/ANN/记忆工具/forget 治理 | R93–R98 |
+| P4 通道生态 | OS（R84/R86）+ QQ/飞书/语音/WeChat | R84/R86, 并行轨 |
 | P6 / P7 | 受治理自我修订 / 受治理代码自修改 | 待 P5 框架立起后细化 |
+
+> 注：自 R84 创建后，原 R85–R97 建议编号整体顺移一位（新增 R85 = LLM 驱动 planner 工具选择）。上表为当前建议编号，按实际创建顺序落定。
 
 ## 8. 当前待主人决策项
 
-1. R85 命令执行的治理边界方案（allowlist / sandbox root / high-risk 清单 / 首版是否禁止写自身代码）。**未确认前不动 R85。**
-2. R83 CI 档时长：当前 150 tick（套件 ~16s）；如更看重 CI 速度可降到 ~80 tick（~10s）。
-3. 是否在某个节点手动跑"真实 LLM + 真实刺激"长跑（需 P4 真实 afferent 落地后信息量才大）。
+1. R85（LLM 自主工具选择）的工具意图 schema 形状与 planner 绑定策略边界（选择归 `13`，绝不回灌 `11`）。
+2. R86 命令执行的治理边界方案（allowlist / sandbox root / high-risk 清单 / 首版是否禁止写自身代码）。**未确认前不动 R86。**
+3. R84 生产部署时 OS 文件 driver 的 sandbox root 选址（建议 git-ignored 的 `data/fs_sandbox/`）与是否默认启用写。
+4. R83 CI 档时长：当前 150 tick（套件 ~16s）；如更看重 CI 速度可降到 ~80 tick（~10s）。
+5. 是否在某个节点手动跑"真实 LLM + 真实刺激"长跑（需 P4 真实 afferent 落地后信息量才大）。

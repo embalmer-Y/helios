@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R83. Test baseline: 888 passed / 2 skipped (network-free).
+> Status: living owner reference. Last synced: R84. Test baseline: 912 passed / 4 skipped (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -228,11 +228,12 @@ Not cognitive owners. They provide substrate the cognitive chain depends on.
 - Role: the capability the `11` thought owner consumes; binds per-consumer profiles via composition.
 - Next step: additional bound consumers (for example `13` tool-call planning, `14` self-revision drafting) as those owners gain real generation needs.
 
-### 3.4 `30` Channel Driver Subsystem — `helios_v2.channel` (+ `31` CLI driver — `helios_v2.channel.drivers.cli`)
-- Completeness: `infra_done` (framework + CLI driver real; opt-in; not the default runtime).
-- Responsibility: a Linux-driver-style transport owner — the uniform `ChannelDriver` protocol, registry, NAPI-style bounded inbound drain emitting QoS-tagged `RawSignal`, bounded outbound dispatch, real per-driver channel state, and fail-fast readiness. Transport only: not normalization (`02`), salience (`03`), selection (`13`), or content shaping (`16`).
-- Role: when the channel-bound assembly is opted in, a local CLI round trip runs end to end (operator line → stimulus → cognition → externalizing decision → sink).
-- Next step (wave_C): real external (network) drivers (QQ/voice/vision) and making a channel-bound assembly the default runtime; both are future requirements.
+### 3.4 `30` Channel Driver Subsystem — `helios_v2.channel` (+ `31` CLI driver, `32...` drivers; `84` OS file-system effector — `helios_v2.channel.drivers.os_fs`)
+- Completeness: `infra_done` (framework + CLI relay + OS file-system effector real; opt-in; not the default runtime).
+- Responsibility: a Linux-driver-style transport owner — the uniform `ChannelDriver` protocol, registry, NAPI-style bounded inbound drain emitting QoS-tagged `RawSignal`, bounded outbound dispatch, real per-driver channel state, and fail-fast readiness. Transport/effector only: not normalization (`02`), salience (`03`), selection (`13`), or content shaping (`16`).
+- Role: when the channel-bound assembly is opted in, a local CLI round trip runs end to end; with `84` the assembly is generalized to a set of drivers (`RuntimeProfile.channel_drivers`) and an OS file-system **effector** can be bound alongside CLI.
+- R84 (first effector + reafference loop): `OsFileSystemChannelDriver` executes `fs_read`/`fs_write`/`fs_list`/`fs_modify` inside a sandbox root (strict `resolve()`+relative path-escape defense; writes gated by `allow_write`) through an injected executor (`InlineFileOpExecutor` for deterministic tests, `ThreadPoolFileOpExecutor` for real async). `send_outbound` accepts synchronously (`delivered` = accepted, not completed); the op's result (success or failure) is enqueued as a `tool_result` packet carrying correlation provenance and re-enters `02` sensory on a later tick — the first efference→reafference tool-use loop (FG-4). Failures are written back, never fabricated as success; readiness = sandbox root present. Autonomous LLM-driven planner tool selection is a deferred follow-on requirement.
+- Next step: LLM-driven `11`→`12`→`13` planner tool selection (autonomous `fs_*` op choice); then `85` OS command execution (governed, fail-closed) and real external (network) drivers (QQ/Lark/voice) reusing the generalized multi-driver assembly.
 
 ### 3.5 `33` Durable Experience Store — `helios_v2.persistence`
 - Completeness: `infra_done` (opt-in).

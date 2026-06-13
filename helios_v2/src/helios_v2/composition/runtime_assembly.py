@@ -141,7 +141,7 @@ from helios_v2.appraisal import (
     RapidSalienceAppraisalEngine,
     WeightedAggregateEstimator,
 )
-from helios_v2.channel import ChannelSubsystem, CliChannelDriver, CliDriverConfig
+from helios_v2.channel import ChannelDriver, ChannelSubsystem, CliChannelDriver, CliDriverConfig
 from helios_v2.embedding import (
     DeterministicHashEmbeddingProvider,
     EmbeddingGateway,
@@ -920,6 +920,7 @@ _RUNTIME_PROFILE_FIELD_NAMES: tuple[str, ...] = (
     "gateway",
     "deterministic_thought",
     "channel_cli",
+    "channel_drivers",
     "cli_output_sink",
     "experience_store",
     "embedding_gateway",
@@ -964,6 +965,7 @@ class RuntimeProfile:
     gateway: "LlmGatewayAPI | None" = None
     deterministic_thought: bool = False
     channel_cli: bool = False
+    channel_drivers: "tuple[ChannelDriver, ...]" = ()
     cli_output_sink: "Callable[[str], None] | None" = None
     experience_store: ExperienceStore | None = None
     embedding_gateway: EmbeddingGatewayAPI | None = None
@@ -996,13 +998,15 @@ class RuntimeProfile:
                 "Semantic memory requires a durable experience store: "
                 "pass experience_store together with embedding_gateway"
             )
-        # The injected external afferent source and the channel-bound assembly both own the
+        # The injected external afferent source and any channel-bound assembly both own the
         # external afferent position; supplying both would register two competing external
         # sources, so it is a fail-fast composition error rather than a silent precedence bug.
-        if self.external_signal_source is not None and self.channel_cli:
+        if self.external_signal_source is not None and (
+            self.channel_cli or self.channel_drivers
+        ):
             raise CompositionError(
-                "external_signal_source and channel_cli both own the external afferent: "
-                "pass only one"
+                "external_signal_source and a channel-bound assembly (channel_cli or "
+                "channel_drivers) both own the external afferent: pass only one"
             )
 
     @property
@@ -1066,6 +1070,7 @@ def assemble_runtime(
     gateway: "LlmGatewayAPI | None | object" = _UNSET,
     deterministic_thought: bool | object = _UNSET,
     channel_cli: bool | object = _UNSET,
+    channel_drivers: "tuple[ChannelDriver, ...] | object" = _UNSET,
     cli_output_sink: "Callable[[str], None] | None | object" = _UNSET,
     experience_store: ExperienceStore | None | object = _UNSET,
     embedding_gateway: EmbeddingGatewayAPI | None | object = _UNSET,
@@ -1126,6 +1131,7 @@ def assemble_runtime(
         ("gateway", gateway),
         ("deterministic_thought", deterministic_thought),
         ("channel_cli", channel_cli),
+        ("channel_drivers", channel_drivers),
         ("cli_output_sink", cli_output_sink),
         ("experience_store", experience_store),
         ("embedding_gateway", embedding_gateway),
@@ -1155,6 +1161,7 @@ def assemble_runtime(
     gateway = resolved_profile.gateway
     deterministic_thought = resolved_profile.deterministic_thought
     channel_cli = resolved_profile.channel_cli
+    channel_drivers = resolved_profile.channel_drivers
     cli_output_sink = resolved_profile.cli_output_sink
     experience_store = resolved_profile.experience_store
     embedding_gateway = resolved_profile.embedding_gateway
@@ -1268,28 +1275,41 @@ def assemble_runtime(
         )
 
     ingress = SensoryIngress()
-    # Channel-bound assembly: build the subsystem + CLI driver and route inbound through it.
+    # Channel-bound assembly: build one subsystem and register the effective driver set, then route
+    # inbound through it. The effective set is the CLI driver (when `channel_cli`) plus any explicitly
+    # injected `channel_drivers` (R84: effectors such as the OS file-system driver). The cli-only path
+    # (`channel_cli=True`, no extra drivers) reduces to the single-CLI subsystem byte-for-byte.
     channel_subsystem: ChannelSubsystem | None = None
     subsystem_sensory_source: SubsystemBackedSensorySource | None = None
+    effective_channel_drivers: list[ChannelDriver] = []
     if channel_cli:
-        channel_subsystem = ChannelSubsystem()
         sink = cli_output_sink if cli_output_sink is not None else _NullCliSink()
-        cli_driver = CliChannelDriver(output_sink=sink, config=CliDriverConfig())
-        channel_subsystem.register_driver(cli_driver)
-        channel_subsystem.apply_management_op(cli_driver.driver_id, "connect", None)
+        effective_channel_drivers.append(
+            CliChannelDriver(output_sink=sink, config=CliDriverConfig())
+        )
+    effective_channel_drivers.extend(channel_drivers)
+    if effective_channel_drivers:
+        channel_subsystem = ChannelSubsystem()
+        for driver in effective_channel_drivers:
+            channel_subsystem.register_driver(driver)
+            channel_subsystem.apply_management_op(driver.driver_id, "connect", None)
+        # One subsystem-backed sensory source receives every driver's drained signals; each
+        # `RawSignal` already carries its own `source_name=driver_id`, so a single source name here
+        # is just the source-owner label for sensory registration.
         subsystem_sensory_source = SubsystemBackedSensorySource(
-            source_name_value=cli_driver.driver_id
+            source_name_value="channel_subsystem"
         )
         ingress.register_source(subsystem_sensory_source)
+        bound_driver_ids = tuple(driver.driver_id for driver in effective_channel_drivers)
         # Wire the channel readiness gate when the caller did not override the dependency
-        # surface. CLI declares no credential, so it is always ready; the gate still routes
-        # through the fail-fast startup so a future critical driver trips it.
+        # surface. CLI declares no credential (always ready); a future critical driver (or the
+        # OS driver's missing sandbox root) trips the fail-fast startup through this same gate.
         if dependency_specs is None:
             resolved_specs = list(resolved_specs) + [channel_critical_dependency_spec()]
         if dependency_provider is None:
             resolved_provider = ChannelReadinessDependencyProvider(
                 subsystem=channel_subsystem,
-                bound_driver_ids=(cli_driver.driver_id,),
+                bound_driver_ids=bound_driver_ids,
                 baseline_provider=resolved_provider,
             )
     elif external_signal_source is not None:

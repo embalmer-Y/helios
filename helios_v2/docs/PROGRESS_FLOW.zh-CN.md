@@ -2,7 +2,7 @@
 
 > 状态：活文档（进度地图）。任何实质改变 owner 成熟度、运行时阶段链或 owner 边界的 requirement，
 > 必须在同一次变更里同步更新本文件。
-> 最近同步：R78（R70 真实状态桥接阶段 key 对齐：修正 composition/bridges.py L1980/L2085/L2097 三处 stage-result key 查找，与 runtime/stages.py 中的实际阶段名 (interoceptive_feeling_layer / neuromodulator_system) 对齐。R78 之前 04/05 投影静默回退为常量字符串；R78 之后 LLM user message 能拿到真实的 DA/NE/5-HT/ACh/Cort 与 arousal/valence/tension 数值。新增 4 个测试位于 tests/test_r70_real_state_bridge_key_alignment.py。测试基线：838 总 / 836 passed / 2 个 R71 性能测试现有失败（时间敏感，在 R78 之前的 0f34c2d commit 上 stash-rerun 验证为预存问题）。版本：R78。
+> 最近同步：R84（P4 开篇：首个 effector driver `helios_v2.channel.drivers.os_fs`（沙箱化 OS 文件 driver，`fs_read/write/list/modify`），工具结果作为 `tool_result` 带 correlation provenance 回流 `02`（efference→reafference 闭环，FG-4）；注入式 executor（测试 inline / 生产 ThreadPool 真异步）；`send_outbound` 同步受理异步执行；channel-bound 装配泛化为 `RuntimeProfile.channel_drivers` 可注册一组 driver（CLI+effector 共存）。无新 owner、阶段链不变（仍 21 阶段 channel-bound）。测试基线：912 passed / 4 skipped（离线）。先前同步 R78（R70 真实状态桥接阶段 key 对齐：修正 composition/bridges.py L1980/L2085/L2097 三处 stage-result key 查找，与 runtime/stages.py 中的实际阶段名 (interoceptive_feeling_layer / neuromodulator_system) 对齐。R78 之前 04/05 投影静默回退为常量字符串；R78 之后 LLM user message 能拿到真实的 DA/NE/5-HT/ACh/Cort 与 arousal/valence/tension 数值。新增 4 个测试位于 tests/test_r70_real_state_bridge_key_alignment.py。测试基线：838 总 / 836 passed / 2 个 R71 性能测试现有失败（时间敏感，在 R78 之前的 0f34c2d commit 上 stash-rerun 验证为预存问题）。版本：R78。
 > 配套：英文版 `PROGRESS_FLOW.en.md` 必须与本文件一起更新。
 
 ## 1. 目的
@@ -59,7 +59,7 @@ flowchart TD
     S15[15 经验回写 - 基线]:::base
     S18[18 主动性自治 - 相对完整/已接真实认知]:::deep
     S17[17 评估 - 基线/对账执行真相]:::base
-    CH["30 Channel driver 子系统 + 31 CLI driver - 真实本地往返,opt-in"]:::infra
+    CH["30 Channel driver 子系统 + 31 CLI driver + 84 OS 文件 effector - 真实本地往返/工具结果回流,opt-in,多driver"]:::infra
 
     S02 --> S03 --> S04 --> S05 --> S06 --> S07 --> S08 --> S09 --> S10
     S10 --> S16P --> S16O --> S16E --> S11
@@ -178,6 +178,16 @@ flowchart TD
   并经 opt-in 的 21 阶段 channel-bound 装配接入。真实本地往返已端到端打通：一行 operator 输入 drain 成
   带 QoS 标记的 RawSignal、sensory 归一化、认知链运行、外化决策 dispatch 到 CLI sink。默认 19 阶段装配
   保持不变。
+- P4 开篇（R84）：首个 **effector** driver `OsFileSystemChannelDriver`（`helios_v2.channel.drivers.os_fs`）。
+  与 CLI relay 不同,它的出站 op（`fs_read/fs_write/fs_list/fs_modify`）在 sandbox root 内执行真实文件操作,
+  结果（成功或失败）作为带 correlation provenance 的 `tool_result` 包回流 `02` sensory——项目首条
+  efference→reafference 工具使用闭环（FG-4）。`send_outbound` 同步受理（`delivered`=已受理非完成）+ 注入式
+  executor 异步执行（测试 inline 确定性 / 生产 ThreadPool 真异步,慢 op 有结果就回）。严格路径逃逸防护
+  （`resolve()`+relative,绝对外/`..`/软链拒绝）;写受 `allow_write` 门控;失败写回绝不冒充成功;readiness=
+  sandbox 存在(fail-fast 门)。channel-bound 装配泛化为 `RuntimeProfile.channel_drivers` 可注册一组 driver
+  （CLI+effector 共存,`channel_cli`-only 行为字节级不变,`external_signal_source` 与任何 channel 绑定互斥）。
+  阶段链不变（仍 21 阶段 channel-bound）。纯传输/effector,无认知策略;stdlib-only,无进程/网络。
+  **延后（独立需求）**：LLM 驱动的 `11`→`12`→`13` planner 自主工具选择（R84 只交付 effector + 回流机制）。888→912 测试绿。
 - 剩余结构性留白：真实外部网络传输（虚线 EXT ↔ CH；网络 driver QQ/语音/视觉 与默认 channel-bound
   运行时仍是后续），以及 P2 的其余部分（R42 已检查点/恢复真正跨 tick 的 `09`/`18`/`24` 连续性；
   `06`/`04`/`05`/`14` 尚未耐久——`04`/`05`/`14` 要等各自双时间尺度/持久化 carry 落地后才可检查点,

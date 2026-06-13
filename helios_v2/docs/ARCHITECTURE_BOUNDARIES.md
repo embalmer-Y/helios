@@ -1,6 +1,6 @@
 # Helios v2 Architecture Boundaries
 
-> Status: boundary-truth snapshot, last synced R69 (semantic assembly as default)
+> Status: boundary-truth snapshot, last synced R84 (OS file-system effector driver + generalized multi-driver channel-bound assembly)
 > Scope: implementation-aligned owner and dependency truth for `helios_v2`
 
 ## 1. Purpose
@@ -171,6 +171,22 @@ Boundary rules:
 5. The default (non-channel) assembly and its `CANONICAL_STAGE_ORDER` are unchanged. The channel-bound variant validates against `CHANNEL_BOUND_STAGE_ORDER` (21 stages) instead. A no-input tick drains nothing and the chain closes as an internal-only tick (`28`); nothing is dispatched.
 6. The channel-bound assembly registers `channel_drivers_ready` as a critical dependency through `ChannelReadinessDependencyProvider`; CLI declares no credential so it always passes, but the fail-fast gate routes through it for a future critical driver. No degraded transport path exists.
 7. No `logging`/`print` anywhere under `src/`; the driver writes only through its injected sink; the guard test stays green.
+
+### 4.9 Requirement `84` OS file-system effector driver and generalized multi-driver assembly
+
+| Owner | Primary modules | Owns | Explicitly does not own |
+| --- | --- | --- | --- |
+| OS file-system channel driver | `helios_v2.channel.drivers.os_fs` (`OsFileSystemChannelDriver`, `OsFileSystemDriverConfig`, `FileOpExecutor`/`InlineFileOpExecutor`/`ThreadPoolFileOpExecutor`) | the first concrete **effector** `ChannelDriver`: sandboxed `fs_read`/`fs_write`/`fs_list`/`fs_modify` execution confined to a configured sandbox root with strict path-escape defense, asynchronous execution through an injected executor, a thread-safe bounded result backlog, and `tool_result` reafference (the op result re-entering `02` sensory with correlation provenance) | normalization (`02`); salience (`03`); channel selection/acceptance (`13`); outward content shaping (`16`); interpretation of a result's meaning; process spawning (`85`); network transport |
+| Generalized channel-bound assembly | `helios_v2.composition` (`RuntimeProfile.channel_drivers`, the effective-driver-set assembly block) | registering a set of drivers (CLI relay + effectors) on one subsystem, all drained into the subsystem-backed sensory source, all readiness-gated; the cli-only path preserved byte-for-byte | cognitive policy; the default 19-stage assembly; autonomous tool selection |
+
+Boundary rules:
+
+1. The OS file-system driver is a transport/effector only. It performs I/O strictly inside the resolved sandbox root; an out-of-sandbox path (absolute outside, `..` traversal, or symlink escape, caught via `Path.resolve()` + relative-to-root) is a rejected operation, never a redirected or clamped one. It holds no cognitive policy and never interprets a result's meaning.
+2. The effector loop is efference→reafference: `send_outbound` accepts synchronously (returning `delivered` = "accepted for async execution", never "completed") and submits to the injected executor; the operation's result (success or failure) is enqueued exactly once as a `tool_result` `InboundPacket` carrying the originating decision's correlation provenance, drained on a later tick boundary into `02`. QoS is transport-intrinsic (`bulk` for local data results), set without reading the result content for meaning, consistent with `30`.
+3. Failure is never silent and never fabricated as success: a structural rejection (unknown op / missing param / write-disabled) returns a failed dispatch outcome and also enqueues a failure reafference (double write-back); an execution failure enqueues a failure reafference only; the driver never falls back to a different operation. There is no degraded path: a missing sandbox root reports not-ready and trips the fail-fast startup gate when the driver is bound.
+4. The injected executor is the threading seam: production uses `ThreadPoolFileOpExecutor` (true async, so a slow op enqueues its result whenever it finishes); the network-free test/CI/long-run path uses `InlineFileOpExecutor` (synchronous, deterministic, race-free). The backlog is lock-guarded for safe worker-thread enqueue vs tick-thread drain.
+5. The channel-bound assembly is generalized to a set of drivers via `RuntimeProfile.channel_drivers`; the effective set is the CLI driver (when `channel_cli`) plus the injected drivers, all registered on one subsystem with one subsystem-backed sensory source and one readiness gate over all bound driver ids. The cli-only path (`channel_cli=True`, no extra drivers) is byte-for-byte the R31 single-CLI assembly, and `CHANNEL_BOUND_STAGE_ORDER` (21 stages) is unchanged (transport stages are per-subsystem). Any channel binding remains mutually exclusive with an injected `external_signal_source`.
+6. Autonomous LLM-driven planner tool selection (`11`→`12`→`13` function-calling choosing an `fs_*` op) is explicitly NOT owned here; R84 ships the effector and the loop mechanism, and the planner's autonomous tool selection is a deferred follow-on requirement. The driver never re-selects a channel or recomputes a decision.
 
 ## 5. Allowed Dependency Directions for `16-18`
 

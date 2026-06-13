@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R78 (R70 Real-State Bridge stage-key alignment: corrected three stage-result key lookups in `composition/bridges.py` L1980/L2085/L2097 to match the actual stage names from `runtime/stages.py` (`interoceptive_feeling_layer`, `neuromodulator_system`). Before R78 the 04/05 projections silently fell back to constant strings; after R78 the LLM user message receives real DA/NE/5-HT/ACh/Cort and arousal/valence/tension values. 4 new tests in `tests/test_r70_real_state_bridge_key_alignment.py`. Test baseline: 838 total / 836 passed / 2 pre-existing R71 perf-flake failures (timing-sensitive, confirmed pre-existing by stash-and-rerun on commit 0f34c2d). HEAD-era: R78.
+> Last synced: R84 (P4 opener: first effector driver `helios_v2.channel.drivers.os_fs` (sandboxed OS file-system driver, `fs_read/write/list/modify`); the op result re-enters `02` sensory as a `tool_result` carrying correlation provenance (efference→reafference loop, FG-4); injected executor (inline for tests / thread pool in production); `send_outbound` accepts synchronously and executes asynchronously; the channel-bound assembly is generalized to `RuntimeProfile.channel_drivers` (CLI + effectors coexist). No new owner; stage chain unchanged (still 21-stage channel-bound). Test baseline: 912 passed / 4 skipped (network-free). Prior sync R78 (R70 Real-State Bridge stage-key alignment: corrected three stage-result key lookups in `composition/bridges.py` L1980/L2085/L2097 to match the actual stage names from `runtime/stages.py` (`interoceptive_feeling_layer`, `neuromodulator_system`). Before R78 the 04/05 projections silently fell back to constant strings; after R78 the LLM user message receives real DA/NE/5-HT/ACh/Cort and arousal/valence/tension values. 4 new tests in `tests/test_r70_real_state_bridge_key_alignment.py`. Test baseline: 838 total / 836 passed / 2 pre-existing R71 perf-flake failures (timing-sensitive, confirmed pre-existing by stash-and-rerun on commit 0f34c2d). HEAD-era: R78.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -66,7 +66,7 @@ flowchart TD
     S15[15 Experience Writeback - baseline]:::base
     S18[18 Subjective Autonomy - rel. complete/cognition-derived]:::deep
     S17[17 Evaluation - baseline/corroborates execution truth]:::base
-    CH["30 Channel Driver Subsystem + 31 CLI driver - real local round trip, opt-in"]:::infra
+    CH["30 Channel Driver Subsystem + 31 CLI driver + 84 OS file-system effector - real local round trip / tool-result reafference, opt-in, multi-driver"]:::infra
 
     S02 --> S03 --> S04 --> S05 --> S06 --> S07 --> S08 --> S09 --> S10
     S10 --> S16P --> S16O --> S16E --> S11
@@ -224,6 +224,23 @@ flowchart TD
   into a QoS-tagged RawSignal, sensory normalizes it, the cognition chain runs, and an
   externalizing decision is dispatched to the CLI sink. The default 19-stage assembly is
   unchanged.
+- P4 opener (R84): the first **effector** driver `OsFileSystemChannelDriver`
+  (`helios_v2.channel.drivers.os_fs`). Unlike the CLI relay, its outbound op
+  (`fs_read`/`fs_write`/`fs_list`/`fs_modify`) performs a real file action inside a sandbox
+  root, and the result (success or failure) re-enters `02` sensory as a `tool_result` stimulus
+  carrying correlation provenance — the project's first efference→reafference tool-use loop
+  (FG-4). `send_outbound` accepts synchronously (`delivered` = accepted, not completed) and an
+  injected executor runs the op asynchronously (inline for deterministic tests; a thread pool
+  in production, so a slow op enqueues its result whenever it finishes). Strict path-escape
+  defense (`resolve()` + relative-to-root; absolute-outside / `..` / symlink rejected); writes
+  gated by `allow_write`; failures written back (never fabricated as success); readiness =
+  sandbox root present (fail-fast gate). The channel-bound assembly is generalized to a set of
+  drivers via `RuntimeProfile.channel_drivers` (CLI + effectors coexist; `channel_cli`-only
+  behavior byte-for-byte unchanged; `external_signal_source` mutually exclusive with any channel
+  binding). Stage chain unchanged (still the 21-stage channel-bound order). Transport/effector
+  only — no cognitive policy; stdlib-only; no process spawning, no network. **Deferred (own
+  requirement)**: autonomous LLM-driven `11`→`12`→`13` planner tool selection (R84 ships only the
+  effector + loop mechanism). 888→912 tests green.
 - Remaining structural gaps: real external network transport (dashed EXT <-> CH; network
   drivers QQ/voice/vision and a default channel-bound runtime are future), and the rest of P2
   (R42 now checkpoints/restores the genuinely cross-tick `09`/`18`/`24` continuity; `06`/`04`/

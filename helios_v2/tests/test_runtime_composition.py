@@ -818,6 +818,104 @@ def test_channel_internal_only_tick_with_no_input_completes() -> None:
     assert sink == []
 
 
+# --- R84: generalized multi-driver channel-bound assembly (OS file-system effector) ---------
+
+from helios_v2.channel import OutboundPacket as _OutboundPacket
+from helios_v2.channel.drivers import OsFileSystemChannelDriver, OsFileSystemDriverConfig
+
+
+def _os_fs_driver(sandbox):
+    return OsFileSystemChannelDriver(config=OsFileSystemDriverConfig(sandbox_root=sandbox))
+
+
+def test_channel_drivers_field_registers_os_fs_and_runs_a_stable_tick(tmp_path) -> None:
+    driver = _os_fs_driver(tmp_path)
+    handle = assemble_runtime(
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    result = handle.tick()
+    assert tuple(result.stage_results.keys()) == CHANNEL_BOUND_STAGE_ORDER
+    # No planner-accepted file op this tick: nothing dispatched, chain closes cleanly.
+    assert result.stage_results["channel_outbound_dispatch"].dispatch_result.dispatched_count == 0
+
+
+def test_os_fs_readiness_gates_startup(tmp_path) -> None:
+    missing = tmp_path / "absent"
+    driver = OsFileSystemChannelDriver(config=OsFileSystemDriverConfig(sandbox_root=missing))
+    handle = assemble_runtime(
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(),
+        default_signal_mode="legacy_constant",
+    )
+    spec_names = {spec.name for spec in handle.kernel.dependency_specs}
+    assert CHANNEL_DRIVERS_READY in spec_names
+    with pytest.raises(Exception):
+        handle.startup()  # missing sandbox root => not ready => fail-fast gate
+
+
+def test_os_fs_tool_result_reenters_sensory_through_assembly(tmp_path) -> None:
+    # A no-action thought keeps the tick internal-only; the point of this test is the inbound
+    # drain of the tool_result reafference, which runs at stage 0 regardless of cognition.
+    provider = FakeThoughtProvider(
+        thought_text="observing tool result",
+        sufficiency=0.1,
+        wants_to_continue=True,
+        continue_reason="unresolved",
+        intends_action=False,
+    )
+    driver = _os_fs_driver(tmp_path)
+    handle = assemble_runtime(
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    # Dispatch a file op directly through the subsystem (the deterministic stand-in for an
+    # eventual planner-selected tool op); the inline executor enqueues the result immediately.
+    handle.channel_subsystem.dispatch_outbound(
+        (
+            _OutboundPacket(
+                packet_id="o1",
+                target_driver_id="os_fs",
+                op_name="fs_write",
+                payload={"path": "a.txt", "content": "hi"},
+                provenance={"decision_id": "d1"},
+            ),
+        ),
+        budget=16,
+    )
+    result = handle.tick()
+    drain_result = result.stage_results["channel_inbound_drain"]
+    assert drain_result.drain_result.drained_count == 1
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hi"
+
+
+def test_cli_and_os_fs_coexist_on_one_subsystem(tmp_path) -> None:
+    sink: list[str] = []
+    driver = _os_fs_driver(tmp_path)
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=sink.append,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    registered = set(handle.channel_subsystem._drivers.keys())
+    assert {"cli", "os_fs"} <= registered
+    handle.tick()  # stable tick with both drivers bound
+
+
+def test_external_source_and_channel_drivers_are_mutually_exclusive(tmp_path) -> None:
+    source = SequenceExternalSignalSource(batches=(_external_batch("e1", "x"),))
+    driver = _os_fs_driver(tmp_path)
+    with pytest.raises(CompositionError, match="external afferent"):
+        assemble_runtime(external_signal_source=source, channel_drivers=(driver,))
+
+
 def test_default_assembly_is_unchanged_by_channel_wiring() -> None:
     # Regression guard: the default (non-channel) assembly keeps the canonical 19-stage order.
     handle = _assemble()
