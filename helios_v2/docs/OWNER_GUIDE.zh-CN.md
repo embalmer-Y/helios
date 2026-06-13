@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R84。测试基线：912 passed / 4 skipped（离线）。
+> 状态：活文档（owner 参考）。最近同步：R85。测试基线：921 passed / 4 skipped（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -226,8 +226,9 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 完成度：`infra_done`（框架 + CLI relay + OS 文件 effector 真实；opt-in；非默认运行时）。
 - 职责：Linux-driver 风格的传输 owner——统一 `ChannelDriver` 协议、registry、NAPI 式有界入站 drain（发出带 QoS 的 `RawSignal`）、有界出站 dispatch、真实逐 driver channel 状态、fail-fast readiness。仅传输/effector：非归一化（`02`）、显著性（`03`）、选择（`13`）或内容塑形（`16`），不解释结果含义。
 - 作用：opt-in channel-bound 装配下本地 CLI 往返端到端运行；R84 起装配泛化为可注册一组 driver（`RuntimeProfile.channel_drivers`），OS 文件 **effector** 可与 CLI 共存于一个 subsystem。
-- R84（首个 effector + reafference 闭环）：`OsFileSystemChannelDriver` 在 sandbox root 内执行 `fs_read/fs_write/fs_list/fs_modify`（`resolve()`+relative 严格路径逃逸防护，绝对外/`..`/软链拒绝；写受 `allow_write` 门控），经注入式 executor（测试 `InlineFileOpExecutor` 确定性 / 生产 `ThreadPoolFileOpExecutor` 真异步）。`send_outbound` 同步受理（`delivered`=已受理，非完成）；op 结果（成功或失败）作为带 correlation provenance 的 `tool_result` 包入队、于后续 tick 回流 `02`——项目首条 efference→reafference 工具使用闭环（FG-4）。失败写回（绝不冒充成功）；readiness=sandbox 存在。LLM 驱动的 planner 自主工具选择留作后续独立需求。
-- 下一步：LLM 驱动 `11`→`12`→`13` planner 自主工具选择（自主选 `fs_*` op）；其后 `85` OS 命令执行（受治理 fail-closed）与真实外部（网络）driver（QQ/飞书/语音）复用泛化的多 driver 装配。
+- R84（首个 effector + reafference 闭环）：`OsFileSystemChannelDriver` 在 sandbox root 内执行 `fs_read/fs_write/fs_list/fs_modify`（`resolve()`+relative 严格路径逃逸防护，绝对外/`..`/软链拒绝；写受 `allow_write` 门控），经注入式 executor（测试 `InlineFileOpExecutor` 确定性 / 生产 `ThreadPoolFileOpExecutor` 真异步）。`send_outbound` 同步受理（`delivered`=已受理，非完成）；op 结果（成功或失败）作为带 correlation provenance 的 `tool_result` 包入队、于后续 tick 回流 `02`——项目首条 efference→reafference 工具使用闭环（FG-4）。失败写回（绝不冒充成功）；readiness=sandbox 存在。
+- R85（自主工具选择 + per-op 自描述）：每个 driver 现声明 per-op `ChannelOpSpec`（`required_params`+`user_visible` 启用；`effect_class`+`risk_class` 声明，留 R86/R87 消费）。`13` planner 按声明的 spec 通用校验 op 输入（reply 与 `fs_*` 统一），能力门由真实 channel-state 派生（某连接 driver 声明该 op 即视为 registered）。真实认知（`11`）选工具 op+params（模型内容）、`12` 结构性贯通、`13` 按 op 绑定到提供该 op 的 driver——收口自主"思考→工具→结果→再思考"闭环（R84 只交付机制）。
+- 下一步：R85 已交付；接下来 `86` OS 命令执行（受治理 fail-closed，复用已声明的 `risk_class`）与真实外部（网络）driver（QQ/飞书/语音）复用泛化的多 driver 装配与 per-op 自描述。
 
 ### 3.5 `33` 耐久经验存储 — `helios_v2.persistence`
 - 完成度：`infra_done`（opt-in）。

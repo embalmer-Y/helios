@@ -51,6 +51,13 @@ ChannelDriverStatus = Literal[
 # Transport-intrinsic QoS taxonomy. These classes describe transport-visible delivery
 # expectations only; they are never a statement about cognitive importance.
 ChannelQosClass = Literal["control", "interactive", "bulk", "background"]
+# Per-op property taxonomies (R85). Each output op a driver offers self-describes these
+# properties. `effect_class` says where the op's consequence lands (consumed by `17`/`23`
+# consequence classification, R87). `risk_class` says whether the op needs governance review
+# (declared in R85, enforced by the `13`+`14` fail-closed gate in R86). Cognition never sets
+# these; the owning driver declares them and the planner/governance/evaluation owners read them.
+OpEffectClass = Literal["internal_cognitive", "local_host", "external_world"]
+OpRiskClass = Literal["unrestricted", "governed", "restricted"]
 OutboundDispatchStatus = Literal[
     "delivered",
     "failed",
@@ -61,6 +68,8 @@ OutboundDispatchStatus = Literal[
 _DIRECTIONS = {"inbound", "outbound"}
 _DRIVER_STATUSES = {"uninitialized", "connected", "disconnected", "paused", "error"}
 _QOS_CLASSES = {"control", "interactive", "bulk", "background"}
+_OP_EFFECT_CLASSES = {"internal_cognitive", "local_host", "external_world"}
+_OP_RISK_CLASSES = {"unrestricted", "governed", "restricted"}
 _DISPATCH_STATUSES = {"delivered", "failed", "driver_unavailable", "dropped_overflow"}
 
 
@@ -94,6 +103,43 @@ class ChannelConfigField:
 
 
 @dataclass(frozen=True)
+class ChannelOpSpec:
+    """Immutable per-op self-description for one of a driver's output ops.
+
+    Owner: channel driver subsystem.
+
+    Failure semantics:
+        Construction raises `ChannelError` on an empty op name, an empty required-param key, or an
+        out-of-taxonomy effect/risk class.
+
+    Notes:
+        The owning driver declares each output op's properties; cognition never sets them. Axis
+        consumers (R85): `required_params` and `user_visible` are validated/used by the `13` planner
+        (generic op-input validation; user-visible reply/target handling); `effect_class` is declared
+        in R85 and consumed by `17`/`23` consequence classification in R87; `risk_class` is declared in
+        R85 and enforced by the `13`+`14` fail-closed gate in R86. Declaring `effect_class`/`risk_class`
+        now is honest forward self-description, not an enforced gate yet.
+    """
+
+    op_name: str
+    required_params: tuple[str, ...] = ()
+    user_visible: bool = False
+    effect_class: OpEffectClass = "external_world"
+    risk_class: OpRiskClass = "unrestricted"
+
+    def __post_init__(self) -> None:
+        if not self.op_name:
+            raise ChannelError("ChannelOpSpec must declare a non-empty op_name")
+        for key in self.required_params:
+            if not key:
+                raise ChannelError("ChannelOpSpec required_params must not contain empty keys")
+        if self.effect_class not in _OP_EFFECT_CLASSES:
+            raise ChannelError("ChannelOpSpec effect_class must use the fixed taxonomy")
+        if self.risk_class not in _OP_RISK_CLASSES:
+            raise ChannelError("ChannelOpSpec risk_class must use the fixed taxonomy")
+
+
+@dataclass(frozen=True)
 class ChannelDriverDescriptor:
     """Immutable self-description of one channel driver.
 
@@ -118,6 +164,7 @@ class ChannelDriverDescriptor:
     management_ops: tuple[str, ...] = ()
     config_fields: tuple[ChannelConfigField, ...] = ()
     health_signals: tuple[str, ...] = ()
+    output_op_specs: tuple[ChannelOpSpec, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.driver_id:
@@ -140,6 +187,38 @@ class ChannelDriverDescriptor:
                     f"ChannelDriverDescriptor config_fields must be unique: '{config_field.key}'"
                 )
             seen_fields.add(config_field.key)
+        seen_ops: set[str] = set()
+        for spec in self.output_op_specs:
+            if not isinstance(spec, ChannelOpSpec):
+                raise ChannelError(
+                    "ChannelDriverDescriptor output_op_specs must contain ChannelOpSpec values"
+                )
+            if spec.op_name not in self.output_ops:
+                raise ChannelError(
+                    f"ChannelDriverDescriptor output_op_specs op_name must be a declared output op: "
+                    f"'{spec.op_name}'"
+                )
+            if spec.op_name in seen_ops:
+                raise ChannelError(
+                    f"ChannelDriverDescriptor output_op_specs must be unique per op: '{spec.op_name}'"
+                )
+            seen_ops.add(spec.op_name)
+
+    def op_spec(self, op_name: str) -> "ChannelOpSpec | None":
+        """Owner: channel driver subsystem.
+
+        Purpose:
+            Return the per-op self-description for `op_name`, or `None` when the op declares none.
+
+        Returns:
+            The matching `ChannelOpSpec`, else `None` (an op with no declared spec has no required
+            params and is treated as non-user-visible by default).
+        """
+
+        for spec in self.output_op_specs:
+            if spec.op_name == op_name:
+                return spec
+        return None
 
     def supports_direction(self, direction: ChannelDirection) -> bool:
         """Owner: channel driver subsystem.

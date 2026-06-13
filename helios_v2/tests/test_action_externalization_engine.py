@@ -175,7 +175,10 @@ def test_engine_normalizes_explicit_action_proposal_and_builds_publish_op() -> N
     assert publish_op.behavior_name == "reply_message"
 
 
-def test_engine_publishes_bridge_rejection_for_missing_outbound_text() -> None:
+def test_engine_normalizes_structurally_when_outbound_text_absent() -> None:
+    # R85/D2a: `12` no longer rejects a missing reply text - that op-aware check moved to `13`
+    # (the planner validates required_params from the driver's per-op spec). `12` normalizes
+    # structurally; the resulting params simply omit outbound_text.
     engine = ActionExternalizationEngine(
         config=_build_externalization_config(),
         externalization_path=FirstVersionThoughtExternalizationPath(),
@@ -194,14 +197,14 @@ def test_engine_publishes_bridge_rejection_for_missing_outbound_text() -> None:
         recall_intent=thought_result.recall_intent,
         memory_handoff=thought_result.memory_handoff,
         action_proposal=ThoughtActionProposalCarrier(
-            proposal_id="thought-action:broken",
+            proposal_id="thought-action:no-text",
             scope="external",
             behavior_name="reply_message",
             requested_op="reply_message",
             preferred_channels=("cli",),
             outbound_text=None,
             outbound_intensity=0.7,
-            reason_trace=("broken outbound text",),
+            reason_trace=("no outbound text",),
             governance_hints={"requires_identity_review": False},
         ),
         self_revision_proposal=thought_result.self_revision_proposal,
@@ -210,11 +213,56 @@ def test_engine_publishes_bridge_rejection_for_missing_outbound_text() -> None:
     request = _externalization_request()
 
     result = engine.externalize_action_proposal(thought_result, request)
-    publish_rejection_op = engine.build_publish_rejection_op(result)
 
-    assert result.status == "bridge_rejected"
-    assert result.bridge_rejection_reason == "missing_outbound_text"
-    assert publish_rejection_op.bridge_rejection_reason == "missing_outbound_text"
+    assert result.status == "normalized"
+    assert result.normalized_proposal is not None
+    assert "outbound_text" not in result.normalized_proposal.params
+
+
+def test_engine_carries_op_params_for_effector_proposal() -> None:
+    # R85: a tool/effector proposal carries its op_params (e.g. path/content) into the normalized
+    # proposal's params, without a reply-specific outbound_text.
+    engine = ActionExternalizationEngine(
+        config=_build_externalization_config(),
+        externalization_path=FirstVersionThoughtExternalizationPath(),
+    )
+    thought_result = _thought_result()
+    thought_result = thought_result.__class__(
+        result_id=thought_result.result_id,
+        source_request_id=thought_result.source_request_id,
+        execution_status=thought_result.execution_status,
+        thought=thought_result.thought,
+        trigger_reason=thought_result.trigger_reason,
+        sufficiency_level=thought_result.sufficiency_level,
+        continuation_requested=thought_result.continuation_requested,
+        continuation_reason=thought_result.continuation_reason,
+        continuation_pressure_delta=thought_result.continuation_pressure_delta,
+        recall_intent=thought_result.recall_intent,
+        memory_handoff=thought_result.memory_handoff,
+        action_proposal=ThoughtActionProposalCarrier(
+            proposal_id="thought-action:tool",
+            scope="external",
+            behavior_name="fs_write",
+            requested_op="fs_write",
+            preferred_channels=("os_fs",),
+            outbound_text=None,
+            outbound_intensity=0.7,
+            reason_trace=("tool op",),
+            governance_hints={"requires_identity_review": False},
+            op_params={"path": "notes/a.txt", "content": "hi"},
+        ),
+        self_revision_proposal=thought_result.self_revision_proposal,
+        tick_id=thought_result.tick_id,
+    )
+    request = _externalization_request()
+
+    result = engine.externalize_action_proposal(thought_result, request)
+
+    assert result.status == "normalized"
+    assert result.normalized_proposal.preferred_op == "fs_write"
+    assert result.normalized_proposal.params["path"] == "notes/a.txt"
+    assert result.normalized_proposal.params["content"] == "hi"
+    assert "outbound_text" not in result.normalized_proposal.params
 
 
 def test_engine_emits_equivalent_evidence_when_completed_thought_has_no_explicit_action() -> None:

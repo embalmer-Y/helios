@@ -2,7 +2,7 @@
 
 > Status: living progress map. MUST be updated in the same change set as any requirement that
 > materially alters owner maturity, the runtime stage chain, or owner boundaries.
-> Last synced: R84 (P4 opener: first effector driver `helios_v2.channel.drivers.os_fs` (sandboxed OS file-system driver, `fs_read/write/list/modify`); the op result re-enters `02` sensory as a `tool_result` carrying correlation provenance (efference→reafference loop, FG-4); injected executor (inline for tests / thread pool in production); `send_outbound` accepts synchronously and executes asynchronously; the channel-bound assembly is generalized to `RuntimeProfile.channel_drivers` (CLI + effectors coexist). No new owner; stage chain unchanged (still 21-stage channel-bound). Test baseline: 912 passed / 4 skipped (network-free). Prior sync R78 (R70 Real-State Bridge stage-key alignment: corrected three stage-result key lookups in `composition/bridges.py` L1980/L2085/L2097 to match the actual stage names from `runtime/stages.py` (`interoceptive_feeling_layer`, `neuromodulator_system`). Before R78 the 04/05 projections silently fell back to constant strings; after R78 the LLM user message receives real DA/NE/5-HT/ACh/Cort and arousal/valence/tension values. 4 new tests in `tests/test_r70_real_state_bridge_key_alignment.py`. Test baseline: 838 total / 836 passed / 2 pre-existing R71 perf-flake failures (timing-sensitive, confirmed pre-existing by stash-and-rerun on commit 0f34c2d). HEAD-era: R78.
+> Last synced: R85 (FG-4 autonomous tool loop: `11` real cognition selects a tool op+params -> `12` structural normalize -> `13` binds the op to the offering driver + generic `required_params` validation + capability gate derived from channel-state -> execute -> result re-enters `02` for re-thinking. Each driver self-describes a per-op `ChannelOpSpec` (required_params/user_visible active, effect_class/risk_class declared); the `tool` scope value was dropped and op-aware validation moved from `12` to `13`; a planner-rejection tick now writes a `world_blocked` continuity record. No new owner; stage chain unchanged. Test baseline: 921 passed / 4 skipped (network-free). Prior sync R84 (P4 opener: first effector driver `helios_v2.channel.drivers.os_fs` (sandboxed OS file-system driver, `fs_read/write/list/modify`); the op result re-enters `02` sensory as a `tool_result` carrying correlation provenance (efference→reafference loop, FG-4); injected executor (inline for tests / thread pool in production); `send_outbound` accepts synchronously and executes asynchronously; the channel-bound assembly is generalized to `RuntimeProfile.channel_drivers` (CLI + effectors coexist). No new owner; stage chain unchanged (still 21-stage channel-bound). (R70 Real-State Bridge stage-key alignment: corrected three stage-result key lookups in `composition/bridges.py` L1980/L2085/L2097 to match the actual stage names from `runtime/stages.py` (`interoceptive_feeling_layer`, `neuromodulator_system`). Before R78 the 04/05 projections silently fell back to constant strings; after R78 the LLM user message receives real DA/NE/5-HT/ACh/Cort and arousal/valence/tension values. 4 new tests in `tests/test_r70_real_state_bridge_key_alignment.py`. Test baseline: 838 total / 836 passed / 2 pre-existing R71 perf-flake failures (timing-sensitive, confirmed pre-existing by stash-and-rerun on commit 0f34c2d). HEAD-era: R78.
 > Companion: `PROGRESS_FLOW.zh-CN.md` (Chinese) must be updated together with this file.
 
 ## 1. Purpose
@@ -241,6 +241,25 @@ flowchart TD
   only — no cognitive policy; stdlib-only; no process spawning, no network. **Deferred (own
   requirement)**: autonomous LLM-driven `11`→`12`→`13` planner tool selection (R84 ships only the
   effector + loop mechanism). 888→912 tests green.
+- P4 autonomous tool loop (R85): closes the FG-4 autonomous tool-use loop. Principle - **cognition
+  names an op + params; each driver self-describes the op's properties; `13`/`14`/`17` interpret them**
+  (the `30` device-self-description model extended to tool semantics). `30` descriptor gains a per-op
+  `ChannelOpSpec` (`required_params`/`user_visible` active; `effect_class`/`risk_class` declared, for
+  R86/R87); CLI declares `reply_message` (user-visible, requires outbound_text+target), the OS driver
+  declares each `fs_*` (path/content, non-user-visible, local_host). `16` v3 gains tool-intent fields;
+  `11` parses a tool intent into an `external`-scope proposal carrying `op_params` (malformed degrades
+  to no proposal, never fabricated); `12` is structural-only (D2a: op-aware checks moved to `13`, the
+  external→outbound_text rule removed); `13` validates generically against the driver-declared
+  `required_params` (reply + `fs_*` uniformly; missing key → `missing_op_inputs`; legacy reply fallback),
+  derives the capability gate from channel-state (offered → registered; unoffered →
+  `behavior_not_registered`), and rides the op's effect/risk class on the policy trace (read-through).
+  Also closes the planner-rejection tick: `policy_rejected`/`execution_consistency_failed` writes a
+  `world_blocked` continuity record (FG-4.4) so autonomy/evaluation still run. End to end (channel-bound,
+  CLI trigger + OS driver): an operator line triggers a tick, the model asserts `fs_write`, the planner
+  binds `os_fs`, the dispatch executes inside the sandbox, and the result re-enters `02` as a
+  `tool_result` next tick - verified network-free with a deterministic provider. No function-calling
+  (`25` unchanged); cognition never selects/binds/validates a channel; per-op knowledge lives in the
+  driver. Default/reply/no-action paths unchanged. 912→921 tests green.
 - Remaining structural gaps: real external network transport (dashed EXT <-> CH; network
   drivers QQ/voice/vision and a default channel-bound runtime are future), and the rest of P2
   (R42 now checkpoints/restores the genuinely cross-tick `09`/`18`/`24` continuity; `06`/`04`/

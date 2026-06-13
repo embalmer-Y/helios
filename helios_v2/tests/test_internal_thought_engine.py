@@ -829,3 +829,57 @@ def test_r81_forecast_does_not_change_judgment() -> None:
     assert (result_a.action_proposal is None) == (result_b.action_proposal is None)
     assert result_a.hormone_response_i_predict is None
     assert dict(result_b.hormone_response_i_predict) == {"dopamine": 0.85, "cortisol": 0.2}
+
+
+# --- Requirement 85: tool-intent parsing ----------------------------------------------------
+
+import json as _json
+
+from helios_v2.internal_thought.engine import _parse_structured_thought
+
+
+def _tool_envelope(**overrides) -> str:
+    payload = {
+        "thought": "record this to a file",
+        "sufficiency": 0.9,
+        "wants_to_continue": False,
+        "proposed_action": {"intends_action": False, "summary": ""},
+        "self_revision": {"intends_revision": False, "summary": ""},
+        "i_want_to_use_tool": True,
+        "tool_op": "fs_write",
+        "tool_params": {"path": "a.txt", "content": "hi"},
+    }
+    payload.update(overrides)
+    return _json.dumps(payload)
+
+
+def test_parse_extracts_well_formed_tool_intent() -> None:
+    evidence = _parse_structured_thought(_tool_envelope())
+    assert evidence.intends_tool_use is True
+    assert evidence.tool_op == "fs_write"
+    assert evidence.tool_params["path"] == "a.txt"
+    assert evidence.tool_params["content"] == "hi"
+
+
+def test_parse_degrades_malformed_tool_intent_to_no_intent() -> None:
+    # Flag set but no op, op set but params not an object, and a non-scalar param value all degrade
+    # to "no tool intent" without raising (the tick closes through the no-proposal path).
+    no_op = _parse_structured_thought(_tool_envelope(tool_op=None, tool_params=None))
+    assert no_op.intends_tool_use is False
+    bad_params = _parse_structured_thought(_tool_envelope(tool_params=["not", "an", "object"]))
+    assert bad_params.intends_tool_use is False
+    nested = _parse_structured_thought(_tool_envelope(tool_params={"path": {"nested": 1}}))
+    assert nested.intends_tool_use is False
+
+
+def test_parse_absent_tool_intent_is_no_intent() -> None:
+    payload = {
+        "thought": "just thinking",
+        "sufficiency": 0.5,
+        "wants_to_continue": False,
+        "proposed_action": {"intends_action": False, "summary": ""},
+        "self_revision": {"intends_revision": False, "summary": ""},
+    }
+    evidence = _parse_structured_thought(_json.dumps(payload))
+    assert evidence.intends_tool_use is False
+    assert evidence.tool_op == ""

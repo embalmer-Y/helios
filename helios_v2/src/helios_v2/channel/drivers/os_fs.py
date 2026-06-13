@@ -35,6 +35,7 @@ from ..contracts import (
     ChannelDriverStatusReport,
     ChannelError,
     ChannelManagementResult,
+    ChannelOpSpec,
     InboundDrainResult,
     InboundPacket,
     OutboundDispatchOutcome,
@@ -230,6 +231,36 @@ def _os_fs_descriptor(config: OsFileSystemDriverConfig) -> ChannelDriverDescript
             ),
         ),
         health_signals=("pending_inbound", "overflow_count"),
+        output_op_specs=(
+            ChannelOpSpec(
+                op_name=FS_READ,
+                required_params=("path",),
+                user_visible=False,
+                effect_class="local_host",
+                risk_class="unrestricted",
+            ),
+            ChannelOpSpec(
+                op_name=FS_WRITE,
+                required_params=("path", "content"),
+                user_visible=False,
+                effect_class="local_host",
+                risk_class="unrestricted",
+            ),
+            ChannelOpSpec(
+                op_name=FS_LIST,
+                required_params=(),
+                user_visible=False,
+                effect_class="local_host",
+                risk_class="unrestricted",
+            ),
+            ChannelOpSpec(
+                op_name=FS_MODIFY,
+                required_params=("path", "content"),
+                user_visible=False,
+                effect_class="local_host",
+                risk_class="unrestricted",
+            ),
+        ),
     )
 
 

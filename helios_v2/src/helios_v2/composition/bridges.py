@@ -253,6 +253,17 @@ class ChannelSubsystemStateProvider:
             descriptors[descriptor.driver_id] = {
                 "supported_ops": tuple(descriptor.output_ops),
                 "output_ops": tuple(descriptor.output_ops),
+                # R85: project each op's self-described spec so the planner can validate inputs
+                # generically (required_params) and record effect/risk class. Transport facts only.
+                "op_specs": {
+                    spec.op_name: {
+                        "required_params": tuple(spec.required_params),
+                        "user_visible": spec.user_visible,
+                        "effect_class": spec.effect_class,
+                        "risk_class": spec.risk_class,
+                    }
+                    for spec in descriptor.output_op_specs
+                },
             }
         return descriptors
 
@@ -1963,6 +1974,7 @@ class FirstVersionInternalThoughtRequestBridge:
                 "layer_names": tuple(layer.layer_name for layer in thought_contract.layers),
                 "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
                 "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
+                "ready_channels": tuple(thought_contract.capability_snapshot.get("ready_channels", ())),
             },
             tick_id=tick_id,
         )
@@ -2316,6 +2328,42 @@ class OwnerGroundedEmbodiedPromptRequestBridge:
     """
 
     identity_carry_provider: "Callable[[], GovernanceCarryState | None] | None" = None
+    channel_state_provider: "ChannelSubsystemStateProvider | None" = None
+
+    def _capability_summary(self) -> dict[str, object]:
+        """Owner: composition (R85).
+
+        Project the real bound channels/ops from channel-state when a provider is wired (channel-bound
+        assembly), so the model is told which tools actually exist; otherwise fall back to the
+        first-version reply-only constants. Transport facts only; no cognitive policy.
+        """
+
+        if self.channel_state_provider is None:
+            return {
+                "available_channels": ("cli",),
+                "available_ops": ("reply_message",),
+                "forbidden_capabilities": ("direct_execution", "invented_channel"),
+                "ready_channels": ("cli",),
+            }
+        descriptors = self.channel_state_provider.channel_descriptor_snapshot()
+        statuses = self.channel_state_provider.channel_status_snapshot()
+        channels = tuple(descriptors.keys())
+        ops: list[str] = []
+        for descriptor in descriptors.values():
+            for op in descriptor.get("output_ops", ()):
+                if op not in ops:
+                    ops.append(op)
+        ready = tuple(
+            driver_id
+            for driver_id, status in statuses.items()
+            if isinstance(status, dict) and status.get("available", False)
+        )
+        return {
+            "available_channels": channels or ("cli",),
+            "available_ops": tuple(ops) or ("reply_message",),
+            "forbidden_capabilities": ("direct_execution", "invented_channel"),
+            "ready_channels": ready or channels or ("cli",),
+        }
 
     def build_requests(
         self,
@@ -2347,12 +2395,7 @@ class OwnerGroundedEmbodiedPromptRequestBridge:
             "retrieval_context": _retrieval_context_text(frame, directed_retrieval_result),
             "continuity_context": _continuity_context_text(directed_retrieval_result),
         }
-        capability_summary = {
-            "available_channels": ("cli",),
-            "available_ops": ("reply_message",),
-            "forbidden_capabilities": ("direct_execution", "invented_channel"),
-            "ready_channels": ("cli",),
-        }
+        capability_summary = self._capability_summary()
         identity_boundary_summary = {
             "identity_boundary": "identity revision remains proposal-only and governance-validated",
             "identity_self_summary": identity_self_summary,
@@ -2429,6 +2472,7 @@ class SemanticInternalThoughtRequestBridge:
                 "layer_names": tuple(layer.layer_name for layer in thought_contract.layers),
                 "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
                 "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
+                "ready_channels": tuple(thought_contract.capability_snapshot.get("ready_channels", ())),
             },
             tick_id=tick_id,
         )
@@ -2551,18 +2595,32 @@ class ChannelBackedPlannerBridgeRequestBridge:
 
     def build_request(self, frame, action_externalization_result) -> PlannerBridgeRequest:
         tick_id = frame.tick_id
+        descriptor_snapshot = self.state_provider.channel_descriptor_snapshot()
+        # R85 capability gate (Q2): the driver self-description is the capability registry. A behavior
+        # (op) is registered+reviewed iff a connected outbound driver offers it. An unoffered op is
+        # `registered=False`, which the planner rejects (`behavior_not_registered`), reinforcing the
+        # `_select_channel` `no_channel_available` path. Composition derives this fact only; the planner
+        # still owns acceptance.
+        normalized = action_externalization_result.result.normalized_proposal
+        offered = False
+        if normalized is not None:
+            offered = any(
+                normalized.preferred_op in descriptor.get("output_ops", ())
+                for descriptor in descriptor_snapshot.values()
+                if isinstance(descriptor, dict)
+            )
         return PlannerBridgeRequest(
             request_id=f"planner-bridge-request:runtime:{tick_id}",
             source_externalization_result_id=action_externalization_result.result.result_id,
-            normalized_proposal_present=action_externalization_result.result.normalized_proposal is not None,
+            normalized_proposal_present=normalized is not None,
             behavior_snapshot={
-                "registered": True,
-                "reviewed": True,
+                "registered": offered,
+                "reviewed": offered,
                 "minimum_score": 0.5,
                 "proposal_score": 0.9,
                 "execution_priority": 2,
             },
-            channel_descriptor_snapshot=self.state_provider.channel_descriptor_snapshot(),
+            channel_descriptor_snapshot=descriptor_snapshot,
             channel_status_snapshot=self.state_provider.channel_status_snapshot(),
             tick_id=tick_id,
         )
@@ -2726,6 +2784,34 @@ class FirstVersionExperienceWritebackRequestBridge:
                     requested_effect_summary="no outward action this cycle",
                     applied_effect_summary="thinking cycle concluded internally without outward action",
                     reason_trace=("thought cycle produced no actionable proposal",),
+                    tick_id=tick_id,
+                )
+            )
+        elif planner_bridge_result.result.status in {
+            "policy_rejected",
+            "execution_consistency_failed",
+        }:
+            # R85: a fired tick whose proposed action the planner rejected or could not consistently
+            # bind is a formal blocked outcome, written back so the cycle is preserved (FG-4.4 - a tool
+            # failure/rejection is never silently dropped) and the downstream autonomy/evaluation owners
+            # still run. Provenance links to the planner result and the rejection reason.
+            requests.append(
+                ExperienceWritebackRequest(
+                    request_id=f"experience-writeback-request:blocked:runtime:{tick_id}",
+                    source_outcome_kind="planner_bridge",
+                    source_outcome_id=planner_bridge_result.result.result_id,
+                    source_outcome_status=planner_bridge_result.result.status,
+                    outcome_class="world_blocked",
+                    source_provenance={
+                        "source_request_id": planner_bridge_result.request.request_id,
+                        "rejection_reason": planner_bridge_result.result.rejection_reason
+                        or planner_bridge_result.result.status,
+                    },
+                    requested_effect_summary="a proposed outward action was not accepted",
+                    applied_effect_summary=(
+                        f"planner blocked the action ({planner_bridge_result.result.status})"
+                    ),
+                    reason_trace=("planner rejected or could not consistently bind the proposed action",),
                     tick_id=tick_id,
                 )
             )

@@ -28,6 +28,7 @@ from ..contracts import (
     ChannelDriverStatusReport,
     ChannelError,
     ChannelManagementResult,
+    ChannelOpSpec,
     InboundDrainResult,
     InboundPacket,
     OutboundDispatchOutcome,
@@ -133,6 +134,15 @@ def _cli_descriptor(config: CliDriverConfig) -> ChannelDriverDescriptor:
             ),
         ),
         health_signals=("pending_inbound", "overflow_count"),
+        output_op_specs=(
+            ChannelOpSpec(
+                op_name=CLI_OUTPUT_OP,
+                required_params=("outbound_text", "target_user_id"),
+                user_visible=True,
+                effect_class="external_world",
+                risk_class="unrestricted",
+            ),
+        ),
     )
 
 

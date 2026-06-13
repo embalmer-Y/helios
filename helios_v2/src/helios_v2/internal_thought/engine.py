@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from helios_v2.directed_retrieval import ThoughtWindowBundle
@@ -111,6 +112,12 @@ class StructuredThoughtEvidence:
     # R81: optional model-supplied subjective hormone forecast (channel -> `[0, 1]`) or None. It is
     # carried content for the `04` corroborator, never an input to this owner's judgment.
     hormone_prediction: Mapping[str, float] | None = None
+    # R85: optional model-supplied tool intent. `intends_tool_use`+`tool_op` name an op the model
+    # wants to run; `tool_params` are its scalar arguments. Model-supplied content the owner maps
+    # into an effector action proposal; a malformed/partial intent degrades to no tool intent here.
+    intends_tool_use: bool = False
+    tool_op: str = ""
+    tool_params: Mapping[str, object] = MappingProxyType({})
 
 
 def _require_bool(payload: dict[str, Any], key: str) -> bool:
@@ -178,6 +185,45 @@ def _optional_hormone_prediction(payload: dict[str, Any]) -> Mapping[str, float]
 
 
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+
+
+def _optional_tool_intent(payload: dict[str, Any]) -> tuple[bool, str, Mapping[str, object]]:
+    """Owner: internal thought loop (R85).
+
+    Purpose:
+        Parse the optional tool-intent fields (`i_want_to_use_tool`/`tool_op`/`tool_params`) into a
+        bounded `(intends, op, params)` triple. The model supplies a tool intent as content; this
+        owner only validates and bounds it, then maps it into an effector action proposal.
+
+    Returns:
+        `(True, op, params)` when a well-formed tool intent is present; otherwise
+        `(False, "", {})`. A malformed/partial intent (flag set but no op; `tool_params` not an
+        object; a non-scalar param value or empty key) degrades to no tool intent - it is NEVER
+        raised, so a malformed tool intent closes the tick through the existing no-proposal path
+        rather than failing the parse.
+
+    Notes:
+        Deliberately lenient (unlike the strict required-field parsing): the tool intent is optional
+        model content, and the owner never fabricates an op or params from a malformed assertion.
+    """
+
+    if not isinstance(payload.get("i_want_to_use_tool"), bool) or not payload["i_want_to_use_tool"]:
+        return False, "", MappingProxyType({})
+    op = payload.get("tool_op")
+    if not isinstance(op, str) or not op.strip():
+        return False, "", MappingProxyType({})
+    raw_params = payload.get("tool_params")
+    params: dict[str, object] = {}
+    if isinstance(raw_params, dict):
+        for key, value in raw_params.items():
+            if not isinstance(key, str) or not key:
+                return False, "", MappingProxyType({})
+            if not isinstance(value, (str, int, float, bool)):
+                return False, "", MappingProxyType({})
+            params[key] = value
+    elif raw_params is not None:
+        return False, "", MappingProxyType({})
+    return True, op.strip(), MappingProxyType(params)
 
 
 def _extract_structured_json(completion_text: str) -> str:
@@ -298,6 +344,7 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
     self_revision_summary = _optional_str(revision_payload, "summary") if revision_payload else ""
 
     hormone_prediction = _optional_hormone_prediction(payload)
+    intends_tool_use, tool_op, tool_params = _optional_tool_intent(payload)
 
     return StructuredThoughtEvidence(
         thought_text=thought_value.strip(),
@@ -309,6 +356,9 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
         intends_self_revision=intends_self_revision,
         self_revision_summary=self_revision_summary,
         hormone_prediction=hormone_prediction,
+        intends_tool_use=intends_tool_use,
+        tool_op=tool_op,
+        tool_params=tool_params,
     )
 
 
@@ -436,10 +486,33 @@ def _derive_thought_judgment(
         )
     else:
         # Emit an action proposal only when the cycle closes and either the deterministic
-        # baseline applies (evidence is None) or the model expressed an action intent. This
+        # baseline applies (evidence is None) or the model expressed an action/tool intent. This
         # lets a model conclude "thought complete, no action required" without externalizing.
-        emit_action = evidence is None or model_intends_action
-        if emit_action:
+        tool_intent = (
+            evidence is not None and evidence.intends_tool_use and bool(evidence.tool_op)
+        )
+        emit_action = evidence is None or model_intends_action or tool_intent
+        if tool_intent:
+            # R85: a tool intent takes the action slot (deterministic precedence over a say). The
+            # owner names the op + params (model content); the planner selects/binds/validates the
+            # channel. preferred_channels is a non-authoritative hint sourced from the ready channels
+            # the prompt exposed (real channel-state), never a hardcoded driver id; the planner routes
+            # by op regardless. An op no driver offers becomes a formal planner rejection.
+            ready_channels = request.prompt_contract_summary.get("ready_channels", ())
+            preferred_channels = tuple(ready_channels) if isinstance(ready_channels, tuple) else ()
+            action_proposal = ThoughtActionProposalCarrier(
+                proposal_id=f"thought-action:{request.request_id}",
+                scope="external",
+                behavior_name=evidence.tool_op,
+                requested_op=evidence.tool_op,
+                preferred_channels=preferred_channels,
+                outbound_text=None,
+                outbound_intensity=0.75,
+                reason_trace=("thought selected a tool op for the current cycle",),
+                governance_hints={"requires_identity_review": False},
+                op_params=evidence.tool_params,
+            )
+        elif emit_action:
             action_proposal = ThoughtActionProposalCarrier(
                 proposal_id=f"thought-action:{request.request_id}",
                 scope="external",

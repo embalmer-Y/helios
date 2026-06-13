@@ -186,6 +186,10 @@ class ThoughtActionProposalCarrier:
     outbound_intensity: float
     reason_trace: tuple[str, ...]
     governance_hints: Mapping[str, object]
+    # R85: generic bounded tool-op parameters (e.g. a file path/content). Model-supplied content
+    # carried verbatim to `12`; the owning driver's per-op spec, read by `13`, decides which keys are
+    # required. Defaults to empty so the reply path is byte-for-byte unchanged.
+    op_params: Mapping[str, object] = MappingProxyType({})
 
     def __post_init__(self) -> None:
         if not self.proposal_id:
@@ -216,6 +220,17 @@ class ThoughtActionProposalCarrier:
                     "ThoughtActionProposalCarrier governance_hints must not contain empty keys"
                 )
         object.__setattr__(self, "governance_hints", hints)
+        op_params = MappingProxyType(dict(self.op_params))
+        for key, value in op_params.items():
+            if not key:
+                raise InternalThoughtError(
+                    "ThoughtActionProposalCarrier op_params must not contain empty keys"
+                )
+            if not isinstance(value, (str, int, float, bool)):
+                raise InternalThoughtError(
+                    f"ThoughtActionProposalCarrier op_params['{key}'] must be a scalar (str/number/bool)"
+                )
+        object.__setattr__(self, "op_params", op_params)
 
 
 @dataclass(frozen=True)

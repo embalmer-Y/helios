@@ -68,6 +68,18 @@ def test_descriptor_declares_effector_capabilities(tmp_path: Path) -> None:
     assert "connect" in descriptor.management_ops
 
 
+def test_descriptor_declares_per_op_specs(tmp_path: Path) -> None:
+    descriptor = _connected_driver(tmp_path).descriptor()
+    write_spec = descriptor.op_spec("fs_write")
+    assert write_spec is not None
+    assert write_spec.required_params == ("path", "content")
+    assert write_spec.user_visible is False
+    assert write_spec.effect_class == "local_host"
+    assert write_spec.risk_class == "unrestricted"
+    assert descriptor.op_spec("fs_read").required_params == ("path",)
+    assert descriptor.op_spec("fs_list").required_params == ()
+
+
 def test_static_readiness_ready_when_sandbox_exists(tmp_path: Path) -> None:
     readiness = _connected_driver(tmp_path).static_readiness()
     assert readiness.ready is True

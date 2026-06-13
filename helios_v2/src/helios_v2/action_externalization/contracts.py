@@ -187,12 +187,9 @@ class NormalizedThoughtActionProposal:
             raise ActionExternalizationError(
                 "NormalizedThoughtActionProposal must declare non-empty reason_trace items"
             )
-        if self.scope == "external":
-            outbound_text = params.get("outbound_text")
-            if not isinstance(outbound_text, str) or not outbound_text:
-                raise ActionExternalizationError(
-                    "NormalizedThoughtActionProposal external user-visible behaviors require final outbound_text"
-                )
+        # R85/D2a: the prior "external scope requires outbound_text" rule is removed. Whether an op is
+        # user-visible (and needs reply content/target) is the owning driver's per-op declaration,
+        # enforced generically by the `13` planner via `required_params`, not by scope here.
         object.__setattr__(self, "params", params)
         object.__setattr__(self, "channel_constraints", channel_constraints)
         object.__setattr__(self, "governance_hints", governance_hints)

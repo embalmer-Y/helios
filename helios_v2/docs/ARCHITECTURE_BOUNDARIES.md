@@ -1,6 +1,6 @@
 # Helios v2 Architecture Boundaries
 
-> Status: boundary-truth snapshot, last synced R84 (OS file-system effector driver + generalized multi-driver channel-bound assembly)
+> Status: boundary-truth snapshot, last synced R85 (LLM-driven autonomous tool selection + per-op driver self-description)
 > Scope: implementation-aligned owner and dependency truth for `helios_v2`
 
 ## 1. Purpose
@@ -187,6 +187,22 @@ Boundary rules:
 4. The injected executor is the threading seam: production uses `ThreadPoolFileOpExecutor` (true async, so a slow op enqueues its result whenever it finishes); the network-free test/CI/long-run path uses `InlineFileOpExecutor` (synchronous, deterministic, race-free). The backlog is lock-guarded for safe worker-thread enqueue vs tick-thread drain.
 5. The channel-bound assembly is generalized to a set of drivers via `RuntimeProfile.channel_drivers`; the effective set is the CLI driver (when `channel_cli`) plus the injected drivers, all registered on one subsystem with one subsystem-backed sensory source and one readiness gate over all bound driver ids. The cli-only path (`channel_cli=True`, no extra drivers) is byte-for-byte the R31 single-CLI assembly, and `CHANNEL_BOUND_STAGE_ORDER` (21 stages) is unchanged (transport stages are per-subsystem). Any channel binding remains mutually exclusive with an injected `external_signal_source`.
 6. Autonomous LLM-driven planner tool selection (`11`→`12`→`13` function-calling choosing an `fs_*` op) is explicitly NOT owned here; R84 ships the effector and the loop mechanism, and the planner's autonomous tool selection is a deferred follow-on requirement. The driver never re-selects a channel or recomputes a decision.
+
+### 4.10 Requirement `85` LLM-driven autonomous tool selection and per-op driver self-description
+
+| Owner | Primary modules | Owns | Explicitly does not own |
+| --- | --- | --- | --- |
+| Per-op driver self-description | `helios_v2.channel.contracts` (`ChannelOpSpec`, `ChannelDriverDescriptor.output_op_specs`, `op_spec`), `channel.drivers.cli`/`channel.drivers.os_fs` (the declarations) | each output op's `required_params`, `user_visible`, `effect_class`, `risk_class` — declared by the owning driver as transport/capability facts | how those facts are interpreted (the planner validates; `14`/`17` consume effect/risk later); cognitive policy |
+| Tool-intent cognition | `helios_v2.prompt_contract` (v3 tool-intent schema), `helios_v2.internal_thought` (`op_params`, the tool-intent parse + carrier) | expressing a tool intent (op name + params) as model content with deterministic action-slot precedence | channel selection, binding, or input validation (all `13`); per-op property knowledge |
+| Generic planner tool binding | `helios_v2.planner_bridge.engine` (generic `required_params` validation + op effect/risk on the policy trace), `helios_v2.composition` (op_specs projection, capability gate from channel-state, the rejection-tick `world_blocked` writeback) | selecting/binding the op to the offering driver, validating its inputs generically, the channel-state-derived capability gate | the op's intrinsic properties (the driver declares them); cognition's intent |
+
+Boundary rules:
+
+1. Cognition names an op and its params (model content); it never selects, binds, or validates a channel. Selection/binding/validation stays in `13`.
+2. Each op's intrinsic properties (`required_params`/`user_visible`/`effect_class`/`risk_class`) are declared by the owning driver in its descriptor and travel to the planner through the real channel-state snapshot. Per-op knowledge must never be hardcoded in the planner; the planner validates generically against the declared spec (with a legacy reply fallback when an op declares no spec).
+3. The proposal `scope` taxonomy is unchanged (`internal`/`external`; no `tool` value). An effector op is an `external` proposal whose user-visibility comes from the op's declared `user_visible`, never from scope. The `external`-scope outbound_text rule is removed; op-aware validation lives only in `13` (D2a).
+4. The capability gate is the driver self-description: an op offered by a connected outbound driver is a registered, reviewed behavior; an unoffered op is a formal planner rejection. No `14` governance is added in R85; `effect_class`/`risk_class` are declared and ride the policy trace read-through only (R86 enforces `risk_class`; R87 consumes `effect_class`).
+5. A tool failure, rejection, or unavailable op is a formal written-back outcome (planner rejection / consistency failure with a `world_blocked` continuity record, or the R84 failure reafference), never silently dropped and never reported as success. No native function-calling (`25` unchanged); no degraded path.
 
 ## 5. Allowed Dependency Directions for `16-18`
 

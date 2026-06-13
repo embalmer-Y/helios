@@ -112,7 +112,8 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
                 normalized_intensity=self._normalize_intensity(proposal.outbound_intensity, config),
             )
 
-        if proposal.preferred_op in {"reply_message", "send_message", "speak_text"} and "outbound_text" not in proposal.params:
+        missing_input = self._missing_required_input(channel_descriptor, proposal)
+        if missing_input is not None:
             return self._consistency_failed(
                 request,
                 proposal_id=proposal.proposal_id,
@@ -148,6 +149,8 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
                 "behavior_name": behavior_name,
                 "proposal_score": proposal_score,
                 "minimum_score": behavior_min_score,
+                "op_effect_class": self._op_class(channel_descriptor, proposal.preferred_op, "effect_class"),
+                "op_risk_class": self._op_class(channel_descriptor, proposal.preferred_op, "risk_class"),
             },
         )
 
@@ -245,6 +248,42 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
             tick_id=request.tick_id,
         )
         return result, None
+
+    def _missing_required_input(self, channel_descriptor: dict, proposal) -> str | None:
+        """Owner: planner-bridge.
+
+        Return the first required param key the proposal is missing for the selected op, validated
+        generically against the driver's declared per-op spec (`op_specs[op].required_params`). When the
+        op declares no spec (legacy shim descriptors), fall back to the prior reply-op `outbound_text`
+        check so the default assembly is byte-for-byte unchanged. Returns `None` when inputs are complete.
+        """
+
+        op_specs = channel_descriptor.get("op_specs")
+        spec = op_specs.get(proposal.preferred_op) if isinstance(op_specs, dict) else None
+        if isinstance(spec, dict):
+            for key in spec.get("required_params", ()):  # generic, driver-declared
+                if key not in proposal.params:
+                    return key
+            return None
+        # Legacy fallback: no declared spec for this op (shim descriptors).
+        if proposal.preferred_op in {"reply_message", "send_message", "speak_text"} and "outbound_text" not in proposal.params:
+            return "outbound_text"
+        return None
+
+    @staticmethod
+    def _op_class(channel_descriptor: dict, op_name: str, key: str) -> str | None:
+        """Owner: planner-bridge. Read the op's declared effect/risk class for the policy trace (R85).
+
+        Read-through only: R85 records the class for observability; it is not yet a gate (R86 enforces
+        `risk_class`). Returns `None` when the op declares no spec.
+        """
+
+        op_specs = channel_descriptor.get("op_specs")
+        spec = op_specs.get(op_name) if isinstance(op_specs, dict) else None
+        if isinstance(spec, dict):
+            value = spec.get(key)
+            return value if isinstance(value, str) else None
+        return None
 
     def _select_channel(self, request: PlannerBridgeRequest, requested_op: str) -> str | None:
         descriptors = request.channel_descriptor_snapshot

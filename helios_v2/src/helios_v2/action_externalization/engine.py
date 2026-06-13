@@ -21,9 +21,6 @@ from .contracts import (
 )
 
 
-_USER_VISIBLE_OPS = {"reply_message", "send_message", "speak_text"}
-
-
 def _validate_thought_result(thought_cycle_result: ThoughtCycleResult) -> None:
     if not thought_cycle_result.result_id:
         raise ActionExternalizationError("ThoughtCycleResult must declare a non-empty result_id")
@@ -108,13 +105,9 @@ class FirstVersionThoughtExternalizationPath(ThoughtExternalizationPath):
 
         if not proposal.preferred_channels:
             return self._rejected_result(request, "missing_candidate_channels")
-        if proposal.scope == "external" and proposal.requested_op in _USER_VISIBLE_OPS:
-            if "target_user_id" not in request.target_binding_context:
-                return self._rejected_result(request, "missing_target_user_id")
-            if proposal.outbound_text is None:
-                return self._rejected_result(request, "missing_outbound_text")
-        if proposal.scope == "internal" and proposal.requested_op in _USER_VISIBLE_OPS:
-            return self._rejected_result(request, "scope_conflict")
+        # R85/D2a: op-aware validation (required params, including a reply's outbound_text/target_user_id,
+        # and user-visibility) is the planner's responsibility - only `13` has the driver's per-op spec
+        # through the channel-state snapshot. `12` performs structural normalization only.
 
         normalized = NormalizedThoughtActionProposal(
             proposal_id=proposal.proposal_id,
@@ -146,6 +139,7 @@ class FirstVersionThoughtExternalizationPath(ThoughtExternalizationPath):
         params: dict[str, object] = {}
         if proposal.outbound_text is not None:
             params["outbound_text"] = proposal.outbound_text
+        params.update(dict(proposal.op_params))
         params.update(dict(request.target_binding_context))
         return params
 

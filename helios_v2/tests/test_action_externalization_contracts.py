@@ -31,7 +31,10 @@ def test_externalization_request_is_immutable_and_contexts_are_read_only() -> No
         request.target_binding_context["target_user_id"] = "user:002"
 
 
-def test_normalized_external_proposal_requires_final_outbound_text() -> None:
+def test_normalized_external_proposal_no_longer_requires_outbound_text() -> None:
+    # R85/D2a: the scope-driven outbound_text rule was removed from the `12` contract; whether an
+    # op needs reply content is the owning driver's per-op declaration, enforced by `13`. An external
+    # proposal without outbound_text now constructs fine (e.g. an effector op like fs_write).
     proposal = NormalizedThoughtActionProposal(
         proposal_id="normalized-proposal:001",
         origin_thought_id="thought:001",
@@ -48,20 +51,21 @@ def test_normalized_external_proposal_requires_final_outbound_text() -> None:
 
     assert proposal.params["outbound_text"] == "hello"
 
-    with pytest.raises(ActionExternalizationError, match="outbound_text"):
-        NormalizedThoughtActionProposal(
-            proposal_id="normalized-proposal:bad",
-            origin_thought_id="thought:001",
-            owner_path="thought_action_bridge",
-            scope="external",
-            behavior_name="reply_message",
-            preferred_op="reply_message",
-            params={},
-            channel_constraints={"preferred_channels": ("cli",)},
-            outbound_intensity=0.7,
-            reason_trace=("explicit proposal",),
-            governance_hints={"requires_identity_review": False},
-        )
+    effector = NormalizedThoughtActionProposal(
+        proposal_id="normalized-proposal:tool",
+        origin_thought_id="thought:001",
+        owner_path="thought_action_bridge",
+        scope="external",
+        behavior_name="fs_write",
+        preferred_op="fs_write",
+        params={"path": "notes/a.txt", "content": "hi"},
+        channel_constraints={"preferred_channels": ("os_fs",)},
+        outbound_intensity=0.7,
+        reason_trace=("tool op proposal",),
+        governance_hints={"requires_identity_review": False},
+    )
+    assert effector.preferred_op == "fs_write"
+    assert "outbound_text" not in effector.params
 
 
 def test_equivalent_evidence_stays_distinct_from_normalized_outcome() -> None:

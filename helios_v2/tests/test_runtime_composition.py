@@ -925,6 +925,135 @@ def test_default_assembly_is_unchanged_by_channel_wiring() -> None:
     assert "channel_inbound_drain" not in result.stage_results
 
 
+# --- Requirement 85: LLM-driven autonomous tool selection (end-to-end) ----------------------
+
+import json as _json
+
+from helios_v2.llm.contracts import ProviderCompletion as _ProviderCompletion
+
+
+@dataclass
+class ToolThoughtProvider:
+    """Deterministic provider that asserts a tool intent in the v3-style structured envelope."""
+
+    tool_op: str = "fs_write"
+    tool_params: dict = field(default_factory=lambda: {"path": "notes/a.txt", "content": "hi"})
+
+    def complete(self, profile, request, api_key) -> _ProviderCompletion:
+        envelope = {
+            "thought": "I should record this to a file",
+            "sufficiency": 0.9,
+            "wants_to_continue": False,
+            "continue_reason": "",
+            "proposed_action": {"intends_action": False, "summary": ""},
+            "self_revision": {"intends_revision": False, "summary": ""},
+            "i_want_to_use_tool": True,
+            "tool_op": self.tool_op,
+            "tool_params": dict(self.tool_params),
+        }
+        return _ProviderCompletion(output_text=_json.dumps(envelope), finish_reason="stop")
+
+
+def test_tool_intent_binds_fs_write_and_result_reenters_sensory(tmp_path) -> None:
+    # CLI provides the triggering operator input; the model responds by using the file tool, which
+    # the planner binds to os_fs (by op). Both drivers coexist on one subsystem.
+    provider = ToolThoughtProvider(tool_op="fs_write", tool_params={"path": "a.txt", "content": "hi"})
+    driver = _os_fs_driver(tmp_path)
+    sink: list[str] = []
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=sink.append,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    handle.channel_subsystem._drivers["cli"].submit_line("please save a note")
+
+    # Tick 1: operator line triggers the tick; thought asserts fs_write -> planner binds it to os_fs.
+    r1 = handle.tick()
+    planner = r1.stage_results["planner_executor_feedback_bridge"].result
+    assert planner.status == "executed"
+    assert planner.action_decision.selected_channel_id == "os_fs"
+    assert planner.action_decision.selected_op == "fs_write"
+    assert planner.action_decision.validated_params["path"] == "a.txt"
+    assert planner.action_decision.policy_trace["op_effect_class"] == "local_host"
+    assert planner.action_decision.policy_trace["op_risk_class"] == "unrestricted"
+    dispatch = r1.stage_results["channel_outbound_dispatch"]
+    assert dispatch.dispatch_result.dispatched_count == 1
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hi"
+
+    # Tick 2: the tool result re-enters 02 sensory as a tool_result stimulus (reafference).
+    r2 = handle.tick()
+    drain = r2.stage_results["channel_inbound_drain"]
+    assert drain.drain_result.drained_count >= 1
+    tool_signals = [s for s in drain.drain_result.raw_signals if s.signal_type == "tool_result"]
+    assert tool_signals and tool_signals[0].source_name == "os_fs"
+
+
+def test_tool_op_missing_required_param_is_consistency_failure(tmp_path) -> None:
+    # fs_write without content: the planner's generic op-input validation rejects it.
+    provider = ToolThoughtProvider(tool_op="fs_write", tool_params={"path": "a.txt"})
+    driver = _os_fs_driver(tmp_path)
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=lambda _line: None,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    handle.channel_subsystem._drivers["cli"].submit_line("save without content")
+    result = handle.tick()
+    planner = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner.status == "execution_consistency_failed"
+    assert planner.rejection_reason == "missing_op_inputs"
+    assert not (tmp_path / "a.txt").exists()
+
+
+def test_unoffered_tool_op_is_rejected(tmp_path) -> None:
+    # An op no connected driver offers is a formal rejection, never a fabricated execution.
+    provider = ToolThoughtProvider(tool_op="fs_teleport", tool_params={"path": "a.txt"})
+    driver = _os_fs_driver(tmp_path)
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=lambda _line: None,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    handle.channel_subsystem._drivers["cli"].submit_line("teleport please")
+    result = handle.tick()
+    planner = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner.status == "policy_rejected"
+    assert planner.action_decision is None
+
+
+def test_reply_path_unchanged_when_no_tool_intent(tmp_path) -> None:
+    # A reply-only tick (no tool intent) still binds reply_message to the CLI driver and renders.
+    provider = FakeThoughtProvider(
+        thought_text="hello operator",
+        sufficiency=0.9,
+        wants_to_continue=False,
+        intends_action=True,
+    )
+    sink: list[str] = []
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=sink.append,
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    handle.channel_subsystem._drivers["cli"].submit_line("hi there")
+    result = handle.tick()
+    planner = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner.status == "executed"
+    assert planner.action_decision.selected_op == "reply_message"
+    assert sink and sink[0].startswith("[operator]")
+
+
 # --- Requirement 33: durable experience store + restart continuity ---
 
 

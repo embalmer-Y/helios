@@ -1662,6 +1662,11 @@ def assemble_runtime(
             request_provider=(
                 OwnerGroundedEmbodiedPromptRequestBridge(
                     identity_carry_provider=lambda: governance_stage_ref.prior_carry_state,
+                    channel_state_provider=(
+                        ChannelSubsystemStateProvider(subsystem=channel_subsystem)
+                        if channel_subsystem is not None
+                        else None
+                    ),
                 )
                 if embodied_prompt_mode == "v3"
                 else SemanticEmbodiedPromptRequestBridge()
