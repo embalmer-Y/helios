@@ -13,7 +13,7 @@
 
 ## 1. 当前状态（截至最近同步）
 
-- main 测试基线：968 passed / 4 skipped（离线）。
+- main 测试基线：981 passed / 4 skipped（离线）。
 - **🎉 P0–P3 已达 100%**：地基期三门（G0 长跑稳定 / G1 owner 有界 / G2 记忆跨重启）此前已签收（R82/R83），唯一遗留的 B4「真实送达对账」由 **R87 收口**——`17` consequence corroboration 对本机 effector 动作已从"流程完成"升级为**真实送达可证伪**（network driver 仍属 P4）。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
@@ -22,6 +22,7 @@
   - G2 形成/检索/重启接续此前已成立（R45/R34/R42）。
   - B4 真实送达对账（R87：`tool_result` reafference 对账，`really_delivered`/`delivered_failed`/`delivery_unverified`）。
 - **P4 进行中**：R84 交付首个 effector driver（沙箱化 OS 文件 driver）+ 工具结果 reafference 回流 `02`；**R85 收口 FG-4 自主工具使用闭环**；**R86 交付受治理的 OS 命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手**（`unrestricted` 命令直跑、`restricted` 硬拒、`governed` 经 `14` 授权后执行；解释器/写自身代码永久 restricted）。**P4 退出门剩余**：网络通道（QQ/飞书/语音）。
+- **P5 评估框架已开篇**：R88 交付行为漂移评估器（P5 启动门，tests-only 只读消费 R83 JSONL），为后续所有 P5 能力提供可证伪的漂移基线。下一步 R89 图灵 harness → R90 记忆探针。
 - 真实信号驱动：`02–10` 默认语义链、`04` 七通道+双时标+R81 对账、`11` LLM、`18` autonomy。
 - 仍 `baseline_real`：`12–16` 外化链（草稿非授权，但 R85/R86 起工具路径已可真实执行本机文件/命令副作用，R87 起其真实送达可证伪）；真实网络外化仍属 P4。
 
@@ -41,6 +42,7 @@
 | R85 | LLM 驱动自主工具选择 | 收口 FG-4 自主工具闭环：`11` 真实认知选工具 op+params → `12` 结构性归一化（D2a，op_params 贯通）→ `13` 按 op 绑定 driver + 通用 `required_params` 校验 + 能力门由 channel-state 派生 → 执行 → 结果回流 `02` 再思考。driver 自描述每个 op（`ChannelOpSpec`：required_params/user_visible 启用，effect_class/risk_class 声明留 R86/R87）。取消 `tool` scope（D1）；op 感知校验从 `12` 上移 `13`（D2a）。新增 planner-rejection tick 的 `world_blocked` 写回闭环（FG-4.4）。无 function-calling（`25` 不变）。912→921 测试绿。 |
 | R86 | 受治理的 OS 命令执行 | 新 effector `helios_v2.channel.drivers.os_command`（`run_command`，op 级 `risk_class="governed"`）：argv-前缀 default-deny allowlist（`unrestricted` 只读/诊断 + `governed` `mkdir`/`cp`/`mv`），no-shell、sandbox cwd、超时、注入式 `CommandExecutor`+`CommandRunner`（CI 用 `FakeCommandRunner` 无子进程）、`tool_result` 回流。`13` 把 R85 的 `risk_class` read-through 升级为**强制 fail-closed 门**：`unrestricted` 直跑（pre-R86 op 字节级不变）、`restricted`/未知 → `risk_class_restricted` 硬拒、`governed` → 查 carried `14` 授权 → 执行 / `governance_denied` / `governance_required`。`14` additive 扩展为 `governed` 动作授权权威（`GovernedActionAuthorization` + `GovernedActionGovernancePath` + 两-tick carry，自我修订路径不变）。解释器/写自身代码永久 restricted（argv 级关不住 in-script 效应，留 OS 隔离的未来需求）。921→957 测试绿。 |
 | R87 | Consequence-Truth 真实送达对账（B4 收口） | 把 `17` consequence corroboration 从"流程完成"（R32 阶段完成检查）升级为对 effector 动作的**真实送达可证伪** verdict，消费 R84/R85/R86 的 `tool_result` reafference。严格 additive、只读：R32 verdict/taxonomy/打分字节级不变。`ConsequenceClaim` 加 `decision_id`/`selected_op`/`op_effect_class`/`op_user_visible`（从 `ActionDecision` 取）；bundle 加 `delivered_tool_result_evidence`（composition 从 `channel_inbound_drain` 投影本 tick 回流的 correlation decision_id+ok）；无新 carry holder（N 决策的回流在 N+1 drain，与重评 N claim 同帧）。新 `_corroborate_delivery` 发 `really_delivered`/`delivered_failed`(+告警)/`delivery_unverified`(诚实缺席,绝不乐观)/`delivery_not_applicable`。`effect_class` 成为真实消费者（收口 R85 前置声明）。**B4 收口**（本机 effector 路径；网络 driver 仍 P4）→ **P0–P3 达 100%**。957→968 测试绿。 |
+| R88 | 行为漂移评估器（P5 启动门） | tests-only 只读/离线/确定性漂移评估器（`tests/r88_drift_evaluator/`），消费 R83 逐 tick JSONL。按 early-vs-late 窗口均值差 + 死区（`neutral_band` 默认 0.02，归一化到维度合法量程，`<=` 边界判 neutral 带 float epsilon）把每个 owner 维分类为 `drift_positive`/`drift_negative`/`drift_neutral`/`dim_unavailable`，并对朝合法边界饱和的方向漂移加 `divergent_high`/`divergent_low`。方向类只表征跨窗变化的**符号**，非好坏判断；样本不足（`< min_samples_for_trend`，默认 4）判 `dim_unavailable`，绝不冒充 neutral。维度按 `NN.field` 机械发现，合法量程/期望维集默认取 R83 `TRACKED_FIELD_BOUNDS`（真实 substrate 19 维：`04`×9+`05`×7+`09`×2+`18`×1，**无 `03` salience**，修正 ROADMAP 旧"17 维"beta 口径）。`analysis_ok` 为可证伪 verdict（解析够样本、期望维全可分类、无 divergence）。对 committed `logs/r83/semantic_600.jsonl` 验证（50 样本、19 维全在、settled→全 neutral、无 divergence、ok）+ 合成 rising/falling/flat/sparse/divergent + empty/malformed 鲁棒性。无 runtime/owner 改动。968→981 测试绿。 |
 
 ## 3. 近期队列：P4 通道生态 / P5 评估框架（P0–P3 已收口）
 
@@ -52,12 +54,13 @@
 - 已把 `17` 对 effector 动作的对账从"流程完成"升级为"真实送达可证伪"，收口 B4 → **P0–P3 达 100%**。
 - 剩余（独立项）：`23` 侧的跨 tick 送达延迟/重试长程诊断，可在需要时建在此 verdict 之上。
 
-> 下一步方向（择一推进）：**P4 网络通道生态**（QQ/飞书/语音，达 P4 退出门）或 **P5 评估框架**（R88 漂移评估器 → R89 图灵 harness → R90 记忆探针，P5 启动门）。建议先 P5 评估框架（后续所有 P5 能力都要靠它证伪）。
+> 下一步方向（择一推进）：**P4 网络通道生态**（QQ/飞书/语音，达 P4 退出门）或继续 **P5 评估框架**（R88 漂移评估器已交付 → 下一步 R89 图灵 harness → R90 记忆探针）。R88（P5 启动门）已立起，后续 P5 能力可在其漂移基线上证伪。
 
 ## 4. 中期队列：P5 评估框架 + 内心独白
 
-### R88 — 17 维行为漂移评估器
-- 消费 R83 逐 tick JSONL（已预埋），4 hormone + 4 feeling + 4 salience + 5 behavior = 17 维，分类 drift_positive/negative/neutral/dim_unavailable。**P5 启动门**。依赖：R83。
+### R88 — 行为漂移评估器（P5 启动门）✅ 已交付（见 §2）
+- 已交付为 tests-only 的只读、离线、确定性漂移评估器（`tests/r88_drift_evaluator/`），消费 R83 逐 tick JSONL，按 early-vs-late 窗口均值差 + 死区把每个 owner 维度分类为 `drift_positive`/`drift_negative`/`drift_neutral`/`dim_unavailable`，并对朝合法边界饱和的漂移加 `divergent_high`/`divergent_low` 标记；`analysis_ok` 为可证伪 verdict。
+- **ROADMAP 口径修正**：原 §4 草案的"4 hormone + 4 feeling + 4 salience + 5 behavior = 17 维"是 beta 分支衍生口径，与 main 不符。main 的 R83 轨迹实际承载 **19 个 owner 维**（`04`×9 + `05`×7 + `09`×2 + `18`×1），**无 `03` salience**。R88 按 main 真实 substrate 落地；把 `03` salience 加入轨迹是未来的 R83-轨迹扩展，明确不在 R88 范围。
 
 ### R89 — 长跑图灵式评估 harness
 - 6 轴（linguistic_naturalness / bio_responsiveness / memory_fidelity / agency_locking / cross_tick_continuity / stimulus_response_coherence）+ 锁定 rubric + 证据锚定 + 人类与 LLM-judge 双轨（§13.4）。复用 R83 long-runner。依赖：R83、R88。注：拟人度轴需真实刺激，与 P4 真实 afferent 有前置关系。
