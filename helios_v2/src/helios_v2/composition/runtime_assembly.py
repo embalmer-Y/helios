@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Callable, Mapping
 
 from helios_v2.action_externalization import (
@@ -148,14 +149,16 @@ from helios_v2.embedding import (
     EmbeddingProfile,
     EmbeddingProfileRegistry,
     EmbeddingRequest,
+    OpenAICompatibleEmbeddingProvider,
 )
-from helios_v2.continuity_checkpoint import ContinuityCheckpointStore
+from helios_v2.continuity_checkpoint import ContinuityCheckpointStore, SqliteCheckpointBackend
 from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
 from helios_v2.temporal import TemporalSource
 from helios_v2.persistence import (
     ExperienceStore,
     InMemoryExperienceStoreBackend,
     SemanticStoreBackedDirectedMemoryCandidateProvider,
+    SqliteExperienceStoreBackend,
     StoreBackedDirectedMemoryCandidateProvider,
 )
 from helios_v2.sensory import RawSignal, SensoryIngress, SensorySource
@@ -1817,3 +1820,137 @@ def _find_in_memory_sink(
         if isinstance(sink, InMemoryLogSink):
             return sink
     return None
+
+
+# --- Requirement 82: standard production assembly (persistence-by-default) ---
+
+# Default git-ignored project data directory for the standard production assembly's durable
+# SQLite files. `data/` and `*.sqlite3` are already in `.gitignore`.
+DEFAULT_PRODUCTION_DATA_DIR = "data"
+
+# Production embedding credential env names. When the api key is present the production embedding
+# gateway uses a real OpenAI-compatible provider; otherwise it falls back to the network-free
+# deterministic-hash provider so the standard assembly still runs offline (real embedding quality
+# is deferred to P5; the hash fallback is an explicit documented placeholder).
+_EMBEDDING_API_KEY_ENV = "HELIOS_EMBEDDING_API_KEY"
+_EMBEDDING_BASE_URL_ENV = "HELIOS_EMBEDDING_BASE_URL"
+_EMBEDDING_MODEL_ENV = "HELIOS_EMBEDDING_MODEL"
+_DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1"
+_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+_OFFLINE_EMBEDDING_KEY_ENV = "HELIOS_AUTO_EMBEDDING_KEY"
+
+
+def _production_embedding_gateway(
+    profile_name: str = "experience-embedding",
+    env: "Mapping[str, str] | None" = None,
+) -> EmbeddingGateway:
+    """Owner: composition (R82). Build the standard production embedding gateway.
+
+    Purpose:
+        Return a real-capable, offline-safe embedding gateway bound to the retrieval path's
+        `experience-embedding` profile name. When `HELIOS_EMBEDDING_API_KEY` is present in the
+        environment, it uses the OpenAI-compatible provider (model/base-url from
+        `HELIOS_EMBEDDING_MODEL` / `HELIOS_EMBEDDING_BASE_URL`, with documented defaults); otherwise
+        it falls back to the network-free `DeterministicHashEmbeddingProvider`.
+
+    Inputs:
+        `profile_name` - the embedding profile name (must match `assemble_runtime`'s
+        `embedding_profile_name`, default `experience-embedding`).
+        `env` - the environment mapping to read credentials from (defaults to `os.environ`).
+
+    Returns:
+        An `EmbeddingGateway` whose bound profile is statically ready (real api key present, or the
+        offline hash env key set).
+
+    Notes:
+        The OpenAI-compatible provider lazily imports its SDK inside the call path, so constructing
+        this gateway is import-safe and network-free; no embedding call happens at assembly time.
+        This introduces no real embedding model as a hard dependency (P5 owns real embedding quality).
+    """
+
+    resolved_env = env if env is not None else os.environ
+    api_key = resolved_env.get(_EMBEDDING_API_KEY_ENV)
+    if api_key:
+        profile = EmbeddingProfile(
+            profile_name=profile_name,
+            model=resolved_env.get(_EMBEDDING_MODEL_ENV, _DEFAULT_EMBEDDING_MODEL),
+            api_key_env=_EMBEDDING_API_KEY_ENV,
+            base_url=resolved_env.get(_EMBEDDING_BASE_URL_ENV, _DEFAULT_EMBEDDING_BASE_URL),
+        )
+        return EmbeddingGateway(
+            provider=OpenAICompatibleEmbeddingProvider(),
+            registry=EmbeddingProfileRegistry(profiles=(profile,)),
+            env=dict(resolved_env),
+        )
+    # Offline fallback: deterministic-hash provider with a defined ready env key.
+    profile = EmbeddingProfile(
+        profile_name=profile_name,
+        model="deterministic-hash",
+        api_key_env=_OFFLINE_EMBEDDING_KEY_ENV,
+        base_url="http://localhost",
+    )
+    return EmbeddingGateway(
+        provider=DeterministicHashEmbeddingProvider(),
+        registry=EmbeddingProfileRegistry(profiles=(profile,)),
+        env={_OFFLINE_EMBEDDING_KEY_ENV: "production-offline"},
+    )
+
+
+def assemble_production_runtime(
+    *,
+    data_dir: "str | os.PathLike[str] | None" = None,
+    config: "CompositionConfig | None" = None,
+    gateway: "LlmGatewayAPI | None" = None,
+    recorder: "RuntimeObservabilityRecorder | None" = None,
+    embedding_gateway: "EmbeddingGatewayAPI | None" = None,
+) -> RuntimeHandle:
+    """Owner: composition (R82). Assemble the standard production runtime with persistence on.
+
+    Purpose:
+        The standard production entry point. Unlike `assemble_runtime()` (the test/embedded entry
+        point, in-memory by default), this defaults the durable infrastructure ON: a SQLite-backed
+        experience store, a SQLite-backed R42 continuity checkpoint, and an `experience-embedding`
+        gateway, all under one git-ignored data directory. A runtime assembled here persists its
+        experience and resumes its cross-tick `09`/`18`/`04`/`05` state across a process restart
+        (closing the G2 persistence gate). It adds no assembly path and holds no cognitive policy;
+        it constructs the durable backends and delegates to `assemble_runtime()`.
+
+    Inputs:
+        `data_dir` - the directory for the durable SQLite files (default `DEFAULT_PRODUCTION_DATA_DIR`).
+        `config` - optional `CompositionConfig` override (default first-version config).
+        `gateway` - optional ready LLM gateway (production reads `OPENAI_API_KEY`; tests inject a
+            ready fake gateway to run offline).
+        `recorder` - optional `21` observability recorder.
+        `embedding_gateway` - optional embedding gateway override (default the production gateway,
+            real-capable with an offline-hash fallback).
+
+    Returns:
+        A runnable `RuntimeHandle` with persistence and the continuity checkpoint defaulted on.
+
+    Raises:
+        `PersistenceError` / `CheckpointError` if a SQLite path is unwritable; `RuntimeStartupError`
+        at startup if a registered critical dependency (LLM, embedding, store, checkpoint) is
+        unready. There is no degraded non-persistent production path.
+    """
+
+    base = Path(data_dir) if data_dir is not None else Path(DEFAULT_PRODUCTION_DATA_DIR)
+    store = ExperienceStore(
+        backend=SqliteExperienceStoreBackend(db_path=str(base / "experience_store.sqlite3"))
+    )
+    store.initialize()
+    checkpoint = ContinuityCheckpointStore(
+        backend=SqliteCheckpointBackend(db_path=str(base / "continuity_checkpoint.sqlite3"))
+    )
+    checkpoint.initialize()
+    resolved_embedding = (
+        embedding_gateway if embedding_gateway is not None else _production_embedding_gateway()
+    )
+    return assemble_runtime(
+        config=config,
+        gateway=gateway,
+        recorder=recorder,
+        experience_store=store,
+        embedding_gateway=resolved_embedding,
+        continuity_checkpoint=checkpoint,
+        default_signal_mode="semantic",
+    )

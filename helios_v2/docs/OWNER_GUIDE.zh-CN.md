@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R81。测试基线：881 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R82。测试基线：886 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -213,6 +213,7 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 作用：唯一持有完整装配真相的地方；拥有 `CANONICAL_STAGE_ORDER` / `CHANNEL_BOUND_STAGE_ORDER`、owner-neutral bridge,以及 R58 的 `RuntimeProfile` 能力束。
 - 完成度细节（R58 能力束）：`assemble_runtime` 曾把九个能力 seam 作为松散 kwargs 传入,跨能力规则（embedding 需 store）内联校验,派生标志 `semantic_memory_enabled` 作为局部变量穿过约 10 个三元分支——每加一个能力就要再穿一个松散 flag。R58 引入冻结的、composition 拥有的 `RuntimeProfile` 能力束:聚合这些 seam,在 `__post_init__` 一处做跨能力 fail-fast 校验,以 `semantic_memory_enabled` 属性暴露派生标志（只算一次）。`assemble_runtime` 新增可加的 `profile=` 参数（仍接受全部既有 kwargs,经 `_UNSET` sentinel 构建 profile;profile 与重叠 kwargs 同传则 `CompositionError`）。纯结构重构,逐装配、逐调用方字节级不变。
 - 完成度细节（R69 语义装配默认化）：`RuntimeProfile` 新增 `default_signal_mode` 字段（`"semantic"` 新默认 vs `"legacy_constant"` 逃逸口）。当 `"semantic"` 且调用方未注入 `experience_store`/`embedding_gateway` 时，自动配置 `InMemoryExperienceStoreBackend` + `DeterministicHashEmbeddingProvider`，并重建冻结 profile 使 `semantic_memory_enabled` 反映装配状态。`assemble_runtime()` 无参数调用时 `semantic_memory_enabled == True`，`03`–`10` 去 shim 链激活。显式注入始终优先。
+- 完成度细节（R82 标准生产装配 / G2 收口）：新增 `assemble_production_runtime()` 标准生产入口（与 in-memory 默认的 `assemble_runtime()` 测试/嵌入入口并列，后者字节级不变）。它默认把耐久基础设施**打开**：SQLite 经验存储（`SqliteExperienceStoreBackend`，R33）+ SQLite R42 连续性检查点（`SqliteCheckpointBackend`）+ `experience-embedding` 网关，全部落在 git-ignored 的 `data/`。不持认知策略——只构造耐久后端并委托 `assemble_runtime(default_signal_mode="semantic")`（后者已接好 checkpoint bridge、`experience_store_ready`/`embedding_profile_ready`/`continuity_checkpoint_ready` 关键依赖与启动恢复）。经此装配的运行时跨进程重启保留 `15` 经验流并恢复跨 tick 的 `09`/`18`/`04`/`05` 状态（FG-5.1），收口 §13.3.1 G2.2/G2.4 持久化门。embedding 网关 real-capable（设 `HELIOS_EMBEDDING_API_KEY` 用 OpenAI 兼容 provider；模型/base-url 经 `HELIOS_EMBEDDING_MODEL`/`HELIOS_EMBEDDING_BASE_URL`），否则回退网络无关 `DeterministicHashEmbeddingProvider`（真实 embedding 质量留 P5，哈希为显式占位）。任一后端不就绪 startup fail-fast；无降级非持久路径。
 - 下一步：随 owner 去 shim，用 owner 真实的跨 owner 契约替换首版 bridge；保持装配不含认知策略。R56 已把误置于此的 `04` 神经调质 drive 映射（`AppraisalDerivedNeuromodulatorUpdatePath`）回迁到 `04` owner；R57 已把误置于此的 `18` autonomy 驱动输入映射（认知结果→压力常量、planner 分类、retrieval 归一化、阈值知识）回迁到 `18` owner（新增 `ProactiveCognitionFacts` + `AutonomyDriveInputProjection`）。guard（`tests/test_composition_owner_boundary_guard.py`）现同时防止 `<salience>_to_<channel>` 敏感度策略与 autonomy 驱动压力/阈值策略再次落入 composition。**当前仍留在 composition 的是被接受的 owner-neutral 胶水**：常量首版 shim 路径（`FirstVersion*`）与纯投影 bridge（只转发已发布 owner 字段、不施加打分权重,映射归消费方 owner,如 `09` 门控的 `workload_pressure`/`global_activation_level` 投影）。后续若发现其他认知策略残留,应按同一模式回迁。新能力应作为 `RuntimeProfile` 的一个字段加入,而非新的松散 kwarg。
 
 ### 3.3 `25` LLM 推理网关 — `helios_v2.llm`
