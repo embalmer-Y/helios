@@ -14,7 +14,7 @@ Does not own:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Mapping, Protocol, runtime_checkable
 
@@ -48,6 +48,9 @@ BridgeRejectionReason = Literal[
     "missing_channel_binding",
     "missing_output_op",
     "missing_op_inputs",
+    "risk_class_restricted",
+    "governance_required",
+    "governance_denied",
 ]
 PlannerBridgeLearnedParameterCategory = Literal[
     "policy_evaluation_policy",
@@ -73,6 +76,9 @@ _BRIDGE_REJECTION_REASONS = {
     "missing_channel_binding",
     "missing_output_op",
     "missing_op_inputs",
+    "risk_class_restricted",
+    "governance_required",
+    "governance_denied",
 }
 
 
@@ -114,6 +120,7 @@ class PlannerBridgeRequest:
     channel_descriptor_snapshot: Mapping[str, object]
     channel_status_snapshot: Mapping[str, object]
     tick_id: int | None
+    governance_approval: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.request_id:
@@ -126,6 +133,7 @@ class PlannerBridgeRequest:
             "behavior_snapshot",
             "channel_descriptor_snapshot",
             "channel_status_snapshot",
+            "governance_approval",
         ):
             mapping = MappingProxyType(dict(getattr(self, attr_name)))
             for key in mapping:
@@ -208,6 +216,7 @@ class PlannerBridgeResult:
     rejection_reason: BridgeRejectionReason | None
     execution_consistency_failure: ExecutionConsistencyFailure | None
     tick_id: int | None
+    pending_governed_action: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.result_id:
@@ -216,6 +225,14 @@ class PlannerBridgeResult:
             raise PlannerBridgeError("PlannerBridgeResult must declare a non-empty source_request_id")
         if self.status not in _BRIDGE_STATUSES:
             raise PlannerBridgeError("PlannerBridgeResult status must use the fixed taxonomy")
+        if self.pending_governed_action is not None:
+            pending = MappingProxyType(dict(self.pending_governed_action))
+            for key in pending:
+                if not key:
+                    raise PlannerBridgeError(
+                        "PlannerBridgeResult pending_governed_action must not contain empty keys"
+                    )
+            object.__setattr__(self, "pending_governed_action", pending)
         if self.rejection_reason is not None and self.rejection_reason not in _BRIDGE_REJECTION_REASONS:
             raise PlannerBridgeError(
                 "PlannerBridgeResult rejection_reason must use the fixed taxonomy"

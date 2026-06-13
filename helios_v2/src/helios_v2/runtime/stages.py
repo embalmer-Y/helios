@@ -2037,7 +2037,9 @@ class IdentityGovernanceRuntimeStage(RuntimeStage):
                 "Identity-governance requests must preserve the upstream thought-cycle result provenance"
             )
         evaluate_op = self.identity_governance_layer.build_evaluate_op(internal_thought_result.result, request)
-        result = self.identity_governance_layer.evaluate_self_revision(internal_thought_result.result, request)
+        result = self.identity_governance_layer.evaluate_self_revision_and_authorize(
+            internal_thought_result.result, request
+        )
         publish_pressure_op = self.identity_governance_layer.build_publish_pressure_op(
             request,
             result.pressure_state,

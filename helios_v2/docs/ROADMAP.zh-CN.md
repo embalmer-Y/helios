@@ -1,6 +1,6 @@
 # Helios v2 开发路线图（活文档）
 
-> 状态：活文档（前向开发规划）。最近同步：R85。
+> 状态：活文档（前向开发规划）。最近同步：R86。
 > 角色：记录"下一步做什么、大概是哪些 requirement、每个做什么"，避免反复重新推导。
 > 配套：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定验收标准、P0→P7 阶段路线图（上位约束）。
@@ -13,13 +13,13 @@
 
 ## 1. 当前状态（截至最近同步）
 
-- main 测试基线：921 passed / 4 skipped（离线）。
+- main 测试基线：957 passed / 4 skipped（离线）。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
   - G0 长跑稳定（R83：10万 tick legacy-constant 跑通，无崩溃，内存 peak 5.6MB 持平，零泄漏）。
   - G1 owner 有界性（R83 harness：04/05/09/18 逐 tick 有界、无 NaN、无发散，可证伪）。
   - G2 形成/检索/重启接续此前已成立（R45/R34/R42）。
-- **P4 进行中**：R84 交付首个 effector driver（沙箱化 OS 文件 driver）+ 工具结果 reafference 回流 `02`；**R85 收口 FG-4 自主工具使用闭环**——`11` 真实认知选工具 → `12` 贯通 op_params → `13` 按 op 绑定 driver 并通用校验 → 执行 → 结果回流 → 再思考；driver 自描述每个 op 的属性（required_params/user_visible/effect_class/risk_class）。
+- **P4 进行中**：R84 交付首个 effector driver（沙箱化 OS 文件 driver）+ 工具结果 reafference 回流 `02`；**R85 收口 FG-4 自主工具使用闭环**；**R86 交付受治理的 OS 命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手**（`unrestricted` 命令直跑、`restricted` 硬拒、`governed` 经 `14` 授权后执行；解释器/写自身代码永久 restricted）。
 - 真实信号驱动：`02–10` 默认语义链、`04` 七通道+双时标+R81 对账、`11` LLM、`18` autonomy。
 - 仍 `baseline_real`：`12–16` 外化链（草稿非授权，但 R85 起工具路径已可真实执行本机文件副作用）、`17`（对账逻辑真实但仍标注"流程完成≠真实送达"，待 R87 升级）。
 
@@ -37,56 +37,55 @@
 | R83 | 长跑稳定 + owner 有界性 harness | 可复现长跑 + 逐 owner 有界性 + JSONL 轨迹；CI 档 + opt-in 10万/真实 LLM 档；收口 G0/G1。 |
 | R84 | OS 文件 channel driver（沙箱化 effector） | P4 开篇 + 首个 effector driver（FG-4）。`fs_read/fs_write/fs_list/fs_modify` 限定 sandbox root（`resolve()`+relative 校验，绝对外/`..`/软链逃逸拒绝），异步注入式 executor（测试 inline 确定性 / 生产 ThreadPool 真异步），结果作为 `tool_result` 带 correlation provenance 回流 `02`（efference→reafference 闭环）。失败写回（绝不冒充成功）；写操作受 `allow_write` 门控；readiness=sandbox 存在。channel-bound 装配泛化为 `RuntimeProfile.channel_drivers`（CLI+effector 共存）。纯传输/effector，无认知策略；stdlib-only，无进程/网络。888→912 测试绿。 |
 | R85 | LLM 驱动自主工具选择 | 收口 FG-4 自主工具闭环：`11` 真实认知选工具 op+params → `12` 结构性归一化（D2a，op_params 贯通）→ `13` 按 op 绑定 driver + 通用 `required_params` 校验 + 能力门由 channel-state 派生 → 执行 → 结果回流 `02` 再思考。driver 自描述每个 op（`ChannelOpSpec`：required_params/user_visible 启用，effect_class/risk_class 声明留 R86/R87）。取消 `tool` scope（D1）；op 感知校验从 `12` 上移 `13`（D2a）。新增 planner-rejection tick 的 `world_blocked` 写回闭环（FG-4.4）。无 function-calling（`25` 不变）。912→921 测试绿。 |
+| R86 | 受治理的 OS 命令执行 | 新 effector `helios_v2.channel.drivers.os_command`（`run_command`，op 级 `risk_class="governed"`）：argv-前缀 default-deny allowlist（`unrestricted` 只读/诊断 + `governed` `mkdir`/`cp`/`mv`），no-shell、sandbox cwd、超时、注入式 `CommandExecutor`+`CommandRunner`（CI 用 `FakeCommandRunner` 无子进程）、`tool_result` 回流。`13` 把 R85 的 `risk_class` read-through 升级为**强制 fail-closed 门**：`unrestricted` 直跑（pre-R86 op 字节级不变）、`restricted`/未知 → `risk_class_restricted` 硬拒、`governed` → 查 carried `14` 授权 → 执行 / `governance_denied` / `governance_required`。`14` additive 扩展为 `governed` 动作授权权威（`GovernedActionAuthorization` + `GovernedActionGovernancePath` + 两-tick carry，自我修订路径不变）。解释器/写自身代码永久 restricted（argv 级关不住 in-script 效应，留 OS 隔离的未来需求）。921→957 测试绿。 |
 
-## 3. 近期队列：P4 工具 + P0–P3 100% 收尾
+## 3. 近期队列：P0–P3 100% 收尾
 
-### R86 — OS Channel Driver：命令执行 + 治理 fail-closed ⚠️ 高风险
-- 做什么：命令执行驱动，default-deny + allowlist；high-risk op（`rm -rf`/`sudo`/写 helios 自身代码）经 `13` planner + `14` 治理 fail-closed 强校验兜底；失败/拒绝/不可用正式写回。复用 R85 已落地的 per-op `risk_class` 声明（命令 driver 把高危 op 标 `governed`/`restricted`，`13`+`14` 据此 fail-closed；R85 已把 risk_class 透传进 planner policy trace，只差强制门）。
-- 意义：达 Claude Code CLI 级本机操作能力，但受治理。
-- 触及：新驱动（复用 R84/R85 的 effector + executor + reafference + per-op spec 范式）+ `13`/`14` 治理路径。依赖：R84、R85。
-- **开工前需主人拍板**：allowlist 粒度、sandbox root 选址、哪些算 high-risk、首版是否禁止写自身代码（建议禁，留 P7）。
+### R86 — OS Channel Driver：命令执行 + 治理 fail-closed ✅ 已交付（见 §2）
+- 已实现为受治理的命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手。
+- 首版 governed 集 = sandbox 内有界变更（`mkdir`/`cp`/`mv`）；解释器（`python <脚本>`/`bash`/`pytest` 等）= 任意代码执行，argv 级 allowlist 关不住，**永久 restricted**，留给未来带 OS 隔离的独立 requirement；写自身代码硬拒（P7）。
 
 ### R87 — Consequence-Truth 对账升级
 - 做什么：借 R84/R85/R86 的真实 effector，把 `17`/`23` 的 consequence corroboration 从"流程完成诚实标注"升级为**真实送达可证伪**（收口阻塞点 B4）；消费 R85 落地的 op `effect_class`；先侦察 `_SHIM_DERIVED_DIMENSIONS` 覆盖度再补判别。
 - 意义：完成后跑 P0–P3 退出再评估（沿用 R64/R72/R73 模式）→ **正式宣告 P0–P3 达 100%**。
-- 触及：`helios_v2.evaluation`、`23`。依赖：R32、R84/R85/R86。
+- 触及：`helios_v2.evaluation`、`23`。依赖：R32、R84/R85（**R86 非硬前置**：R84/R85 的真实文件 effector + `tool_result` 回流已提供"真实送达"证据，文件 op 的对账现在就能做；命令执行 effect 的对账留作 R86 落地后的 additive 扩展）。
 
 > 编号说明：R86–R87 为建议编号，按创建顺序落定，可能顺移；P5/并行轨各项相应顺延。
 
 ## 4. 中期队列：P5 评估框架 + 内心独白
 
-### R87 — 17 维行为漂移评估器
+### R88 — 17 维行为漂移评估器
 - 消费 R83 逐 tick JSONL（已预埋），4 hormone + 4 feeling + 4 salience + 5 behavior = 17 维，分类 drift_positive/negative/neutral/dim_unavailable。**P5 启动门**。依赖：R83。
 
-### R88 — 长跑图灵式评估 harness
-- 6 轴（linguistic_naturalness / bio_responsiveness / memory_fidelity / agency_locking / cross_tick_continuity / stimulus_response_coherence）+ 锁定 rubric + 证据锚定 + 人类与 LLM-judge 双轨（§13.4）。复用 R83 long-runner。依赖：R83、R87。注：拟人度轴需真实刺激，与 P4 真实 afferent 有前置关系。
+### R89 — 长跑图灵式评估 harness
+- 6 轴（linguistic_naturalness / bio_responsiveness / memory_fidelity / agency_locking / cross_tick_continuity / stimulus_response_coherence）+ 锁定 rubric + 证据锚定 + 人类与 LLM-judge 双轨（§13.4）。复用 R83 long-runner。依赖：R83、R88。注：拟人度轴需真实刺激，与 P4 真实 afferent 有前置关系。
 
-### R89 — 记忆保真探针
-- 替换图灵评估 A3 stub（0.5）为真实 R10+R15 端到端探针（recall_hit_rate / writeback_persistence_rate / latency_score）。依赖：R88。
+### R90 — 记忆保真探针
+- 替换图灵评估 A3 stub（0.5）为真实 R10+R15 端到端探针（recall_hit_rate / writeback_persistence_rate / latency_score）。依赖：R89。
 
-### R90 — internal_monologue 二阶刺激源
+### R91 — internal_monologue 二阶刺激源
 - `02` 新 sensory source + `03` appraisal estimator；上一 tick LLM 输出回流为 `internal_monologue` 刺激。依赖：R79。
 
-### R91 — 内心独白跨 tick carry + 09 自延续 + 18 source_kind + 42 v4
-- `RuntimeHandle._carry_internal_monologue` carry seam；`09` 加 `self_continuation_signal`；`18` `DeferredContinuityRecord.source_kind` 加 `"internal_monologue"`；`42` checkpoint v3→v4（带一次性迁移）。依赖：R90。
+### R92 — 内心独白跨 tick carry + 09 自延续 + 18 source_kind + 42 v4
+- `RuntimeHandle._carry_internal_monologue` carry seam；`09` 加 `self_continuation_signal`；`18` `DeferredContinuityRecord.source_kind` 加 `"internal_monologue"`；`42` checkpoint v3→v4（带一次性迁移）。依赖：R91。
 
 ## 5. P5 重头：双轨记忆（建在真实长跑反馈上）
 
-### R92 — MemoryRecord schema + 4 层时间分层
+### R93 — MemoryRecord schema + 4 层时间分层
 - L2/L3/L4/L5 分层，迁移 `PersistedExperienceRecord`。
 
-### R93 — 6 维 objective_importance + 双重确认写入
+### R94 — 6 维 objective_importance + 双重确认写入
 - 重要性独立于 LLM 判断的客观维度 + 双重确认写入规则。
 
-### R94 — Ebbinghaus 衰减 + recall 重固化 + 自动晋升层级
+### R95 — Ebbinghaus 衰减 + recall 重固化 + 自动晋升层级
 
-### R95 — bounded-window / ANN 语义检索
+### R96 — bounded-window / ANN 语义检索
 - 〔R83 修正后的 finding〕**非当前阻塞，是 P5 真实规模问题**：真实高维 embedding + 大 store 下朴素全库余弦才显著，届时换 bounded-window/ANN。建在双轨记忆检索层里最自然。
 
-### R96 — memory_tool_channel
+### R97 — memory_tool_channel
 - `30` 框架下 LLM 记忆工具（recall/forget/consolidate 必做，link/reflect 推迟）；所有 keyword 匹配改 embedding 余弦；解决 owner 命名冲突（新 owner 名，不与 R31 CLI 冲突）。
 
-### R97 — forget 治理 fail-closed
+### R98 — forget 治理 fail-closed
 - `14` 在 forget 上的 fail-closed 门 + 永久审计轨迹 + soft-delete + GC。
 
 ## 6. 并行轨：P4 其余 channel driver（与 A/B/C 解耦，任意插入）
@@ -108,7 +107,8 @@
 | P4 通道生态 | OS（R84/R86）+ QQ/飞书/语音/WeChat | R84/R86, 并行轨 |
 | P6 / P7 | 受治理自我修订 / 受治理代码自修改 | 待 P5 框架立起后细化 |
 
-> 注：自 R84 创建后，原 R85–R97 建议编号整体顺移一位（新增 R85 = LLM 驱动 planner 工具选择）。上表为当前建议编号，按实际创建顺序落定。
+> 注：本表为当前建议编号，与 §3–§5 一致（按实际创建顺序落定）。§4/§5 此前存在 R87 重号 + 整体 off-by-one，已对齐为：P0–P3 收尾 R86/R87、P5 评估框架 R88–R90、内心独白 R91–R92、双轨记忆 R93–R98。
+> 提醒：beta 分支 `aggressive-radical-persona-no-theater` 的 R79–R85 与 main **同名不同义**（beta 已预研漂移评估器/图灵 harness/内心独白/双轨记忆等），移植回 main 时一律按 main 的创建顺序重新编号，不沿用 beta 编号。
 
 ## 8. 当前待主人决策项
 

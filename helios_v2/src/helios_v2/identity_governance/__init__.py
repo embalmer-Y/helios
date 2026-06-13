@@ -3,6 +3,7 @@
 from .contracts import (
     AppliedIdentityState,
     EvaluateIdentityGovernanceOp,
+    GovernedActionAuthorization,
     GovernanceCarryState,
     GovernancePressureLevel,
     GovernancePressureState,
@@ -20,12 +21,20 @@ from .contracts import (
     RevisionDecision,
     RevisionStatus,
 )
-from .engine import FirstVersionIdentityGovernancePath, IdentityGovernanceEngine
+from .engine import (
+    FirstVersionGovernedActionGovernancePath,
+    FirstVersionIdentityGovernancePath,
+    GovernedActionGovernancePath,
+    IdentityGovernanceEngine,
+)
 
 __all__ = [
     "AppliedIdentityState",
     "EvaluateIdentityGovernanceOp",
+    "FirstVersionGovernedActionGovernancePath",
     "FirstVersionIdentityGovernancePath",
+    "GovernedActionAuthorization",
+    "GovernedActionGovernancePath",
     "GovernanceCarryState",
     "GovernancePressureLevel",
     "GovernancePressureState",

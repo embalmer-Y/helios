@@ -396,3 +396,93 @@ def test_bridge_trace_summary_counts_revision_statuses() -> None:
     assert summary["revision_status_counts"]["invalid_proposal"] == 2
     assert summary["revision_status_counts"]["accepted"] == 1
     assert summary["revision_status_counts"]["rejected"] == 1
+
+
+# --- Requirement 86: governed-action authorization ---
+
+from helios_v2.identity_governance import (  # noqa: E402
+    FirstVersionGovernedActionGovernancePath,
+    GovernedActionAuthorization,
+)
+
+
+def _governance_config_with_governed(prefixes: tuple[tuple[str, ...], ...]) -> IdentityGovernanceConfig:
+    return IdentityGovernanceConfig(
+        legal_min_confidence=0.0,
+        legal_max_confidence=1.0,
+        governance_bootstrap_id="identity-governance-bootstrap:v1",
+        mandatory_learned_parameters=(
+            "governance_evaluation_policy",
+            "pressure_interpretation_policy",
+            "supported_revision_policy",
+            "boundary_check_policy",
+        ),
+        authorized_governed_action_prefixes=prefixes,
+    )
+
+
+def _gov_request(pending: dict | None) -> IdentityGovernanceRequest:
+    return IdentityGovernanceRequest(
+        request_id="identity-governance-request:gov",
+        source_thought_cycle_result_id="thought-cycle-result:gov",
+        source_proposal_id=None,
+        proposal_present=False,
+        proposal_snapshot={},
+        identity_state_snapshot={},
+        governance_trace_summary={},
+        recent_governance_trace_history=(),
+        tick_id=1,
+        pending_governed_action=pending,
+    )
+
+
+def _engine_with_governed(prefixes: tuple[tuple[str, ...], ...]) -> IdentityGovernanceEngine:
+    return IdentityGovernanceEngine(
+        config=_governance_config_with_governed(prefixes),
+        governance_path=FirstVersionIdentityGovernancePath(),
+        governed_action_path=FirstVersionGovernedActionGovernancePath(),
+    )
+
+
+_PENDING_MKDIR = {
+    "action_authorization_key": "key-mkdir-build",
+    "op": "run_command",
+    "command": "mkdir",
+    "args": ("build",),
+}
+
+
+def test_authorize_returns_none_without_pending_action() -> None:
+    engine = _engine_with_governed((("mkdir",),))
+    assert engine.authorize_governed_action(_gov_request(None)) is None
+
+
+def test_authorize_grants_configured_governed_prefix() -> None:
+    engine = _engine_with_governed((("mkdir",), ("cp",), ("mv",)))
+    auth = engine.authorize_governed_action(_gov_request(_PENDING_MKDIR))
+    assert isinstance(auth, GovernedActionAuthorization)
+    assert auth.authorized is True
+    assert auth.action_authorization_key == "key-mkdir-build"
+
+
+def test_authorize_denies_when_no_prefixes_configured_fail_closed() -> None:
+    engine = _engine_with_governed(())  # default fail-closed: authorize nothing
+    auth = engine.authorize_governed_action(_gov_request(_PENDING_MKDIR))
+    assert auth.authorized is False
+    assert auth.action_authorization_key == "key-mkdir-build"
+
+
+def test_authorize_denies_unconfigured_command() -> None:
+    engine = _engine_with_governed((("cp",),))  # mkdir not configured
+    auth = engine.authorize_governed_action(_gov_request(_PENDING_MKDIR))
+    assert auth.authorized is False
+
+
+def test_authorize_raises_when_pending_but_no_capability() -> None:
+    engine = IdentityGovernanceEngine(
+        config=_governance_config_with_governed((("mkdir",),)),
+        governance_path=FirstVersionIdentityGovernancePath(),
+        governed_action_path=None,
+    )
+    with pytest.raises(IdentityGovernanceError, match="governed-action capability"):
+        engine.authorize_governed_action(_gov_request(_PENDING_MKDIR))

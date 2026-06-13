@@ -20,6 +20,21 @@ from .os_fs import (
     OsFileSystemDriverConfig,
     ThreadPoolFileOpExecutor,
 )
+from .os_command import (
+    DEFAULT_COMMAND_ALLOWLIST,
+    OS_COMMAND_DRIVER_ID,
+    RUN_COMMAND,
+    CommandAllowRule,
+    CommandExecutor,
+    CommandRunner,
+    CommandRunResult,
+    FakeCommandRunner,
+    InlineCommandExecutor,
+    OsCommandChannelDriver,
+    OsCommandDriverConfig,
+    SubprocessCommandRunner,
+    ThreadPoolCommandExecutor,
+)
 
 __all__ = [
     "CLI_DRIVER_ID",
@@ -38,4 +53,17 @@ __all__ = [
     "OsFileSystemChannelDriver",
     "OsFileSystemDriverConfig",
     "ThreadPoolFileOpExecutor",
+    "DEFAULT_COMMAND_ALLOWLIST",
+    "OS_COMMAND_DRIVER_ID",
+    "RUN_COMMAND",
+    "CommandAllowRule",
+    "CommandExecutor",
+    "CommandRunner",
+    "CommandRunResult",
+    "FakeCommandRunner",
+    "InlineCommandExecutor",
+    "OsCommandChannelDriver",
+    "OsCommandDriverConfig",
+    "SubprocessCommandRunner",
+    "ThreadPoolCommandExecutor",
 ]

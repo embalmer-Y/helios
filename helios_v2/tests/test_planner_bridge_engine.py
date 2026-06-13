@@ -391,3 +391,127 @@ def test_internal_only_rejects_normalized_result() -> None:
     # internal-only path.
     with pytest.raises(PlannerBridgeError):
         engine.evaluate_internal_only(_externalization_result(), _bridge_request())
+
+
+# --- Requirement 86: enforced risk-class gate ---
+
+from types import SimpleNamespace  # noqa: E402
+
+
+def _command_channel_descriptor() -> dict:
+    return {
+        "output_ops": ("run_command",),
+        "supported_ops": ("run_command",),
+        "op_specs": {
+            "run_command": {
+                "required_params": ("command",),
+                "user_visible": False,
+                "effect_class": "local_host",
+                "risk_class": "governed",
+            }
+        },
+        "command_policy": (
+            {"argv_prefix": ("git", "status"), "risk_class": "unrestricted"},
+            {"argv_prefix": ("mkdir",), "risk_class": "governed"},
+        ),
+    }
+
+
+def _gate_request(governance_approval: dict | None = None) -> PlannerBridgeRequest:
+    return PlannerBridgeRequest(
+        request_id="planner-bridge-request:gate",
+        source_externalization_result_id="thought-externalization-result:gate",
+        normalized_proposal_present=True,
+        behavior_snapshot={"registered": True, "reviewed": True, "minimum_score": 0.0, "proposal_score": 1.0},
+        channel_descriptor_snapshot={"os_command": _command_channel_descriptor()},
+        channel_status_snapshot={"os_command": {"available": True, "bound": True, "execute_now": True}},
+        tick_id=1,
+        governance_approval=governance_approval or {},
+    )
+
+
+def _command_proposal(command: str, args: tuple[str, ...] = ()) -> SimpleNamespace:
+    params: dict[str, object] = {"command": command}
+    if args:
+        params["args"] = list(args)
+    return SimpleNamespace(preferred_op="run_command", params=params)
+
+
+def test_match_command_policy_argv_prefix() -> None:
+    path = FirstVersionPlannerBridgePath()
+    policy = _command_channel_descriptor()["command_policy"]
+    assert path._match_command_policy(policy, "git", ("status",)) == "unrestricted"
+    assert path._match_command_policy(policy, "git", ("status", "-s")) == "unrestricted"
+    assert path._match_command_policy(policy, "mkdir", ("build",)) == "governed"
+    assert path._match_command_policy(policy, "git", ("push",)) == "restricted"
+    assert path._match_command_policy(policy, "rm", ("-rf",)) == "restricted"
+    assert path._match_command_policy(None, "git", ("status",)) == "restricted"
+
+
+def test_action_authorization_key_is_stable_and_distinct() -> None:
+    path = FirstVersionPlannerBridgePath()
+    k1 = path._action_authorization_key("run_command", "mkdir", ("build",))
+    k2 = path._action_authorization_key("run_command", "mkdir", ("build",))
+    k3 = path._action_authorization_key("run_command", "mkdir", ("dist",))
+    assert k1 == k2
+    assert k1 != k3
+
+
+def test_gate_unrestricted_op_is_noop() -> None:
+    path = FirstVersionPlannerBridgePath()
+    descriptor = {
+        "output_ops": ("reply_message",),
+        "op_specs": {"reply_message": {"risk_class": "unrestricted"}},
+    }
+    proposal = SimpleNamespace(preferred_op="reply_message", params={"outbound_text": "hi"})
+    assert path._risk_class_gate(_gate_request(), proposal, descriptor) is None
+
+
+def test_gate_unrestricted_command_proceeds() -> None:
+    path = FirstVersionPlannerBridgePath()
+    gate = path._risk_class_gate(
+        _gate_request(), _command_proposal("git", ("status",)), _command_channel_descriptor()
+    )
+    assert gate is None
+
+
+def test_gate_restricted_command_fail_closed() -> None:
+    path = FirstVersionPlannerBridgePath()
+    gate = path._risk_class_gate(
+        _gate_request(), _command_proposal("rm", ("-rf", "x")), _command_channel_descriptor()
+    )
+    assert gate is not None
+    assert gate.status == "policy_rejected"
+    assert gate.rejection_reason == "risk_class_restricted"
+
+
+def test_gate_governed_without_authorization_requires_governance() -> None:
+    path = FirstVersionPlannerBridgePath()
+    gate = path._risk_class_gate(
+        _gate_request(), _command_proposal("mkdir", ("build",)), _command_channel_descriptor()
+    )
+    assert gate is not None
+    assert gate.rejection_reason == "governance_required"
+    pending = gate.pending_governed_action
+    assert pending is not None
+    assert pending["command"] == "mkdir"
+    assert pending["op"] == "run_command"
+    expected_key = path._action_authorization_key("run_command", "mkdir", ("build",))
+    assert pending["action_authorization_key"] == expected_key
+
+
+def test_gate_governed_with_carried_authorization_proceeds() -> None:
+    path = FirstVersionPlannerBridgePath()
+    key = path._action_authorization_key("run_command", "mkdir", ("build",))
+    request = _gate_request(governance_approval={key: {"authorized": True, "reason": "ok"}})
+    gate = path._risk_class_gate(request, _command_proposal("mkdir", ("build",)), _command_channel_descriptor())
+    assert gate is None
+
+
+def test_gate_governed_with_carried_denial_is_governance_denied() -> None:
+    path = FirstVersionPlannerBridgePath()
+    key = path._action_authorization_key("run_command", "mkdir", ("build",))
+    request = _gate_request(governance_approval={key: {"authorized": False, "reason": "stabilize"}})
+    gate = path._risk_class_gate(request, _command_proposal("mkdir", ("build",)), _command_channel_descriptor())
+    assert gate is not None
+    assert gate.rejection_reason == "governance_denied"

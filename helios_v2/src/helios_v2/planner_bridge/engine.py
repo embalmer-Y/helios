@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Mapping, Protocol, runtime_checkable
 
 from helios_v2.action_externalization import ThoughtExternalizationResult
 
@@ -112,6 +112,15 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
                 normalized_intensity=self._normalize_intensity(proposal.outbound_intensity, config),
             )
 
+        # R86 enforced risk-class gate. For an op-level `unrestricted` op (reply, fs_*) this is a no-op
+        # (effective risk is unrestricted, no command-policy lookup) so the path is byte-for-byte
+        # unchanged. For a `governed`/`restricted` op-level op (the command op) the effective
+        # per-invocation risk is the driver-projected per-command allowlist lookup; the planner owns the
+        # gate, the driver owns the allowlist, and `14` owns the authorization (carried).
+        gate = self._risk_class_gate(request, proposal, channel_descriptor)
+        if gate is not None:
+            return gate, None
+
         missing_input = self._missing_required_input(channel_descriptor, proposal)
         if missing_input is not None:
             return self._consistency_failed(
@@ -198,6 +207,7 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
         self,
         request: PlannerBridgeRequest,
         reason: str,
+        pending_governed_action: dict | None = None,
     ) -> PlannerBridgeResult:
         return PlannerBridgeResult(
             result_id=f"planner-bridge-result:{request.request_id}",
@@ -207,7 +217,81 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
             rejection_reason=reason,
             execution_consistency_failure=None,
             tick_id=request.tick_id,
+            pending_governed_action=pending_governed_action,
         )
+
+    def _risk_class_gate(
+        self,
+        request: PlannerBridgeRequest,
+        proposal,
+        channel_descriptor: dict,
+    ) -> PlannerBridgeResult | None:
+        """Owner: planner-bridge (R86 enforced risk-class gate).
+
+        Return a fail-closed `policy_rejected` result, or `None` to proceed. For an op-level
+        `unrestricted` op this is a no-op (byte-for-byte unchanged). For a `governed`/`restricted`
+        op-level op (the command op) the effective per-invocation risk is the driver-projected
+        per-command allowlist lookup of `[command, *args]`: `unrestricted` proceeds, `restricted`
+        (incl. no match) is `risk_class_restricted`, `governed` consults the carried `14` authorization
+        (`governance_approval` keyed by the stable action key) and proceeds only when authorized, else
+        `governance_denied` (carried denial) or `governance_required` (no carried decision, plus the
+        pending action descriptor for `14` to authorize next).
+        """
+
+        op_risk = self._op_class(channel_descriptor, proposal.preferred_op, "risk_class")
+        if op_risk is None or op_risk == "unrestricted":
+            return None
+        command = str(proposal.params.get("command", ""))
+        raw_args = proposal.params.get("args", ())
+        args = tuple(str(a) for a in raw_args) if isinstance(raw_args, (list, tuple)) else ()
+        effective = self._match_command_policy(channel_descriptor.get("command_policy"), command, args)
+        if effective == "unrestricted":
+            return None
+        if effective == "restricted":
+            return self._policy_rejected(request, "risk_class_restricted")
+        action_key = self._action_authorization_key(proposal.preferred_op, command, args)
+        auth = request.governance_approval.get(action_key)
+        if isinstance(auth, Mapping) and bool(auth.get("authorized", False)):
+            return None
+        if isinstance(auth, Mapping):
+            return self._policy_rejected(request, "governance_denied")
+        pending = {
+            "action_authorization_key": action_key,
+            "op": proposal.preferred_op,
+            "command": command,
+            "args": args,
+        }
+        return self._policy_rejected(request, "governance_required", pending_governed_action=pending)
+
+    @staticmethod
+    def _match_command_policy(command_policy: object, command: str, args: tuple[str, ...]) -> str:
+        """Owner: planner-bridge. Return the effective per-invocation risk from the driver-projected
+        per-command allowlist (argv-prefix match; no match -> `restricted`). Hardcodes no command name.
+        """
+
+        argv = (command, *args)
+        if not isinstance(command_policy, (list, tuple)):
+            return "restricted"
+        for rule in command_policy:
+            if not isinstance(rule, Mapping):
+                continue
+            prefix = tuple(str(token) for token in rule.get("argv_prefix", ()))
+            if prefix and len(prefix) <= len(argv) and tuple(argv[: len(prefix)]) == prefix:
+                risk = rule.get("risk_class")
+                return risk if isinstance(risk, str) else "restricted"
+        return "restricted"
+
+    @staticmethod
+    def _action_authorization_key(op: str, command: str, args: tuple[str, ...]) -> str:
+        """Owner: planner-bridge. Deterministic stable key for one action (op + command + args),
+        independent of tick-specific ids, so a re-proposed governed action matches its carried `14`
+        authorization across ticks.
+        """
+
+        import hashlib
+
+        payload = "|".join((op, command, *args))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def _consistency_failed(
         self,

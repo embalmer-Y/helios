@@ -226,10 +226,18 @@ class ThoughtActionProposalCarrier:
                 raise InternalThoughtError(
                     "ThoughtActionProposalCarrier op_params must not contain empty keys"
                 )
-            if not isinstance(value, (str, int, float, bool)):
-                raise InternalThoughtError(
-                    f"ThoughtActionProposalCarrier op_params['{key}'] must be a scalar (str/number/bool)"
-                )
+            if isinstance(value, (str, int, float, bool)):
+                continue
+            # R86: a one-level tuple of scalars (e.g. a command's `args`) is allowed so a tool op can
+            # carry an argument vector; deeper nesting is rejected.
+            if isinstance(value, tuple) and all(
+                isinstance(item, (str, int, float, bool)) for item in value
+            ):
+                continue
+            raise InternalThoughtError(
+                f"ThoughtActionProposalCarrier op_params['{key}'] must be a scalar (str/number/bool) "
+                "or a tuple of scalars"
+            )
         object.__setattr__(self, "op_params", op_params)
 
 

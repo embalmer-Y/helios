@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Mapping, Protocol, runtime_checkable
 
 from helios_v2.internal_thought import ThoughtCycleResult
 
 from .contracts import (
     AppliedIdentityState,
     EvaluateIdentityGovernanceOp,
+    GovernedActionAuthorization,
     GovernancePressureState,
     IdentityGovernanceAPI,
     IdentityGovernanceConfig,
@@ -54,6 +56,78 @@ def _validate_request(
             raise IdentityGovernanceError(
                 "IdentityGovernanceRequest must preserve the source self-revision proposal id"
             )
+
+
+@runtime_checkable
+class GovernedActionGovernancePath(Protocol):
+    """Owner: identity governance (requirement 86 governed-action authorization).
+
+    Purpose:
+        The owner-private capability that authorizes (or denies) one pending `governed`-tier action the
+        `13` planner fail-closed pending authorization. The `14` owner is the sole authority; the planner
+        enforces the gate and the driver owns the allowlist.
+    """
+
+    def authorize(
+        self,
+        pending_action: Mapping[str, object],
+        request: IdentityGovernanceRequest,
+        config: IdentityGovernanceConfig,
+    ) -> GovernedActionAuthorization:
+        """Return one authorize/deny verdict for the pending governed action."""
+
+
+@dataclass
+class FirstVersionGovernedActionGovernancePath(GovernedActionGovernancePath):
+    """Owner-private deterministic first-version governed-action authorization policy.
+
+    First-version policy (bounded, deterministic, owner-held, fail-closed): authorize iff the action's
+    argv (`[command, *args]`) starts with one of the config's `authorized_governed_action_prefixes`;
+    otherwise deny. An empty configured set (the default) authorizes nothing - fail-closed by
+    construction. This is NOT auto-approve-everything: only explicitly-configured governed prefixes are
+    authorized. Governance-posture coupling (denying under a `stabilize` posture) is a documented future
+    refinement.
+    """
+
+    def authorize(
+        self,
+        pending_action: Mapping[str, object],
+        request: IdentityGovernanceRequest,
+        config: IdentityGovernanceConfig,
+    ) -> GovernedActionAuthorization:
+        del request
+        key = str(pending_action.get("action_authorization_key", ""))
+        command = str(pending_action.get("command", ""))
+        raw_args = pending_action.get("args", ())
+        args = tuple(str(item) for item in raw_args) if isinstance(raw_args, (list, tuple)) else ()
+        argv = (command, *args)
+        reason_trace = ["governed_action_authorization_evaluated"]
+        if self._matches_configured_prefix(argv, config.authorized_governed_action_prefixes):
+            reason_trace.append("argv_matches_authorized_governed_prefix")
+            return GovernedActionAuthorization(
+                action_authorization_key=key,
+                authorized=True,
+                reason="authorized_configured_governed_action",
+                reason_trace=tuple(reason_trace),
+            )
+        reason_trace.append("argv_not_in_authorized_governed_prefixes")
+        return GovernedActionAuthorization(
+            action_authorization_key=key,
+            authorized=False,
+            reason="governed_action_not_authorized",
+            reason_trace=tuple(reason_trace),
+        )
+
+    @staticmethod
+    def _matches_configured_prefix(
+        argv: tuple[str, ...],
+        prefixes: tuple[tuple[str, ...], ...],
+    ) -> bool:
+        for prefix in prefixes:
+            normalized = tuple(str(token) for token in prefix)
+            if normalized and len(normalized) <= len(argv) and tuple(argv[: len(normalized)]) == normalized:
+                return True
+        return False
 
 
 @runtime_checkable
@@ -394,6 +468,7 @@ class IdentityGovernanceEngine(IdentityGovernanceAPI):
 
     config: IdentityGovernanceConfig
     governance_path: IdentityGovernancePath | None
+    governed_action_path: GovernedActionGovernancePath | None = None
 
     def evaluate_self_revision(
         self,
@@ -412,6 +487,47 @@ class IdentityGovernanceEngine(IdentityGovernanceAPI):
                 "IdentityGovernanceResult must preserve the source request id"
             )
         return result
+
+    def authorize_governed_action(
+        self,
+        request: IdentityGovernanceRequest,
+    ) -> GovernedActionAuthorization | None:
+        """Owner: identity governance (requirement 86).
+
+        Return the authorize/deny verdict for the request's pending governed action, or `None` when no
+        pending action is present (inert by default - the self-revision path is unaffected). Raises
+        `IdentityGovernanceError` when a pending action is present but no governed-action capability was
+        wired (a composition bug; no degraded path).
+        """
+
+        if request.pending_governed_action is None:
+            return None
+        if self.governed_action_path is None:
+            raise IdentityGovernanceError(
+                "Identity governance requires a governed-action capability when a pending governed "
+                "action is present"
+            )
+        return self.governed_action_path.authorize(
+            request.pending_governed_action, request, self.config
+        )
+
+    def evaluate_self_revision_and_authorize(
+        self,
+        thought_cycle_result: ThoughtCycleResult,
+        request: IdentityGovernanceRequest,
+    ) -> IdentityGovernanceResult:
+        """Owner: identity governance (requirement 86).
+
+        Run the self-revision evaluation (unchanged) and, when the request carries a pending governed
+        action, attach the `14` authorization verdict to the published result. With no pending action
+        the result is byte-for-byte the existing self-revision result.
+        """
+
+        result = self.evaluate_self_revision(thought_cycle_result, request)
+        authorization = self.authorize_governed_action(request)
+        if authorization is None:
+            return result
+        return dataclasses.replace(result, governed_action_authorization=authorization)
 
     def build_evaluate_op(
         self,

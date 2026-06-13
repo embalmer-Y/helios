@@ -72,6 +72,41 @@ _GOVERNANCE_REJECTION_REASONS = {
 
 
 @dataclass(frozen=True)
+class GovernedActionAuthorization:
+    """Immutable `14` authorization verdict for one pending governed action (requirement 86).
+
+    Owner: identity governance and self-revision integration.
+
+    Purpose:
+        The governance authority's authorize/deny decision for a `governed`-tier tool action that the
+        `13` planner fail-closed pending authorization. Keyed by the planner's stable
+        `action_authorization_key` so a re-proposed action on a later tick matches this verdict. `14`
+        authorizes only the action's authorization; it never selects, binds, or executes a channel.
+
+    Failure semantics:
+        Construction raises `IdentityGovernanceError` on an empty key, an empty reason, or empty
+        reason-trace items.
+    """
+
+    action_authorization_key: str
+    authorized: bool
+    reason: str
+    reason_trace: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.action_authorization_key:
+            raise IdentityGovernanceError(
+                "GovernedActionAuthorization must declare a non-empty action_authorization_key"
+            )
+        if not self.reason:
+            raise IdentityGovernanceError("GovernedActionAuthorization must declare a non-empty reason")
+        if not self.reason_trace or any(not item for item in self.reason_trace):
+            raise IdentityGovernanceError(
+                "GovernedActionAuthorization must declare non-empty reason_trace items"
+            )
+
+
+@dataclass(frozen=True)
 class IdentityGovernanceConfig:
     """Expose the confirmed initialization and learned-policy surface for identity governance."""
 
@@ -79,6 +114,7 @@ class IdentityGovernanceConfig:
     legal_max_confidence: float
     governance_bootstrap_id: str
     mandatory_learned_parameters: tuple[IdentityGovernanceLearnedParameterCategory, ...]
+    authorized_governed_action_prefixes: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         expected = {
@@ -120,6 +156,7 @@ class IdentityGovernanceRequest:
     governance_trace_summary: Mapping[str, object]
     recent_governance_trace_history: tuple[Mapping[str, object], ...]
     tick_id: int | None
+    pending_governed_action: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.request_id:
@@ -156,6 +193,14 @@ class IdentityGovernanceRequest:
                     )
             history.append(proxy)
         object.__setattr__(self, "recent_governance_trace_history", tuple(history))
+        if self.pending_governed_action is not None:
+            pending = MappingProxyType(dict(self.pending_governed_action))
+            for key in pending:
+                if not key:
+                    raise IdentityGovernanceError(
+                        "IdentityGovernanceRequest pending_governed_action must not contain empty keys"
+                    )
+            object.__setattr__(self, "pending_governed_action", pending)
 
 
 @dataclass(frozen=True)
@@ -342,6 +387,7 @@ class IdentityGovernanceResult:
     revision_decision: RevisionDecision
     applied_identity_state: AppliedIdentityState | None
     tick_id: int | None
+    governed_action_authorization: GovernedActionAuthorization | None = None
 
     def __post_init__(self) -> None:
         if not self.result_id:
@@ -465,6 +511,18 @@ class IdentityGovernanceAPI(Protocol):
         request: IdentityGovernanceRequest,
     ) -> IdentityGovernanceResult:
         """Return one formal governance result from a thought-origin self-revision proposal."""
+
+    def evaluate_self_revision_and_authorize(
+        self,
+        thought_cycle_result: ThoughtCycleResult,
+        request: IdentityGovernanceRequest,
+    ) -> IdentityGovernanceResult:
+        """Owner: identity governance (requirement 86).
+
+        Return the self-revision governance result, additionally attaching the governed-action
+        authorization verdict when the request carries a pending governed action (else the
+        byte-for-byte self-revision result).
+        """
 
     def build_evaluate_op(
         self,

@@ -264,6 +264,13 @@ class ChannelSubsystemStateProvider:
                     }
                     for spec in descriptor.output_op_specs
                 },
+                # R86: project the driver's per-command allowlist (argv-prefix -> risk) so the planner
+                # can compute a governed op's effective per-invocation risk for the enforced risk-class
+                # gate. Transport/capability facts only; the planner owns the gate, the driver the policy.
+                "command_policy": tuple(
+                    {"argv_prefix": tuple(rule.argv_prefix), "risk_class": rule.risk_class}
+                    for rule in descriptor.command_invocation_policy
+                ),
             }
         return descriptors
 
@@ -1624,6 +1631,50 @@ class PriorDriveUrgencyHolder:
 
 
 @dataclass
+class PriorGovernedAuthorizationHolder:
+    """Owner: composition (R86).
+
+    Purpose:
+        Carry the prior tick's `14` governed-action authorization verdicts forward into the next
+        tick's `13` planner gate, since `14` runs after `13` in the tick. Mirrors the R49/R62 carry
+        seams. This realizes the two-tick fail-closed handshake: tick N the planner defers a governed
+        action (`governance_required`) and `14` publishes an authorization; this holder carries it; tick
+        N+1 the planner finds the carried authorization (keyed by the stable `action_authorization_key`)
+        and proceeds (or stays denied).
+
+    Notes:
+        Owner-neutral carry. It transports the `14`-owned verdict (key -> {authorized, reason}) verbatim
+        and computes no authorization. `current()` returns the carried verdicts; the planner owns the
+        gate that consumes them. Bounded to `max_entries` (oldest-evicted) so it never grows unbounded
+        across a long run.
+    """
+
+    authorizations: "dict[str, dict[str, object]]" = field(default_factory=dict)
+    max_entries: int = 64
+
+    def set_from_authorization(self, authorization) -> None:
+        """Owner: composition. Store a published `14` `GovernedActionAuthorization` verdict by key."""
+
+        if authorization is None:
+            return
+        key = getattr(authorization, "action_authorization_key", "")
+        if not key:
+            return
+        self.authorizations[key] = {
+            "authorized": bool(getattr(authorization, "authorized", False)),
+            "reason": str(getattr(authorization, "reason", "")),
+        }
+        while len(self.authorizations) > self.max_entries:
+            oldest = next(iter(self.authorizations))
+            del self.authorizations[oldest]
+
+    def current(self) -> "dict[str, dict[str, object]]":
+        """Owner: composition. Return the carried prior-tick authorization verdicts (by key)."""
+
+        return dict(self.authorizations)
+
+
+@dataclass
 class PriorHormonePredictionHolder:
     """Owner: composition (R81).
 
@@ -2592,6 +2643,7 @@ class ChannelBackedPlannerBridgeRequestBridge:
     """
 
     state_provider: ChannelSubsystemStateProvider
+    governance_approval_provider: "Callable[[], Mapping[str, object]] | None" = None
 
     def build_request(self, frame, action_externalization_result) -> PlannerBridgeRequest:
         tick_id = frame.tick_id
@@ -2609,6 +2661,13 @@ class ChannelBackedPlannerBridgeRequestBridge:
                 for descriptor in descriptor_snapshot.values()
                 if isinstance(descriptor, dict)
             )
+        # R86: carry the prior-tick `14` governed-action authorizations into the gate so a re-proposed
+        # governed action that `14` authorized proceeds. Owner-neutral: the planner owns the gate.
+        governance_approval = (
+            dict(self.governance_approval_provider())
+            if self.governance_approval_provider is not None
+            else {}
+        )
         return PlannerBridgeRequest(
             request_id=f"planner-bridge-request:runtime:{tick_id}",
             source_externalization_result_id=action_externalization_result.result.result_id,
@@ -2623,6 +2682,7 @@ class ChannelBackedPlannerBridgeRequestBridge:
             channel_descriptor_snapshot=descriptor_snapshot,
             channel_status_snapshot=self.state_provider.channel_status_snapshot(),
             tick_id=tick_id,
+            governance_approval=governance_approval,
         )
 
 
@@ -2704,6 +2764,11 @@ class FirstVersionIdentityGovernanceRequestBridge:
         else:
             proposal_snapshot = {}
         carry_state = self._resolve_carry_state()
+        # R86: project the same-tick `13` planner's pending governed action (when the planner
+        # fail-closed a `governed` op pending authorization) into the request so `14` can authorize it.
+        # Owner-neutral forward: the planner produced the descriptor + stable key; `14` judges. Absent
+        # in the default assembly (the planner produces no pending action), so this is a no-op there.
+        pending_governed_action = self._pending_governed_action(frame)
         return IdentityGovernanceRequest(
             request_id=f"identity-governance-request:runtime:{tick_id}",
             source_thought_cycle_result_id=internal_thought_result.result.result_id,
@@ -2714,7 +2779,18 @@ class FirstVersionIdentityGovernanceRequestBridge:
             governance_trace_summary=self._build_governance_trace_summary(carry_state),
             recent_governance_trace_history=self._build_recent_trace_history(carry_state),
             tick_id=tick_id,
+            pending_governed_action=pending_governed_action,
         )
+
+    @staticmethod
+    def _pending_governed_action(frame) -> "Mapping[str, object] | None":
+        stage_results = getattr(frame, "stage_results", None) or {}
+        planner_stage = stage_results.get("planner_executor_feedback_bridge")
+        if planner_stage is None or not getattr(planner_stage, "activated", True):
+            return None
+        planner_result = getattr(planner_stage, "result", None)
+        pending = getattr(planner_result, "pending_governed_action", None)
+        return dict(pending) if isinstance(pending, Mapping) else None
 
 
 @dataclass

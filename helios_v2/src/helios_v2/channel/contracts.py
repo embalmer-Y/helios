@@ -140,6 +140,38 @@ class ChannelOpSpec:
 
 
 @dataclass(frozen=True)
+class ChannelCommandRule:
+    """Immutable per-invocation allow rule for a command-style output op (requirement 86).
+
+    Owner: channel driver subsystem.
+
+    Purpose:
+        A driver whose output op dispatches by an inner argv (a command + args) self-describes which
+        argv prefixes are permitted and at what `risk_class`. This is a transport/capability fact (what
+        the driver is willing to run), declared by the owning driver and carried on its descriptor; the
+        `13` planner reads it to compute a proposal's effective per-invocation risk for the enforced
+        risk-class gate. A driver never declares a `restricted` rule - restricted is the absence of a
+        matching rule.
+
+    Failure semantics:
+        Construction raises `ChannelError` on an empty prefix, an empty prefix token, or a `restricted`
+        risk class.
+    """
+
+    argv_prefix: tuple[str, ...]
+    risk_class: OpRiskClass = "unrestricted"
+
+    def __post_init__(self) -> None:
+        if not self.argv_prefix:
+            raise ChannelError("ChannelCommandRule must declare a non-empty argv_prefix")
+        for token in self.argv_prefix:
+            if not token:
+                raise ChannelError("ChannelCommandRule argv_prefix must not contain empty tokens")
+        if self.risk_class not in ("unrestricted", "governed"):
+            raise ChannelError("ChannelCommandRule risk_class must be 'unrestricted' or 'governed'")
+
+
+@dataclass(frozen=True)
 class ChannelDriverDescriptor:
     """Immutable self-description of one channel driver.
 
@@ -165,6 +197,7 @@ class ChannelDriverDescriptor:
     config_fields: tuple[ChannelConfigField, ...] = ()
     health_signals: tuple[str, ...] = ()
     output_op_specs: tuple[ChannelOpSpec, ...] = ()
+    command_invocation_policy: tuple[ChannelCommandRule, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.driver_id:
@@ -203,6 +236,11 @@ class ChannelDriverDescriptor:
                     f"ChannelDriverDescriptor output_op_specs must be unique per op: '{spec.op_name}'"
                 )
             seen_ops.add(spec.op_name)
+        for rule in self.command_invocation_policy:
+            if not isinstance(rule, ChannelCommandRule):
+                raise ChannelError(
+                    "ChannelDriverDescriptor command_invocation_policy must contain ChannelCommandRule values"
+                )
 
     def op_spec(self, op_name: str) -> "ChannelOpSpec | None":
         """Owner: channel driver subsystem.

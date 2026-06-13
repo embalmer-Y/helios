@@ -49,6 +49,7 @@ from helios_v2.feeling import (
     PersistentFeelingConstructionPath,
 )
 from helios_v2.identity_governance import (
+    FirstVersionGovernedActionGovernancePath,
     FirstVersionIdentityGovernancePath,
     IdentityGovernanceConfig,
     IdentityGovernanceEngine,
@@ -210,6 +211,7 @@ from .bridges import (
     FirstVersionWorkspaceCompetitionPath,
     PriorThoughtRecallHolder,
     PriorDriveUrgencyHolder,
+    PriorGovernedAuthorizationHolder,
     PriorHormonePredictionHolder,
     ThoughtDirectedRetrievalRequestBridge,
     EmbeddingPrototypeSimilaritySource,
@@ -599,6 +601,7 @@ class RuntimeHandle:
     memory_record_bridge: "MemoryRecordBridge | None" = None
     prior_thought_recall_holder: "PriorThoughtRecallHolder | None" = None
     drive_urgency_holder: "PriorDriveUrgencyHolder | None" = None
+    governed_authorization_holder: "PriorGovernedAuthorizationHolder | None" = None
     hormone_prediction_holder: "PriorHormonePredictionHolder | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     temporal_source: "TemporalSource | None" = None
@@ -667,6 +670,7 @@ class RuntimeHandle:
         self._carry_recall_directive(result)
         self._carry_temporal(result)
         self._carry_drive_urgency(result)
+        self._carry_governed_authorization(result)
         self._carry_hormone_prediction(result)
         self._persist_experience(result)
         self._persist_memory(result)
@@ -769,6 +773,25 @@ class RuntimeHandle:
         drive_state = getattr(autonomy_result, "drive_state", None)
         if drive_state is not None:
             self.drive_urgency_holder.set_from_drive_state(drive_state)
+
+    def _carry_governed_authorization(self, result: RuntimeTickResult) -> None:
+        """Carry the just-completed tick's `14` governed-action authorization for the next tick (R86).
+
+        Owner-neutral carry: it reads the `14` identity-governance stage result's published
+        `governed_action_authorization` (present only when the planner deferred a governed action this
+        tick) and stores it in the holder, so the next tick's `13` gate finds the verdict for a
+        re-proposed governed action (the two-tick fail-closed handshake; `14` runs after `13`). It
+        transports the `14`-owned verdict verbatim and computes no authorization. A no-op when no
+        holder is wired or no authorization was published.
+        """
+
+        if self.governed_authorization_holder is None:
+            return
+        stage_result = result.stage_results.get("identity_governance_self_revision_integration")
+        governance_result = getattr(stage_result, "result", None)
+        authorization = getattr(governance_result, "governed_action_authorization", None)
+        if authorization is not None:
+            self.governed_authorization_holder.set_from_authorization(authorization)
 
     def _carry_hormone_prediction(self, result: RuntimeTickResult) -> None:
         """Capture the just-completed tick's `11` hormone forecast for the next tick's `04` (R81).
@@ -1574,9 +1597,25 @@ def assemble_runtime(
         config=resolved_config.planner_bridge,
         bridge_path=FirstVersionPlannerBridgePath(),
     )
+    # R86: derive the `14`-authorized governed-command prefixes from the bound drivers' self-described
+    # governed-tier command rules. A `governed` command requires BOTH driver allowlisting (capability)
+    # and `14` authorization (governance); composition configures `14` to authorize exactly the governed
+    # set the bound drivers declare. Empty when no command driver is bound (fail-closed default). The
+    # governed-action path is always wired (inert without a pending action, so the default assembly is
+    # unchanged).
+    governed_command_prefixes: tuple[tuple[str, ...], ...] = tuple(
+        tuple(rule.argv_prefix)
+        for driver in effective_channel_drivers
+        for rule in driver.descriptor().command_invocation_policy
+        if rule.risk_class == "governed"
+    )
     identity_governance = IdentityGovernanceEngine(
-        config=resolved_config.identity_governance,
+        config=replace(
+            resolved_config.identity_governance,
+            authorized_governed_action_prefixes=governed_command_prefixes,
+        ),
         governance_path=FirstVersionIdentityGovernancePath(),
+        governed_action_path=FirstVersionGovernedActionGovernancePath(),
     )
     experience_writeback = ExperienceWritebackEngine(
         config=resolved_config.experience_writeback,
@@ -1610,6 +1649,13 @@ def assemble_runtime(
     # post-tick from the `18` result and read by the gate-signal bridge next tick. Default-on
     # (the gate-signal bridge is in every assembly); cold-starts at the neutral baseline.
     drive_urgency_holder = PriorDriveUrgencyHolder()
+
+    # Owner-neutral carry for the prior-tick `14` governed-action authorization (R86). `14` runs
+    # after `13` in the tick, so a governed action the planner defers (`governance_required`) can
+    # only be authorized for a re-proposal on the NEXT tick; this holder carries the `14` verdict and
+    # the channel-bound planner request bridge reads it next tick. Empty until the first verdict
+    # (fail-closed). Default-on (harmless without governed actions).
+    governed_authorization_holder = PriorGovernedAuthorizationHolder()
 
     # Owner-neutral carry for the prior-tick `14` governance state (R68). The bridge reads
     # the stage's prior carry state at request-build time; the stage advances it post-tick.
@@ -1695,7 +1741,8 @@ def assemble_runtime(
             planner_bridge_layer=planner_bridge,
             request_provider=(
                 ChannelBackedPlannerBridgeRequestBridge(
-                    state_provider=ChannelSubsystemStateProvider(subsystem=channel_subsystem)
+                    state_provider=ChannelSubsystemStateProvider(subsystem=channel_subsystem),
+                    governance_approval_provider=lambda: governed_authorization_holder.current(),
                 )
                 if channel_subsystem is not None
                 else FirstVersionPlannerBridgeRequestBridge()
@@ -1802,6 +1849,7 @@ def assemble_runtime(
         ),
         prior_thought_recall_holder=prior_thought_recall_holder,
         drive_urgency_holder=drive_urgency_holder,
+        governed_authorization_holder=governed_authorization_holder,
         hormone_prediction_holder=hormone_prediction_holder,
         embed_record=_embed_text if embedding_gateway is not None else None,
         temporal_source=temporal_source,

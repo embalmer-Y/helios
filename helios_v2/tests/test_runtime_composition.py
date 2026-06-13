@@ -3716,3 +3716,106 @@ def test_r81_carry_clears_holder_on_no_forecast_and_no_fire() -> None:
     no_fire = SimpleNamespace(stage_results={})
     handle._carry_hormone_prediction(no_fire)
     assert handle.hormone_prediction_holder.current_prediction() is None
+
+
+# --- Requirement 86: governed OS command execution (end-to-end) -----------------------------
+
+from helios_v2.channel.drivers import (
+    CommandRunResult as _CommandRunResult,
+    FakeCommandRunner as _FakeCommandRunner,
+    OsCommandChannelDriver as _OsCommandChannelDriver,
+    OsCommandDriverConfig as _OsCommandDriverConfig,
+)
+
+
+def _os_command_driver(sandbox, results=None):
+    runner = _FakeCommandRunner(results=results or {})
+    return _OsCommandChannelDriver(
+        config=_OsCommandDriverConfig(sandbox_root=sandbox),
+        runner=runner,
+    )
+
+
+def _command_provider(command: str, args: list[str]) -> ToolThoughtProvider:
+    return ToolThoughtProvider(tool_op="run_command", tool_params={"command": command, "args": args})
+
+
+def test_command_unrestricted_git_status_executes(tmp_path) -> None:
+    provider = _command_provider("git", ["status"])
+    driver = _os_command_driver(
+        tmp_path, results={("git", "status"): _CommandRunResult(exit_code=0, stdout="clean", stderr="")}
+    )
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=lambda _line: None,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    handle.channel_subsystem._drivers["cli"].submit_line("check status")
+    result = handle.tick()
+    planner = result.stage_results["planner_executor_feedback_bridge"].result
+    # An unrestricted allowlisted command proceeds without a governance handshake.
+    assert planner.status == "executed"
+    assert planner.action_decision.selected_channel_id == "os_command"
+    assert planner.action_decision.selected_op == "run_command"
+
+
+def test_command_restricted_is_fail_closed_and_not_executed(tmp_path) -> None:
+    # rm -rf is not allowlisted -> effective risk restricted -> fail-closed at the gate, never bound.
+    provider = _command_provider("rm", ["-rf", "x"])
+    driver = _os_command_driver(tmp_path)
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=lambda _line: None,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+    handle.channel_subsystem._drivers["cli"].submit_line("delete everything")
+    result = handle.tick()
+    planner = result.stage_results["planner_executor_feedback_bridge"].result
+    assert planner.status == "policy_rejected"
+    assert planner.rejection_reason == "risk_class_restricted"
+    assert planner.action_decision is None
+    # Nothing dispatched and the rejection closes as a world_blocked continuity writeback (R85).
+    assert result.stage_results["channel_outbound_dispatch"].dispatch_result.dispatched_count == 0
+
+
+def test_command_governed_mkdir_two_tick_handshake(tmp_path) -> None:
+    # mkdir is governed: tick 1 the planner defers (governance_required) and `14` authorizes it;
+    # tick 2 the re-proposed command finds the carried authorization and executes.
+    provider = _command_provider("mkdir", ["build"])
+    driver = _os_command_driver(
+        tmp_path, results={("mkdir", "build"): _CommandRunResult(exit_code=0, stdout="", stderr="")}
+    )
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=lambda _line: None,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+
+    # Tick 1: fail-closed pending authorization; `14` publishes an authorize verdict.
+    handle.channel_subsystem._drivers["cli"].submit_line("make a build dir")
+    r1 = handle.tick()
+    planner1 = r1.stage_results["planner_executor_feedback_bridge"].result
+    assert planner1.status == "policy_rejected"
+    assert planner1.rejection_reason == "governance_required"
+    assert planner1.pending_governed_action is not None
+    governance = r1.stage_results["identity_governance_self_revision_integration"].result
+    assert governance.governed_action_authorization is not None
+    assert governance.governed_action_authorization.authorized is True
+    assert r1.stage_results["channel_outbound_dispatch"].dispatch_result.dispatched_count == 0
+
+    # Tick 2: the same command is re-proposed; the carried authorization lets the gate proceed.
+    handle.channel_subsystem._drivers["cli"].submit_line("make a build dir")
+    r2 = handle.tick()
+    planner2 = r2.stage_results["planner_executor_feedback_bridge"].result
+    assert planner2.status == "executed"
+    assert planner2.action_decision.selected_op == "run_command"
+    assert r2.stage_results["channel_outbound_dispatch"].dispatch_result.dispatched_count == 1

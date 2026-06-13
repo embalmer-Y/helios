@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R85。测试基线：921 passed / 4 skipped（离线）。
+> 状态：活文档（owner 参考）。最近同步：R86。测试基线：957 passed / 4 skipped（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -167,6 +167,7 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 完成度：`baseline_real`（planner 判断真实；默认装配里 channel-state 快照仍 shim，channel-bound 装配里则真实）。
 - 职责：提议到决策的桥接、正式拒绝/执行结果发布、归一化桥反馈的唯一 owner。拥有最终绑定/接受，不拥有思考语义；不拥有传输或反馈持久化。
 - 在循环中的作用：把归一化提议变成 accept/reject/execute 决策；对内部 tick 发布 `no_actionable_proposal`（R28 fired-but-no-proposal,R54 起 gate-no-fire tick 也复用此 internal-only 路径收口）。
+- R86（强制 risk-class 门）：把 R85 透传进 `policy_trace` 的 `op_risk_class` 从只读升级为**强制 fail-closed 门**。op 级 `unrestricted`（reply/`fs_*`）字节级不变；op 级 `governed`/`restricted`（命令 op）按 driver 投影的 `command_policy` 算 effective 逐调用风险——`unrestricted` 放行、`restricted`/未知 → `risk_class_restricted` 硬拒（绝不绑定）、`governed` 查 carried `14` 授权（按稳定 `action_authorization_key`）→ 放行 / `governance_denied` / `governance_required`（并发布 pending action 供 `14` 授权）。allowlist 内容归 driver、授权归 `14`、门归 `13`；planner 不硬编码任何命令名。
 - 下一步（wave_C）：超越本地 CLI 的真实外部 channel 执行；更丰富的主动 provenance 进入行动选择。
 
 ### 2.17 `14` 身份治理与自我修订 — `helios_v2.identity_governance`
@@ -174,7 +175,8 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 职责：自我修订治理、身份状态变更、主动治理压力、正式修订结果发布的唯一 owner。不拥有思考生成、人格投射或审计持久化。
 - 在循环中的作用：治理一个自我修订提议是否接受，并应用受治理的身份变更。
 - 完成度细节（R68 跨 tick carry）：`14` 新增 `GovernanceCarryState` 冻结数据类（identity_state_snapshot + recent_governance_trace_history + accepted/rejected_revision_count），`IdentityGovernanceRuntimeStage` 持有 `_prior_carry_state` 并从治理结果推进（accepted 修订携带新快照，否则保留旧快照；每 tick 追加有界 trace 条目；累积接受/拒绝计数）。bridge 经注入式 `carry_state_provider` 把 carry state 的快照与 trace 历史注入请求。无 provider 或返回 `None` 时回落 bootstrap 常量（字节级不变冷启动）。
-- 下一步（wave_B / P6）：更深的长程受治理自我演化（发展性，而非仅审计补丁）；跨重启持久化/恢复身份状态（纳入 `42` 检查点）；最终落地 P6 的受治理自我修订路径。
+- 完成度细节（R86 governed 动作授权，additive）：`14` 现额外是 `governed`-tier 工具动作的**授权权威**。新增 `GovernedActionAuthorization` 契约 + owner 私有 `GovernedActionGovernancePath` + `authorize_governed_action`/`evaluate_self_revision_and_authorize`（自我修订路径、契约、校验器**字节级不变**；无 pending action 时 `authorize_governed_action` 返回 `None`、inert）。首版策略：argv 匹配 composition 配置的授权前缀（由绑定 driver 的 governed 规则派生）才授权，默认空集 = fail-closed。两-tick 握手：`13` 在 tick N 对 governed 动作发 `governance_required` + pending action；`14`（在 `13` 之后跑）发布授权 verdict；经 owner-neutral 的 `PriorGovernedAuthorizationHolder` carry 到 tick N+1；复议时 `13` 凭 carried 授权放行。`14` 只授权，不选/绑/执行 channel，不拥有 allowlist（driver）或门（`13`）。
+- 下一步（wave_B / P6）：更深的长程受治理自我演化（发展性，而非仅审计补丁）；跨重启持久化/恢复身份状态（纳入 `42` 检查点）；最终落地 P6 的受治理自我修订路径。R86 的 governed-action 授权可加 posture 耦合（`stabilize` 时拒）与审计 token 精化。
 
 ### 2.18 `15` 经验回写与自传巩固 — `helios_v2.experience_writeback`
 - 完成度：`baseline_real`（其连续性流现已经 `33` 持久化）。

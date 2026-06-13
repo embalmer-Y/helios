@@ -218,9 +218,16 @@ def _optional_tool_intent(payload: dict[str, Any]) -> tuple[bool, str, Mapping[s
         for key, value in raw_params.items():
             if not isinstance(key, str) or not key:
                 return False, "", MappingProxyType({})
-            if not isinstance(value, (str, int, float, bool)):
+            if isinstance(value, (str, int, float, bool)):
+                params[key] = value
+            elif isinstance(value, (list, tuple)) and all(
+                isinstance(item, (str, int, float, bool)) for item in value
+            ):
+                # R86: a one-level list of scalars (e.g. a command's `args`) is allowed so a tool op
+                # can carry argument vectors; deeper nesting (a dict/list value) still degrades.
+                params[key] = tuple(value)
+            else:
                 return False, "", MappingProxyType({})
-            params[key] = value
     elif raw_params is not None:
         return False, "", MappingProxyType({})
     return True, op.strip(), MappingProxyType(params)

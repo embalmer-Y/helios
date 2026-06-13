@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R85. Test baseline: 921 passed / 4 skipped (network-free).
+> Status: living owner reference. Last synced: R86. Test baseline: 957 passed / 4 skipped (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -173,6 +173,7 @@ two transport stages for 21).
 - Completeness: `baseline_real` (planner judgment is real; channel-state snapshot is shim in the default assembly, real in the channel-bound assembly).
 - Responsibility: the sole owner of proposal-to-decision bridging, formal rejection/execution-outcome publication, and normalized bridge feedback. Owns final binding/acceptance, not thought semantics; does not own transport or feedback persistence.
 - Role in the loop: turns a normalized proposal into an accept/reject/execute decision; publishes `no_actionable_proposal` for internal-only ticks (R28 fired-but-no-proposal, and since R54 the gate-no-fire tick reuses this same internal-only path to close).
+- R86 (enforced risk-class gate): the R85 `op_risk_class` policy-trace read-through becomes an enforced fail-closed gate. Op-level `unrestricted` ops (reply/`fs_*`) are byte-for-byte unchanged; an op-level `governed`/`restricted` op (the command op) computes effective per-invocation risk from the driver-projected `command_policy` — `unrestricted` proceeds, `restricted`/unknown → fail-closed `risk_class_restricted` (never bound), `governed` consults the carried `14` authorization (by stable `action_authorization_key`) → proceed / `governance_denied` / `governance_required` (+ publishes the pending action for `14`). The allowlist is the driver's; the authorization is `14`'s; the gate is the planner's; no command name is hardcoded.
 - Next step (wave_C): real outward channel execution of an accepted proposal beyond local CLI; richer proactive provenance into action selection.
 
 ### 2.17 `14` Identity Governance and Self Revision — `helios_v2.identity_governance`
@@ -180,7 +181,8 @@ two transport stages for 21).
 - Responsibility: the sole owner of self-revision governance, identity-state mutation, proactive governance pressure, and formal revision-result publication. Does not own thought generation, personality projection, or audit persistence.
 - Role in the loop: governs whether a self-revision proposal is accepted and applies governed identity change.
 - Completeness detail (R68 cross-tick carry): `14` gains a `GovernanceCarryState` frozen dataclass (identity_state_snapshot + recent_governance_trace_history + accepted/rejected_revision_count). `IdentityGovernanceRuntimeStage` holds `_prior_carry_state` and advances it post-tick from the governance result (accepted revision carries the new snapshot; otherwise preserves the prior; appends a bounded trace entry per tick; accumulates accepted/rejected counts). The bridge receives the carry state via an injected `carry_state_provider` closure. With no provider or `None` return, the bootstrap constant is used (byte-for-byte identical cold start).
-- Next step (wave_B / P6): deeper long-horizon governed self-evolution (developmental, not only audited patches); persist/restore identity state across restart (fold into the `42` checkpoint); eventually the governed self-revision path of P6.
+- Completeness detail (R86 governed-action authorization, additive): `14` is now also the authorization authority for the `governed` tool-action tier. It gains a `GovernedActionAuthorization` contract + an owner-private `GovernedActionGovernancePath` + `authorize_governed_action`/`evaluate_self_revision_and_authorize` (the self-revision path, contracts, and validators are byte-for-byte unchanged; `authorize_governed_action` is inert/`None` with no pending action). First-version policy authorizes a governed argv iff it matches a composition-configured prefix (derived from bound drivers' governed rules); empty config = fail-closed. The two-tick handshake: `13` defers a governed action (`governance_required`) at tick N and `14` (running after `13`) publishes a verdict; an owner-neutral `PriorGovernedAuthorizationHolder` carries it to tick N+1 where the re-proposed action is authorized. `14` only authorizes; it never selects/binds/executes a channel and owns neither the allowlist (driver) nor the gate (`13`).
+- Next step (wave_B / P6): deeper long-horizon governed self-evolution (developmental, not only audited patches); persist/restore identity state across restart (fold into the `42` checkpoint); eventually the governed self-revision path of P6. The R86 governed-action authorization can add posture coupling (deny under `stabilize`) and an audited approval-token refinement.
 
 ### 2.18 `15` Experience Writeback and Autobiographical Consolidation — `helios_v2.experience_writeback`
 - Completeness: `baseline_real` (its continuity stream is now durably persisted via `33`).
