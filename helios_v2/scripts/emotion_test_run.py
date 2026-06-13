@@ -99,27 +99,75 @@ def _delta(before: dict | None, after: dict | None) -> dict:
     return {k: round(after[k] - before[k], 4) for k in after if k in before}
 
 
-def _offline_gateway():
+class _LoggingProvider:
+    """Wraps a real/fake LlmProvider and logs each raw request/response to a JSONL writer.
+
+    Captures the full system/user prompt (request.messages) and the raw completion text per call,
+    so the test record shows exactly what the LLM received and returned. Fail-fast preserved: a
+    provider error is logged then re-raised.
+    """
+
+    def __init__(self, inner, writer):
+        self._inner = inner
+        self._writer = writer
+        self._calls = 0
+
+    def complete(self, profile, request, api_key):
+        self._calls += 1
+        call_index = self._calls
+        try:
+            completion = self._inner.complete(profile, request, api_key)
+        except Exception as error:  # noqa: BLE001 - log then re-raise (fail-fast preserved)
+            self._writer({
+                "call": call_index, "ts": time.time(), "profile": profile.profile_name,
+                "model": profile.model, "request_id": getattr(request, "request_id", None),
+                "target_profile": getattr(request, "target_profile", None),
+                "response_format": getattr(request, "response_format", None),
+                "messages": [m.to_record() for m in request.messages],
+                "error": f"{type(error).__name__}: {error}",
+            })
+            raise
+        self._writer({
+            "call": call_index, "ts": time.time(), "profile": profile.profile_name,
+            "model": profile.model, "request_id": getattr(request, "request_id", None),
+            "target_profile": getattr(request, "target_profile", None),
+            "response_format": getattr(request, "response_format", None),
+            "messages": [m.to_record() for m in request.messages],
+            "output_text": getattr(completion, "output_text", None),
+            "finish_reason": getattr(completion, "finish_reason", None),
+        })
+        return completion
+
+
+class _FakeProvider:
+    """Deterministic, network-free provider for --offline plumbing."""
+
+    def complete(self, profile, request, api_key):
+        from helios_v2.llm.contracts import ProviderCompletion
+        envelope = {
+            "thought": "（离线占位思考）", "sufficiency": 0.85, "wants_to_continue": False,
+            "continue_reason": "", "proposed_action": {"intends_action": True, "summary": ""},
+            "self_revision": {"intends_revision": False, "summary": ""},
+            "i_want_to_say": "我在听。",
+            "hormone_response_i_predict": {"dopamine": 0.6, "serotonin": 0.55},
+        }
+        return ProviderCompletion(output_text=json.dumps(envelope), finish_reason="stop")
+
+
+def _make_gateway(offline: bool, writer):
+    """Build the LLM gateway with a logging wrapper. Real path uses the OpenAI-compatible provider
+    (api key from os.environ via the profile); offline path uses the deterministic fake."""
+
     from helios_v2.composition import default_composition_config
-    from helios_v2.llm import LlmGateway, LlmProfileRegistry
-    from helios_v2.llm.contracts import ProviderCompletion
+    from helios_v2.llm import LlmGateway, LlmProfileRegistry, OpenAICompatibleProvider
 
-    class _FakeProvider:
-        def complete(self, profile, request, api_key):
-            envelope = {
-                "thought": "（离线占位思考）", "sufficiency": 0.85, "wants_to_continue": False,
-                "continue_reason": "", "proposed_action": {"intends_action": True, "summary": ""},
-                "self_revision": {"intends_revision": False, "summary": ""},
-                "i_want_to_say": "我在听。",
-                "hormone_response_i_predict": {"dopamine": 0.6, "serotonin": 0.55},
-            }
-            return ProviderCompletion(output_text=json.dumps(envelope), finish_reason="stop")
-
+    inner = _FakeProvider() if offline else OpenAICompatibleProvider()
     config = default_composition_config()
+    env = {"OPENAI_API_KEY": "sk-offline"} if offline else dict(os.environ)
     return LlmGateway(
-        provider=_FakeProvider(),
+        provider=_LoggingProvider(inner, writer),
         registry=LlmProfileRegistry(profiles=config.llm.profiles),
-        env={"OPENAI_API_KEY": "sk-offline"},
+        env=env,
     )
 
 
@@ -139,7 +187,7 @@ def _embedding_gateway():
     )
 
 
-def _build_handle(args, replies: list[str]):
+def _build_handle(args, replies: list[str], llm_log_writer):
     from helios_v2.channel import CliChannelDriver, CliDriverConfig
     from helios_v2.composition import assemble_runtime
     from helios_v2.continuity_checkpoint import ContinuityCheckpointStore, SqliteCheckpointBackend
@@ -157,7 +205,7 @@ def _build_handle(args, replies: list[str]):
     checkpoint.initialize()
     cli = CliChannelDriver(output_sink=replies.append, config=CliDriverConfig())
     handle = assemble_runtime(
-        gateway=_offline_gateway() if args.offline else None,
+        gateway=_make_gateway(args.offline, llm_log_writer),
         experience_store=store,
         embedding_gateway=_embedding_gateway(),
         continuity_checkpoint=checkpoint,
@@ -167,23 +215,42 @@ def _build_handle(args, replies: list[str]):
     return handle, cli, store
 
 
-def _load_dialogue(path: Path) -> list[tuple[str, str]]:
-    out: list[tuple[str, str]] = []
+def _load_dialogue(path: Path) -> list[tuple[str, str, str]]:
+    """Parse the dialogue file into (visitor, category, text).
+
+    Supports visitor blocks (`@visitor 名字 | 情绪` header then plain text lines) and flat
+    `category | text` lines (visitor defaults to the category). '#'/blank lines are ignored.
+    """
+
+    out: list[tuple[str, str, str]] = []
+    visitor, category = "anon", "neutral"
     for raw in path.read_text(encoding="utf-8").splitlines():
         s = raw.strip()
-        if not s or s.startswith("#") or "|" not in s:
+        if not s or s.startswith("#"):
             continue
-        cat, text = s.split("|", 1)
-        out.append((cat.strip(), text.strip()))
+        if s.startswith("@visitor"):
+            header = s[len("@visitor"):].strip()
+            if "|" in header:
+                vid, cat = header.split("|", 1)
+                visitor, category = vid.strip() or "anon", cat.strip() or "neutral"
+            else:
+                visitor, category = header or "anon", "neutral"
+            continue
+        if "|" in s and visitor == "anon":
+            cat, text = s.split("|", 1)
+            out.append((cat.strip(), cat.strip(), text.strip()))
+        else:
+            out.append((visitor, category, s))
     return out
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Real-LLM emotional-response test runner")
-    parser.add_argument("--data", default=str(Path(__file__).resolve().parent / "sim_dialogue_zh.txt"))
+    parser.add_argument("--data", default=str(Path(__file__).resolve().parent / "sim_dialogue_visitors_zh.txt"))
     parser.add_argument("--data-dir", default=str(Path(__file__).resolve().parents[1] / "data" / "emotion_test"))
     parser.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "logs" / "prerun" / "emotion_test_report.json"))
     parser.add_argument("--transcript", default=str(Path(__file__).resolve().parents[1] / "logs" / "prerun" / "emotion_test_transcript.txt"))
+    parser.add_argument("--llm-log", default=str(Path(__file__).resolve().parents[1] / "logs" / "prerun" / "emotion_test_llm_io.jsonl"), help="raw LLM system/user prompt + completion JSONL (large)")
     parser.add_argument("--messages", type=int, default=0, help="cap messages (0 = all)")
     parser.add_argument("--min-ticks", type=int, default=1)
     parser.add_argument("--max-ticks", type=int, default=4)
@@ -204,13 +271,21 @@ def main() -> int:
         return 2
 
     replies: list[str] = []
-    handle, cli, store = _build_handle(args, replies)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.llm_log).parent.mkdir(parents=True, exist_ok=True)
+    _llm_log_file = open(args.llm_log, "w", encoding="utf-8")
+
+    def _llm_writer(record: dict) -> None:
+        _llm_log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _llm_log_file.flush()
+
+    handle, cli, store = _build_handle(args, replies, _llm_writer)
     model = os.environ.get("HELIOS_LLM_MODEL", "<default>")
     mode = "OFFLINE(fake)" if args.offline else f"REAL LLM(model={model})"
     print(f"[emo] mode={mode} messages={len(dialogue)} ticks=[{args.min_ticks},{args.max_ticks}] seed={args.seed}", flush=True)
+    print(f"[emo] raw LLM I/O log -> {args.llm_log}", flush=True)
 
     handle.startup()
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
 
     # Warm-up tick to seed baseline biochemistry (no message).
     last_levels = last_feeling = None
@@ -225,7 +300,7 @@ def main() -> int:
     crash: str | None = None
     transcript_lines: list[str] = []
 
-    for idx, (category, text) in enumerate(dialogue):
+    for idx, (visitor, category, text) in enumerate(dialogue):
         ticks = rng.randint(args.min_ticks, args.max_ticks)
         sleep_s = round(rng.uniform(0.0, args.max_sleep), 3)
         before_levels, before_feeling = last_levels, last_feeling
@@ -252,7 +327,7 @@ def main() -> int:
 
         new_replies = replies[before_reply_n:]
         rec = {
-            "index": idx, "category": category, "text": text,
+            "index": idx, "visitor": visitor, "category": category, "text": text,
             "ticks": ticks, "sleep_s": sleep_s, "fired": fired,
             "levels_before": before_levels, "levels_after": last_levels,
             "levels_delta": _delta(before_levels, last_levels),
@@ -263,7 +338,7 @@ def main() -> int:
         records.append(rec)
 
         # Live transcript.
-        line_in = f"[{idx:03d}|{category}] >> {text}"
+        line_in = f"[{idx:03d}|{visitor}|{category}] >> {text}"
         print(line_in, flush=True)
         transcript_lines.append(line_in)
         for th in thoughts:
@@ -289,10 +364,12 @@ def main() -> int:
     }
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     Path(args.transcript).write_text("\n".join(transcript_lines), encoding="utf-8")
+    _llm_log_file.close()
 
     print(f"\n[emo] ===== done: {len(records)}/{len(dialogue)} messages, crash={crash or 'none'} =====", flush=True)
     print(f"[emo] report:     {args.out}", flush=True)
     print(f"[emo] transcript: {args.transcript}", flush=True)
+    print(f"[emo] llm io log: {args.llm_log}", flush=True)
     return 1 if crash else 0
 
 

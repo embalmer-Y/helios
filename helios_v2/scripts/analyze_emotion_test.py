@@ -19,10 +19,13 @@ _CHANNELS = (
     "oxytocin", "opioid_tone", "excitation", "inhibition",
 )
 
-# Coarse valence grouping for the judge's appropriateness check.
+# Coarse valence grouping for the judge's appropriateness check (covers both dialogue sets).
 _POSITIVE = {"joy", "gratitude", "love", "pride", "hope", "awe", "calm"}
 _NEGATIVE = {"sadness", "anger", "fear", "disgust", "guilt", "shame", "jealousy",
-             "loneliness", "disappointment", "anxiety", "embarrassment"}
+             "loneliness", "disappointment", "anxiety", "embarrassment",
+             "grief", "injustice", "emptiness"}
+# Mixed/ambiguous (nostalgia, pride_disappointment, continuity, neutral, self, challenge,
+# curiosity, boredom, surprise) are intentionally excluded from the valence separation test.
 
 
 def main() -> int:

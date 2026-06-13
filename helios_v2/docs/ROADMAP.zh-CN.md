@@ -128,3 +128,42 @@
 3. R84 生产部署时 OS 文件 driver 的 sandbox root 选址（建议 git-ignored 的 `data/fs_sandbox/`）与是否默认启用写。
 4. R83 CI 档时长：当前 150 tick（套件 ~16s）；如更看重 CI 速度可降到 ~80 tick（~10s）。
 5. 是否在某个节点手动跑"真实 LLM + 真实刺激"长跑（需 P4 真实 afferent 落地后信息量才大）。
+
+## 9. 实证测试记录：真实 LLM 情感长跑（2026-06，CLI 注入）
+
+> 用 `scripts/cli_dialogue_prerun.py` / `scripts/emotion_test_run.py` + `scripts/sim_dialogue_zh.txt`
+> 经 R31 CLI driver 把 89 条中文情感对话在随机 tick 间隔下喂入耐久+语义+channel-bound 运行时，
+> `11` 思考由真实 LLM（MiniMax-M3）完成；逐条记录思考/回复 + `04`/`05` 生化 before→after。
+> 分析见 `scripts/analyze_emotion_test.py`。这是项目首次"真实 LLM + 真实变化输入"的长跑实证。
+
+### 9.1 结论（执行者 + 评委）
+- ✅ **长跑稳定**：89/89 条零崩溃、内存有界、store 0→257（记忆真实累积）、88/89 触发真实 LLM 思考。
+- ✅ **生化真实有界响应**：7 个 appraisal-responsive 通道波动（mean|Δ|≈0.09，峰值≈0.31，全程 clamp、无发散）；excitation/inhibition 恒 baseline（R80 设计）。
+- ✅ **真实认知 grounded**：LLM 思考真实引用自身通道数值，并随对话累积逐渐意识到对话语境、后期发起 CLI 回复。
+- ❌ **情感恰当性不成立（FG-2 缺口）**：正/负情绪生化分离 ≈ 0（cortisol 分离 −0.0095，其余更小），逐类签名与预期相反/随机。**根因**：appraisal `03` 跑在离线 hash embedding（无语义结构）+ R40 threat/reward 原型是英文而输入中文 → `03` 无法语义读懂中文情绪，Δ 由 hash-cosine 噪声 + 双时标振荡 + 随机 tick 数驱动。
+- ❌ **外化几乎缺失**：89 条仅 1 条真正回复用户，绝大多数 tick 为内部 holding pattern。
+- 评委口径：单一 LLM-judge 非正式评估，非 §13.4 锁定验收。
+
+### 9.2 讨论衍生的发现与 backlog
+1. **记忆系统：机制工作、功能弱**。store 增长、`10` 检索每 tick 投递、LLM 思考引用 "mid-term memory"；但喂给 LLM 的只是 R70 的薄投影——`retrieval_context`=层级**计数**、`continuity_context`=**首条命中 summary 截断 80 字符**，且 hash embedding 使"召回哪条"语义无意义。→ Helios 记得"有过交流"，记不住"聊了什么"。
+2. **对话集重构（已采纳，本轮做）**：把逐条互不相关的情绪卡片改为"一个个访客带着小故事来谈心"——同一访客内情感弧自然累积（双时标能积分）、跨访客测记忆累积、face validity 更高。诚实限定：不解决 hash-embedding 语义召回根因。
+3. **保存 LLM 原始输入输出（已采纳，本轮做）**：用日志包装 provider 包住真实 provider，落 system/user prompt + 原始 completion 到单独大 JSONL（gitignore `logs/`）。零侵入；可实证"记忆/状态/时间到底进了多少 prompt"。
+4. **时间未进入 LLM 认知（待立 requirement，建议 R91）**：`temporal_signal`/`dmn_available` 只喂 `09` 门控与 `18` autonomy；`InternalThoughtRequest` 与 v3 具身 prompt **无任何时间字段** → 思考层对"时间流逝/距上次多久"零感知，且 runtime 无真实 wall-clock（tick 抽象无时刻）。两层方案：(a) 把 elapsed-pacing 作为认知内容投影进 prompt（复用 temporal owner 的 ticks_since_last_fire）；(b) 可选给 runtime 真实时间戳。与 ROADMAP R91/R92（内心独白 + `09` 自延续）契合。
+
+### 9.3 推进顺序（主人已定）
+1. **本轮**：Q2 访客故事对话集 + Q3 原始 LLM I/O 日志（均零侵入工具），完成后重跑小规模真实 LLM 测试，用真实日志实证 9.2.1。
+2. 然后把 **时间进入认知** 落成正式 requirement（按创建顺序，建议 R91）。
+3. **语义 embedding 根因**（替换 hash → 真实语义 embedding，B2）仍是 FG-2/记忆保真总闸，排 P5。
+
+### 9.4 本轮 Q2+Q3 实证（访客故事对话集 + 原始 LLM I/O 抓取）
+- 已交付工具：`scripts/sim_dialogue_visitors_zh.txt`（16 个访客带小故事，含情感弧），`emotion_test_run.py` 支持 `@visitor` 头 + `--llm-log`（用 `_LoggingProvider` 包真实 provider，落 system/user prompt + 原始 completion 到 JSONL）。小规模真实 LLM 重跑（12 条 / 2 访客）零崩溃。
+- **🔑 关键实证发现（抓到的真实 `11` 思考 user prompt）**：
+  ```
+  Internal state: Neuromodulators: DA 0.55 NE 0.56 5-HT 0.37 ACh 0.36 Cort 0.53. Feeling: arousal 0.52, valence 0.41, tension 0.55. Salience: aggregate 0.72, top dimension: social.
+  Autobiographical anchor: A thinking cycle concluded without outward action: ...
+  Continuation pressure is inactive for this cycle.
+  ```
+  1. **操作者的消息内容完全不在 prompt 里**。`11._build_messages`（`internal_thought/engine.py`）只渲染 `internal_state_summary`（神经调质/感受/salience **数字**）+ 记忆召回 summary + 延续压力；**当前刺激文本从未作为文字进入思考 prompt**。消息内容只走到 `02/03`（被 appraise 成 "salience: social 0.72" 一个数），LLM 永远读不到"小苏说了什么"。这解释了为何每条思考都是"social salience 高，但当前没有具体的人/无外部需求"——**Helios 会评估这条消息，却从不阅读它**。这是本轮最重要的发现，也是它无法真正对话的首要原因。
+  2. **记忆召回浮现的是自指的"无动作"记录**（"A thinking cycle concluded without outward action"），不是对话内容；且 hash embedding 使召回语义无意义。
+  3. **prompt 里无任何时间字段**（实证确认 Q4）。
+- **修正优先级（衍生 backlog，建议作为下一个 requirement，高优先）**：把**真实当前刺激内容（present-field）**投影进 `11` 思考 prompt（与 16 already-有的 `present_field` 层对齐，或在请求里带 stimulus_summary 供 `11` 渲染）；时间字段（Q4）可并入同一 requirement（"present-field：当前刺激内容 + elapsed 时间进入思考"）。语义 embedding 根因仍排 P5。
