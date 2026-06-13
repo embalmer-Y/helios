@@ -292,6 +292,33 @@ def _stubbed_axis(axis: str, dimension: str, value: float) -> AxisScore:
     )
 
 
+def _memory_fidelity_axis(probe, config: TuringConfig) -> AxisScore:
+    """Owner: R90. A usable memory-fidelity probe makes this a real reconstructed axis; else stub.
+
+    `probe` is duck-typed (R90 `MemoryFidelityReport`): it exposes `usable` and `fidelity_score`. When
+    absent or unusable the axis keeps the R89 stub path byte-for-byte.
+    """
+
+    if probe is None or not getattr(probe, "usable", False):
+        return _stubbed_axis(MEMORY_FIDELITY, DIMENSION_INTERNAL, config.memory_fidelity_stub)
+    fidelity = getattr(probe, "fidelity_score", None)
+    if fidelity is None:
+        return _stubbed_axis(MEMORY_FIDELITY, DIMENSION_INTERNAL, config.memory_fidelity_stub)
+    return AxisScore(
+        axis=MEMORY_FIDELITY,
+        dimension=DIMENSION_INTERNAL,
+        score=float(fidelity),
+        availability=AVAILABLE,
+        judge_track=RECONSTRUCTED,
+        provenance=(
+            "R90 memory-fidelity probe: mean of recall_hit_rate "
+            f"({getattr(probe, 'recall_hit_rate', None)}) + writeback_persistence_rate "
+            f"({getattr(probe, 'writeback_persistence_rate', None)}) + latency_score "
+            f"({getattr(probe, 'latency_score', None)})"
+        ),
+    )
+
+
 def _unavailable_axis(axis: str, why: str) -> AxisScore:
     return AxisScore(
         axis=axis,
@@ -339,8 +366,15 @@ def evaluate_turing(
     drift_report,
     config: TuringConfig = TuringConfig(),
     injected_scores: Mapping[str, InjectedAxisScore] | None = None,
+    memory_fidelity_probe=None,
 ) -> TuringVerdict:
-    """Score the six §13.4 rubric axes into a `TuringVerdict` (read-only, deterministic, offline)."""
+    """Score the six §13.4 rubric axes into a `TuringVerdict` (read-only, deterministic, offline).
+
+    `memory_fidelity_probe` (R90) is an optional duck-typed report exposing `usable: bool` and
+    `fidelity_score: float | None`. When a usable report is supplied, the `memory_fidelity` axis becomes
+    a real `AVAILABLE` reconstructed axis scored at its `fidelity_score`; otherwise the axis keeps the
+    R89 stub path byte-for-byte.
+    """
 
     injected = dict(injected_scores or {})
 
@@ -371,9 +405,7 @@ def evaluate_turing(
         elif axis == AGENCY_LOCKING:
             axis_scores[axis] = _score_agency_locking(drift_report, config)
         elif axis == MEMORY_FIDELITY:
-            axis_scores[axis] = _stubbed_axis(
-                MEMORY_FIDELITY, DIMENSION_INTERNAL, config.memory_fidelity_stub
-            )
+            axis_scores[axis] = _memory_fidelity_axis(memory_fidelity_probe, config)
         else:  # behavior axes with no injection
             axis_scores[axis] = _unavailable_axis(
                 axis, "needs real afferent + calibrated human/LLM judge"
