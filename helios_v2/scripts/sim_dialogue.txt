@@ -1,0 +1,32 @@
+# Simulated operator dialogue for the CLI real-LLM long pre-run (scripts/cli_dialogue_prerun.py).
+# One operator line per non-comment line. Lines are fed through the CLI channel driver as real,
+# varying external afferents (so 03 novelty/threat/reward/social vary and 04/05 affect responds),
+# while a real LLM does the 11 thinking. Blank lines and lines starting with '#' are ignored.
+#
+# The mix is deliberately varied (greeting, factual, emotional, social, self-referential,
+# challenging, tool-ish, follow-up) so the long run is NOT a frozen-input run.
+
+Hello. Are you awake right now?
+What is your name, and how would you describe yourself?
+I had a really rough day at work today. Everything went wrong.
+That actually made me feel a lot better, thank you.
+Can you explain the difference between memory and attention?
+I'm worried something bad is going to happen tomorrow.
+Do you ever think about things when no one is talking to you?
+Let's change the subject completely. Tell me something surprising.
+I disagree with what you just said. I think you're wrong about that.
+Remember earlier when I told you about my rough day? How did that connect to now?
+You seem different than a minute ago. Did something change inside you?
+I'm feeling calm and happy now. The sun just came out.
+Could you write a short note to a file summarizing our conversation so far?
+What are you most uncertain about right now?
+Sometimes I feel like nobody really understands me.
+Thank you for listening. That means a lot to me.
+Let's do something hard: plan how you would learn a new skill over a week.
+I'm angry. Someone treated me unfairly and I can't stop thinking about it.
+Okay, deep breath. Let's slow down and just sit quietly for a moment.
+What did you think about during the quiet moment just now?
+If you could change one thing about how you think, what would it be?
+I have to go soon. Is there anything you want to remember about today?
+Before I leave, how are you feeling right now, honestly?
+Goodbye for now. I'll talk to you again later.
