@@ -440,3 +440,125 @@ def test_engine_corroboration_is_strictly_additive_to_existing_scoring() -> None
     assert artifact.dimension_scores["thought_fidelity"] == 1.0
     # The corroboration verdict is published additively; with no prior claim it is unverifiable.
     assert artifact.gap_summary["consequence_corroboration"] == "unverifiable_no_timeline"
+
+
+# --- Requirement 87: real-delivery corroboration ---
+
+from helios_v2.evaluation.engine import _corroborate_delivery  # noqa: E402
+
+
+def _prior_claim(
+    *,
+    outcome: str = "executed",
+    decision_id: str | None = "action-decision:1",
+    op_effect_class: str | None = "local_host",
+    op_user_visible: bool | None = False,
+) -> dict:
+    return {
+        "evidence_id": "prior-consequence-claim:1",
+        "tick_id": 1,
+        "consequence_path_outcome": outcome,
+        "planner_status": "executed",
+        "action_status": "normalized",
+        "continuity_written": False,
+        "decision_id": decision_id,
+        "selected_op": "fs_write",
+        "op_effect_class": op_effect_class,
+        "op_user_visible": op_user_visible,
+    }
+
+
+def _delivered(decision_id: str, ok: bool) -> dict:
+    return {"evidence_id": f"tool-result:{decision_id}", "decision_id": decision_id, "ok": ok}
+
+
+def test_delivery_not_applicable_without_prior_claim() -> None:
+    verdict, _ = _corroborate_delivery((), ())
+    assert verdict == "delivery_not_applicable"
+
+
+def test_delivery_not_applicable_for_non_executed_outcome() -> None:
+    verdict, detail = _corroborate_delivery((_prior_claim(outcome="internal_only_decision"),), ())
+    assert verdict == "delivery_not_applicable"
+    assert "outcome" in detail
+
+
+def test_delivery_not_applicable_for_user_visible_relay() -> None:
+    verdict, detail = _corroborate_delivery((_prior_claim(op_user_visible=True),), ())
+    assert verdict == "delivery_not_applicable"
+    assert detail == "non_effector_op"
+
+
+def test_delivery_not_applicable_without_decision_id() -> None:
+    verdict, _ = _corroborate_delivery((_prior_claim(decision_id=None),), ())
+    assert verdict == "delivery_not_applicable"
+
+
+def test_delivery_unverified_when_no_reafference() -> None:
+    verdict, _ = _corroborate_delivery((_prior_claim(),), ())
+    assert verdict == "delivery_unverified"
+
+
+def test_really_delivered_on_matching_ok_reafference() -> None:
+    verdict, _ = _corroborate_delivery(
+        (_prior_claim(decision_id="action-decision:7"),),
+        (_delivered("action-decision:7", ok=True),),
+    )
+    assert verdict == "really_delivered"
+
+
+def test_delivered_failed_on_matching_failure_reafference() -> None:
+    verdict, detail = _corroborate_delivery(
+        (_prior_claim(decision_id="action-decision:7"),),
+        (_delivered("action-decision:7", ok=False),),
+    )
+    assert verdict == "delivered_failed"
+    assert detail == "effector_reported_failure"
+
+
+def test_really_delivered_integration_keeps_32_verdict_unchanged() -> None:
+    # An executed effector claim + its matching ok reafference -> really_delivered, while the
+    # existing R32 consequence_corroboration verdict and scoring are untouched.
+    engine = EvaluationEngine(config=_build_config(), evaluation_path=FirstVersionEvaluationPath())
+    bundle = EvaluationEvidenceBundle(
+        bundle_id="evaluation-bundle:deliv",
+        source_request_id="evaluation-request:001",
+        thought_evidence=({"evidence_id": "t1", "execution_status": "completed"},),
+        action_evidence=({"evidence_id": "a1", "status": "normalized"},),
+        planner_evidence=({"evidence_id": "p1", "status": "executed"},),
+        governance_evidence=({"evidence_id": "g1", "status": "accepted"},),
+        writeback_evidence=({"evidence_id": "w1", "status": "written"},),
+        autonomy_evidence=({"evidence_id": "au1", "deferred_active": False},),
+        prompt_evidence=({"evidence_id": "pr1", "status": "published"},),
+        outward_expression_evidence=({"evidence_id": "oe1", "status": "prepared"},),
+        outward_expression_externalization_evidence=({"evidence_id": "oee1", "status": "prepared"},),
+        execution_timeline_evidence=(),
+        prior_consequence_claim_evidence=(_prior_claim(decision_id="action-decision:9"),),
+        delivered_tool_result_evidence=(_delivered("action-decision:9", ok=True),),
+    )
+    artifact = engine.evaluate(_build_request(), bundle)
+    assert artifact.gap_summary["consequence_delivery"] == "really_delivered"
+    # R32 verdict is unverifiable here (no timeline) and unchanged by R87.
+    assert artifact.gap_summary["consequence_corroboration"] == "unverifiable_no_timeline"
+
+
+def test_delivered_failed_integration_raises_warning() -> None:
+    engine = EvaluationEngine(config=_build_config(), evaluation_path=FirstVersionEvaluationPath())
+    bundle = EvaluationEvidenceBundle(
+        bundle_id="evaluation-bundle:delivfail",
+        source_request_id="evaluation-request:001",
+        thought_evidence=({"evidence_id": "t1", "execution_status": "completed"},),
+        action_evidence=({"evidence_id": "a1", "status": "normalized"},),
+        planner_evidence=({"evidence_id": "p1", "status": "executed"},),
+        governance_evidence=({"evidence_id": "g1", "status": "accepted"},),
+        writeback_evidence=({"evidence_id": "w1", "status": "written"},),
+        autonomy_evidence=({"evidence_id": "au1", "deferred_active": False},),
+        prompt_evidence=({"evidence_id": "pr1", "status": "published"},),
+        outward_expression_evidence=({"evidence_id": "oe1", "status": "prepared"},),
+        outward_expression_externalization_evidence=({"evidence_id": "oee1", "status": "prepared"},),
+        prior_consequence_claim_evidence=(_prior_claim(decision_id="action-decision:9"),),
+        delivered_tool_result_evidence=(_delivered("action-decision:9", ok=False),),
+    )
+    artifact = engine.evaluate(_build_request(), bundle)
+    assert artifact.gap_summary["consequence_delivery"] == "delivered_failed"
+    assert any(w.warning_kind == "consequence_delivery_discrepancy" for w in artifact.fidelity_warnings)

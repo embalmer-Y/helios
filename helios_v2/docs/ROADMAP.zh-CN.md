@@ -1,6 +1,6 @@
 # Helios v2 开发路线图（活文档）
 
-> 状态：活文档（前向开发规划）。最近同步：R86。
+> 状态：活文档（前向开发规划）。最近同步：R87。
 > 角色：记录"下一步做什么、大概是哪些 requirement、每个做什么"，避免反复重新推导。
 > 配套：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定验收标准、P0→P7 阶段路线图（上位约束）。
@@ -13,15 +13,17 @@
 
 ## 1. 当前状态（截至最近同步）
 
-- main 测试基线：957 passed / 4 skipped（离线）。
+- main 测试基线：968 passed / 4 skipped（离线）。
+- **🎉 P0–P3 已达 100%**：地基期三门（G0 长跑稳定 / G1 owner 有界 / G2 记忆跨重启）此前已签收（R82/R83），唯一遗留的 B4「真实送达对账」由 **R87 收口**——`17` consequence corroboration 对本机 effector 动作已从"流程完成"升级为**真实送达可证伪**（network driver 仍属 P4）。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
   - G0 长跑稳定（R83：10万 tick legacy-constant 跑通，无崩溃，内存 peak 5.6MB 持平，零泄漏）。
   - G1 owner 有界性（R83 harness：04/05/09/18 逐 tick 有界、无 NaN、无发散，可证伪）。
   - G2 形成/检索/重启接续此前已成立（R45/R34/R42）。
-- **P4 进行中**：R84 交付首个 effector driver（沙箱化 OS 文件 driver）+ 工具结果 reafference 回流 `02`；**R85 收口 FG-4 自主工具使用闭环**；**R86 交付受治理的 OS 命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手**（`unrestricted` 命令直跑、`restricted` 硬拒、`governed` 经 `14` 授权后执行；解释器/写自身代码永久 restricted）。
+  - B4 真实送达对账（R87：`tool_result` reafference 对账，`really_delivered`/`delivered_failed`/`delivery_unverified`）。
+- **P4 进行中**：R84 交付首个 effector driver（沙箱化 OS 文件 driver）+ 工具结果 reafference 回流 `02`；**R85 收口 FG-4 自主工具使用闭环**；**R86 交付受治理的 OS 命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手**（`unrestricted` 命令直跑、`restricted` 硬拒、`governed` 经 `14` 授权后执行；解释器/写自身代码永久 restricted）。**P4 退出门剩余**：网络通道（QQ/飞书/语音）。
 - 真实信号驱动：`02–10` 默认语义链、`04` 七通道+双时标+R81 对账、`11` LLM、`18` autonomy。
-- 仍 `baseline_real`：`12–16` 外化链（草稿非授权，但 R85 起工具路径已可真实执行本机文件副作用）、`17`（对账逻辑真实但仍标注"流程完成≠真实送达"，待 R87 升级）。
+- 仍 `baseline_real`：`12–16` 外化链（草稿非授权，但 R85/R86 起工具路径已可真实执行本机文件/命令副作用，R87 起其真实送达可证伪）；真实网络外化仍属 P4。
 
 ### 1.1 R83 长跑的关键实测结论（修正先前判断）
 - 每 tick 成本**有界**，非随 store 发散：暖机后进入平台（legacy-constant ~9.5ms 持平 store 11→1991；语义 ~100ms 持平 store 290→1178）。
@@ -38,19 +40,19 @@
 | R84 | OS 文件 channel driver（沙箱化 effector） | P4 开篇 + 首个 effector driver（FG-4）。`fs_read/fs_write/fs_list/fs_modify` 限定 sandbox root（`resolve()`+relative 校验，绝对外/`..`/软链逃逸拒绝），异步注入式 executor（测试 inline 确定性 / 生产 ThreadPool 真异步），结果作为 `tool_result` 带 correlation provenance 回流 `02`（efference→reafference 闭环）。失败写回（绝不冒充成功）；写操作受 `allow_write` 门控；readiness=sandbox 存在。channel-bound 装配泛化为 `RuntimeProfile.channel_drivers`（CLI+effector 共存）。纯传输/effector，无认知策略；stdlib-only，无进程/网络。888→912 测试绿。 |
 | R85 | LLM 驱动自主工具选择 | 收口 FG-4 自主工具闭环：`11` 真实认知选工具 op+params → `12` 结构性归一化（D2a，op_params 贯通）→ `13` 按 op 绑定 driver + 通用 `required_params` 校验 + 能力门由 channel-state 派生 → 执行 → 结果回流 `02` 再思考。driver 自描述每个 op（`ChannelOpSpec`：required_params/user_visible 启用，effect_class/risk_class 声明留 R86/R87）。取消 `tool` scope（D1）；op 感知校验从 `12` 上移 `13`（D2a）。新增 planner-rejection tick 的 `world_blocked` 写回闭环（FG-4.4）。无 function-calling（`25` 不变）。912→921 测试绿。 |
 | R86 | 受治理的 OS 命令执行 | 新 effector `helios_v2.channel.drivers.os_command`（`run_command`，op 级 `risk_class="governed"`）：argv-前缀 default-deny allowlist（`unrestricted` 只读/诊断 + `governed` `mkdir`/`cp`/`mv`），no-shell、sandbox cwd、超时、注入式 `CommandExecutor`+`CommandRunner`（CI 用 `FakeCommandRunner` 无子进程）、`tool_result` 回流。`13` 把 R85 的 `risk_class` read-through 升级为**强制 fail-closed 门**：`unrestricted` 直跑（pre-R86 op 字节级不变）、`restricted`/未知 → `risk_class_restricted` 硬拒、`governed` → 查 carried `14` 授权 → 执行 / `governance_denied` / `governance_required`。`14` additive 扩展为 `governed` 动作授权权威（`GovernedActionAuthorization` + `GovernedActionGovernancePath` + 两-tick carry，自我修订路径不变）。解释器/写自身代码永久 restricted（argv 级关不住 in-script 效应，留 OS 隔离的未来需求）。921→957 测试绿。 |
+| R87 | Consequence-Truth 真实送达对账（B4 收口） | 把 `17` consequence corroboration 从"流程完成"（R32 阶段完成检查）升级为对 effector 动作的**真实送达可证伪** verdict，消费 R84/R85/R86 的 `tool_result` reafference。严格 additive、只读：R32 verdict/taxonomy/打分字节级不变。`ConsequenceClaim` 加 `decision_id`/`selected_op`/`op_effect_class`/`op_user_visible`（从 `ActionDecision` 取）；bundle 加 `delivered_tool_result_evidence`（composition 从 `channel_inbound_drain` 投影本 tick 回流的 correlation decision_id+ok）；无新 carry holder（N 决策的回流在 N+1 drain，与重评 N claim 同帧）。新 `_corroborate_delivery` 发 `really_delivered`/`delivered_failed`(+告警)/`delivery_unverified`(诚实缺席,绝不乐观)/`delivery_not_applicable`。`effect_class` 成为真实消费者（收口 R85 前置声明）。**B4 收口**（本机 effector 路径；网络 driver 仍 P4）→ **P0–P3 达 100%**。957→968 测试绿。 |
 
-## 3. 近期队列：P0–P3 100% 收尾
+## 3. 近期队列：P4 通道生态 / P5 评估框架（P0–P3 已收口）
 
 ### R86 — OS Channel Driver：命令执行 + 治理 fail-closed ✅ 已交付（见 §2）
 - 已实现为受治理的命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手。
 - 首版 governed 集 = sandbox 内有界变更（`mkdir`/`cp`/`mv`）；解释器（`python <脚本>`/`bash`/`pytest` 等）= 任意代码执行，argv 级 allowlist 关不住，**永久 restricted**，留给未来带 OS 隔离的独立 requirement；写自身代码硬拒（P7）。
 
-### R87 — Consequence-Truth 对账升级
-- 做什么：借 R84/R85/R86 的真实 effector，把 `17`/`23` 的 consequence corroboration 从"流程完成诚实标注"升级为**真实送达可证伪**（收口阻塞点 B4）；消费 R85 落地的 op `effect_class`；先侦察 `_SHIM_DERIVED_DIMENSIONS` 覆盖度再补判别。
-- 意义：完成后跑 P0–P3 退出再评估（沿用 R64/R72/R73 模式）→ **正式宣告 P0–P3 达 100%**。
-- 触及：`helios_v2.evaluation`、`23`。依赖：R32、R84/R85（**R86 非硬前置**：R84/R85 的真实文件 effector + `tool_result` 回流已提供"真实送达"证据，文件 op 的对账现在就能做；命令执行 effect 的对账留作 R86 落地后的 additive 扩展）。
+### R87 — Consequence-Truth 真实送达对账 ✅ 已交付（见 §2）
+- 已把 `17` 对 effector 动作的对账从"流程完成"升级为"真实送达可证伪"，收口 B4 → **P0–P3 达 100%**。
+- 剩余（独立项）：`23` 侧的跨 tick 送达延迟/重试长程诊断，可在需要时建在此 verdict 之上。
 
-> 编号说明：R86–R87 为建议编号，按创建顺序落定，可能顺移；P5/并行轨各项相应顺延。
+> 下一步方向（择一推进）：**P4 网络通道生态**（QQ/飞书/语音，达 P4 退出门）或 **P5 评估框架**（R88 漂移评估器 → R89 图灵 harness → R90 记忆探针，P5 启动门）。建议先 P5 评估框架（后续所有 P5 能力都要靠它证伪）。
 
 ## 4. 中期队列：P5 评估框架 + 内心独白
 

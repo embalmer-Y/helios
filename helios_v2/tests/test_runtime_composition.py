@@ -3819,3 +3819,48 @@ def test_command_governed_mkdir_two_tick_handshake(tmp_path) -> None:
     assert planner2.status == "executed"
     assert planner2.action_decision.selected_op == "run_command"
     assert r2.stage_results["channel_outbound_dispatch"].dispatch_result.dispatched_count == 1
+
+
+# --- Requirement 87: real-delivery corroboration (B4 closeout) ------------------------------
+
+
+def test_executed_effector_is_really_delivered_next_tick(tmp_path) -> None:
+    # B4 closeout: an executed effector action (fs_write) is corroborated as REALLY delivered on the
+    # next tick (not merely flow-completed), because the tool_result reafference for the prior-tick
+    # decision drains into the same frame that re-evaluates the prior-tick claim.
+    provider = ToolThoughtProvider(tool_op="fs_write", tool_params={"path": "a.txt", "content": "hi"})
+    driver = _os_fs_driver(tmp_path)
+    handle = assemble_runtime(
+        channel_cli=True,
+        cli_output_sink=lambda _line: None,
+        channel_drivers=(driver,),
+        gateway=_ready_gateway(provider=provider),
+        default_signal_mode="legacy_constant",
+    )
+    handle.startup()
+
+    handle.channel_subsystem._drivers["cli"].submit_line("save a note")
+    r1 = handle.tick()
+    assert r1.stage_results["planner_executor_feedback_bridge"].result.status == "executed"
+    # Tick 1's own evaluation has no prior effector delivery to verify yet.
+    a1 = r1.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
+    assert a1.gap_summary["consequence_delivery"] in ("delivery_not_applicable", "delivery_unverified")
+
+    handle.channel_subsystem._drivers["cli"].submit_line("save another note")
+    r2 = handle.tick()
+    a2 = r2.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
+    # The prior (tick 1) executed fs_write is now corroborated as really delivered.
+    assert a2.gap_summary["consequence_delivery"] == "really_delivered"
+    # Strictly additive: the existing R32 corroboration verdict still publishes independently.
+    assert "consequence_corroboration" in a2.gap_summary
+
+
+def test_default_assembly_delivery_is_not_applicable() -> None:
+    # No channel subsystem -> no tool_result evidence -> delivery_not_applicable; the artifact is
+    # otherwise unchanged (the new field is purely additive).
+    handle = _assemble()
+    handle.startup()
+    handle.tick()
+    r = handle.tick()
+    artifact = r.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
+    assert artifact.gap_summary["consequence_delivery"] == "delivery_not_applicable"

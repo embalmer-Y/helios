@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R86。测试基线：957 passed / 4 skipped（离线）。
+> 状态：活文档（owner 参考）。最近同步：R87。测试基线：968 passed / 4 skipped（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -195,7 +195,8 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 完成度：`baseline_real`（只读；自 R32 起对账执行真相；消费 `23` 时间线）。
 - 职责：证据驱动评估、后果绑定路径结论、执行真相对账（`corroborated`/`discrepant`/`unverifiable_no_timeline`）、诊断 provenance 发布的唯一只读 owner。不变更任何运行期状态。
 - 在循环中的作用：最后一个阶段；重建内部到可见的因果链，现在还把自报结论对账内核执行时间线以证伪。
-- 下一步：非确定性认知产出可变路径后做更丰富的 discrepancy 分类与打分深度；preserved-vs-resolved-vs-degraded 连续性对账（wave_B）；artifact 的跨运行耐久比较（依赖 P2）。
+- 完成度细节（R87 真实送达对账）：在 R32「流程完成」对账之上，对 effector 动作新增**真实送达** verdict。`ConsequenceClaim` 加 `decision_id`/`selected_op`/`op_effect_class`/`op_user_visible`；bundle 加 `delivered_tool_result_evidence`（composition 从同帧 `channel_inbound_drain` 投影本 tick 回流的 correlation decision_id+ok）。`_corroborate_delivery` 对一个 `executed`/`continuity_written` 且为已知非 user-visible 的 host/world effector 动作，按 decision_id 匹配回流：`ok=True`→`really_delivered`、`ok=False`→`delivered_failed`(+`consequence_delivery_discrepancy` 告警)、无回流→`delivery_unverified`（诚实缺席，绝不乐观）；非 executed/未知/relay/internal→`delivery_not_applicable`（R32 对账照旧）。严格 additive：不改 R32 verdict/taxonomy/打分；只读、不重算 owner 决策（按 id 匹配 + 读 ok 事实）。`effect_class` 在此成为真实消费者。收口 B4（本机 effector 路径）。
+- 下一步：非确定性认知产出可变路径后做更丰富的 discrepancy 分类与打分深度；`23` 侧跨 tick 送达延迟/重试长程诊断；preserved-vs-resolved-vs-degraded 连续性对账（wave_B）；artifact 的跨运行耐久比较（依赖 P2）。
 
 ---
 

@@ -3190,6 +3190,20 @@ class FirstVersionEvaluationRequestBridge:
                     "evidence_id": planner_result.result_id,
                     "status": planner_result.status,
                     "execution_feedback_present": planner_bridge_result.execution_feedback is not None,
+                    **(
+                        {
+                            "decision_id": planner_result.action_decision.decision_id,
+                            "selected_op": planner_result.action_decision.selected_op,
+                            "op_effect_class": planner_result.action_decision.policy_trace.get(
+                                "op_effect_class"
+                            ),
+                            "op_user_visible": planner_result.action_decision.policy_trace.get(
+                                "op_user_visible"
+                            ),
+                        }
+                        if planner_result.action_decision is not None
+                        else {}
+                    ),
                 },
             ),
             governance_evidence=governance_evidence,
@@ -3219,4 +3233,41 @@ class FirstVersionEvaluationRequestBridge:
             prior_consequence_claim_evidence=self.prior_claim_bridge.build_claim_evidence(
                 self.timeline_holder
             ),
+            delivered_tool_result_evidence=self._delivered_tool_result_evidence(frame),
         )
+
+    @staticmethod
+    def _delivered_tool_result_evidence(frame) -> tuple[dict, ...]:
+        """Owner: composition (R87). Project this tick's drained `tool_result` reafferences.
+
+        Reads the current frame's `channel_inbound_drain` stage result for `RawSignal`s whose
+        `signal_type == "tool_result"` and forwards each one's correlation `decision_id` + `ok` fact as
+        owner-neutral delivery evidence the `17` owner corroborates against the carried prior claim. An
+        effector decision dispatched at the end of tick N drains at the start of tick N+1, so the tick
+        N+1 evaluation observes it in the same frame that carries the tick-N claim. Empty in a non-channel
+        assembly (no drain stage). Composition computes no delivery verdict.
+        """
+
+        stage_results = getattr(frame, "stage_results", None) or {}
+        drain_stage = stage_results.get("channel_inbound_drain")
+        drain_result = getattr(drain_stage, "drain_result", None)
+        signals = getattr(drain_result, "raw_signals", ()) if drain_result is not None else ()
+        items: list[dict] = []
+        for index, signal in enumerate(signals):
+            if getattr(signal, "signal_type", None) != "tool_result":
+                continue
+            metadata = getattr(signal, "metadata", None) or {}
+            correlation = metadata.get("correlation")
+            decision_id = correlation.get("decision_id") if isinstance(correlation, Mapping) else None
+            if not isinstance(decision_id, str) or not decision_id:
+                continue
+            ok = metadata.get("ok")
+            signal_id = getattr(signal, "signal_id", None) or f"tool-result:{index}"
+            items.append(
+                {
+                    "evidence_id": f"delivered-tool-result:{signal_id}",
+                    "decision_id": decision_id,
+                    "ok": ok if isinstance(ok, bool) else False,
+                }
+            )
+        return tuple(items)

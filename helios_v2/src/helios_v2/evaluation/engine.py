@@ -91,6 +91,74 @@ _CORROBORATION_CORROBORATED = "corroborated"
 _CORROBORATION_DISCREPANT = "discrepant"
 _CORROBORATION_UNVERIFIABLE = "unverifiable_no_timeline"
 
+# R87: the real-delivery verdict vocabulary, published additively alongside (never replacing) the
+# `32` stage-completion corroboration verdict. It upgrades an executed effector action's corroboration
+# from "flow-completed" to "really-delivered" by matching the prior claim against the actual
+# `tool_result` reafference observed this tick.
+_DELIVERY_REALLY = "really_delivered"
+_DELIVERY_FAILED = "delivered_failed"
+_DELIVERY_UNVERIFIED = "delivery_unverified"
+_DELIVERY_NOT_APPLICABLE = "delivery_not_applicable"
+
+
+def _corroborate_delivery(
+    prior_claim_evidence: tuple[Mapping[str, object], ...],
+    delivered_tool_result_evidence: tuple[Mapping[str, object], ...],
+) -> tuple[str, str]:
+    """Owner: evaluation fidelity and diagnostic provenance (R87).
+
+    Purpose:
+        Corroborate the prior completed tick's executed-effector consequence claim against the actual
+        `tool_result` reafference observed this tick, returning a delivery verdict + bounded detail.
+        This is the "really-delivered" upgrade to the `32` "flow-completed" corroboration; it is strictly
+        additive and never changes the `32` verdict or the scoring.
+
+    Inputs:
+        `prior_claim_evidence` - at most one projected `ConsequenceClaim` (the prior tick's), carrying
+            the executed action's `decision_id`/`op_effect_class`/`op_user_visible`.
+        `delivered_tool_result_evidence` - the `tool_result` reafferences drained this tick (each with a
+            `decision_id` and an `ok` fact).
+
+    Returns:
+        A `(verdict, detail)` pair. `verdict` is one of `really_delivered`, `delivered_failed`,
+        `delivery_unverified`, `delivery_not_applicable`.
+
+    Notes:
+        Read-only and never optimistic: a missing reafference for an effector action is
+        `delivery_unverified` (e.g. a still-running async op), never `really_delivered`. A non-executed
+        outcome, a non-effector (user-visible relay reply / internal) action, or a claim without a
+        decision id is `delivery_not_applicable` (the `32` stage-completion corroboration stands). It
+        matches by `decision_id` and reads the `ok` fact only; it re-derives no owner decision.
+    """
+
+    if not prior_claim_evidence:
+        return _DELIVERY_NOT_APPLICABLE, "no_prior_claim"
+    claim = prior_claim_evidence[0]
+    outcome = claim.get("consequence_path_outcome")
+    if outcome not in ("executed", "continuity_written"):
+        return _DELIVERY_NOT_APPLICABLE, f"outcome:{outcome}"
+    decision_id = claim.get("decision_id")
+    if not isinstance(decision_id, str) or not decision_id:
+        return _DELIVERY_NOT_APPLICABLE, "no_decision_id"
+    # Delivery corroboration applies only to a KNOWN non-user-visible effector op whose effect lands on
+    # the host/world (it produces a `tool_result` reafference). An unknown op (no declared spec, e.g. a
+    # legacy/shim reply), a user-visible relay reply (rendered to a sink, no reafference), or an internal
+    # op is not applicable - the `32` stage-completion corroboration stands.
+    if claim.get("op_user_visible") is not False:
+        return _DELIVERY_NOT_APPLICABLE, "non_effector_op"
+    if claim.get("op_effect_class") not in ("local_host", "external_world"):
+        return _DELIVERY_NOT_APPLICABLE, "non_effector_op"
+    match: Mapping[str, object] | None = None
+    for item in delivered_tool_result_evidence:
+        if item.get("decision_id") == decision_id:
+            match = item
+            break
+    if match is None:
+        return _DELIVERY_UNVERIFIED, "no_reafference_observed"
+    if match.get("ok") is True:
+        return _DELIVERY_REALLY, "reafference_ok"
+    return _DELIVERY_FAILED, "effector_reported_failure"
+
 
 def _timeline_stage_status_map(timeline_entry: Mapping[str, object]) -> dict[str, str]:
     """Project one timeline evidence entry into a {stage_name: status} map.
@@ -483,6 +551,11 @@ class FirstVersionEvaluationPath:
         # time-window summary as an explicit owner-neutral field.
         current_tick_id = request.time_window_summary.get("current_tick_id")
         current_tick_id = current_tick_id if isinstance(current_tick_id, int) else None
+        planner_entry = bundle.planner_evidence[0] if bundle.planner_evidence else {}
+        claim_decision_id = planner_entry.get("decision_id")
+        claim_selected_op = planner_entry.get("selected_op")
+        claim_op_effect_class = planner_entry.get("op_effect_class")
+        claim_op_user_visible = planner_entry.get("op_user_visible")
         consequence_claim = ConsequenceClaim(
             claim_id=f"consequence-claim:{bundle.bundle_id}",
             tick_id=current_tick_id,
@@ -490,6 +563,10 @@ class FirstVersionEvaluationPath:
             planner_status=planner_status if isinstance(planner_status, str) else None,
             action_status=action_status if isinstance(action_status, str) else None,
             continuity_written=any_written,
+            decision_id=claim_decision_id if isinstance(claim_decision_id, str) else None,
+            selected_op=claim_selected_op if isinstance(claim_selected_op, str) else None,
+            op_effect_class=claim_op_effect_class if isinstance(claim_op_effect_class, str) else None,
+            op_user_visible=claim_op_user_visible if isinstance(claim_op_user_visible, bool) else None,
         )
 
         # Corroborate the PRIOR completed tick's self-reported outcome against that same tick's
@@ -514,6 +591,26 @@ class FirstVersionEvaluationPath:
                 )
             )
 
+        # R87: corroborate the PRIOR tick's executed-effector claim against the actual `tool_result`
+        # reafference drained this tick (matched by decision id), upgrading "flow-completed" to a
+        # really-delivered verdict. Strictly additive: it never changes the `32` verdict or scoring.
+        delivery_verdict, delivery_detail = _corroborate_delivery(
+            bundle.prior_consequence_claim_evidence,
+            bundle.delivered_tool_result_evidence,
+        )
+        if delivery_verdict == _DELIVERY_FAILED:
+            prior_claim_refs = _bundle_ids(bundle.prior_consequence_claim_evidence)
+            delivered_refs = _bundle_ids(bundle.delivered_tool_result_evidence)
+            warnings.append(
+                _warning(
+                    "warning:consequence-delivery-discrepancy",
+                    "consequence_delivery_discrepancy",
+                    "Prior-tick executed effector action was not really delivered: the effector "
+                    f"reported failure ({delivery_detail}).",
+                    (prior_claim_refs + delivered_refs) or (bundle.bundle_id,),
+                )
+            )
+
         gap_summary: dict[str, object] = {
             "thought_to_action_gap": thought_to_action_gap,
             "action_to_writeback_gap": action_to_writeback_gap,
@@ -525,6 +622,8 @@ class FirstVersionEvaluationPath:
             "consequence_binding": consequence_binding,
             "consequence_corroboration": corroboration_verdict,
             "consequence_corroboration_detail": corroboration_detail,
+            "consequence_delivery": delivery_verdict,
+            "consequence_delivery_detail": delivery_detail,
         }
 
         long_range_diagnostics: dict[str, object] = {

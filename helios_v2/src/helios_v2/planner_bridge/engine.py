@@ -160,6 +160,7 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
                 "minimum_score": behavior_min_score,
                 "op_effect_class": self._op_class(channel_descriptor, proposal.preferred_op, "effect_class"),
                 "op_risk_class": self._op_class(channel_descriptor, proposal.preferred_op, "risk_class"),
+                "op_user_visible": self._op_user_visible(channel_descriptor, proposal.preferred_op),
             },
         )
 
@@ -358,8 +359,8 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
     def _op_class(channel_descriptor: dict, op_name: str, key: str) -> str | None:
         """Owner: planner-bridge. Read the op's declared effect/risk class for the policy trace (R85).
 
-        Read-through only: R85 records the class for observability; it is not yet a gate (R86 enforces
-        `risk_class`). Returns `None` when the op declares no spec.
+        Read-through only: R85 records the class for observability; the `risk_class` becomes the R86
+        enforced gate. Returns `None` when the op declares no spec.
         """
 
         op_specs = channel_descriptor.get("op_specs")
@@ -367,6 +368,22 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
         if isinstance(spec, dict):
             value = spec.get(key)
             return value if isinstance(value, str) else None
+        return None
+
+    @staticmethod
+    def _op_user_visible(channel_descriptor: dict, op_name: str) -> bool | None:
+        """Owner: planner-bridge. Read the op's declared `user_visible` flag for the policy trace (R87).
+
+        Recorded so the `17` evaluation owner can distinguish a user-visible relay reply (no
+        `tool_result` reafference expected) from a non-user-visible effector op (produces one), for the
+        real-delivery corroboration. Returns `None` when the op declares no spec.
+        """
+
+        op_specs = channel_descriptor.get("op_specs")
+        spec = op_specs.get(op_name) if isinstance(op_specs, dict) else None
+        if isinstance(spec, dict):
+            value = spec.get("user_visible")
+            return value if isinstance(value, bool) else None
         return None
 
     def _select_channel(self, request: PlannerBridgeRequest, requested_op: str) -> str | None:

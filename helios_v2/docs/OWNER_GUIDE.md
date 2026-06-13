@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R86. Test baseline: 957 passed / 4 skipped (network-free).
+> Status: living owner reference. Last synced: R87. Test baseline: 968 passed / 4 skipped (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -201,7 +201,8 @@ two transport stages for 21).
 - Completeness: `baseline_real` (read-only; corroborates execution truth since R32; consumes the `23` timeline).
 - Responsibility: the sole read-only owner of evidence-driven evaluation, consequence-binding path outcomes, execution-truth corroboration (`corroborated`/`discrepant`/`unverifiable_no_timeline`), and diagnostic-provenance publication. Mutates no runtime state.
 - Role in the loop: the last stage; rebuilds the internal-to-visible causal chain and now falsifies the self-reported outcome against the kernel execution timeline.
-- Next step: richer discrepancy taxonomies and scoring depth once non-deterministic cognition produces variable paths; preserved-vs-resolved-vs-degraded continuity corroboration (wave_B); durable cross-run comparison of artifacts (depends on P2).
+- Completeness detail (R87 real-delivery corroboration): on top of the R32 "flow-completed" corroboration, `17` adds a **really-delivered** verdict for effector actions. `ConsequenceClaim` gains `decision_id`/`selected_op`/`op_effect_class`/`op_user_visible`; the bundle gains `delivered_tool_result_evidence` (composition projects this tick's drained `tool_result` reafferences — correlation `decision_id` + `ok` — from the same-frame `channel_inbound_drain`). `_corroborate_delivery` matches an `executed`/`continuity_written` claim for a KNOWN non-user-visible host/world effector op against the reafference: `ok=True` → `really_delivered`, `ok=False` → `delivered_failed` (+ a `consequence_delivery_discrepancy` warning), absent → `delivery_unverified` (honest, never optimistic); a non-executed/unknown/relay/internal action → `delivery_not_applicable` (the R32 corroboration stands). Strictly additive (no change to the R32 verdict/taxonomy/scoring); read-only and re-derives no owner decision. `effect_class` becomes a real consumer here. Closes B4 for the local effector path.
+- Next step: richer discrepancy taxonomies and scoring depth once non-deterministic cognition produces variable paths; `23`-side cross-tick delivery-latency/retry diagnostics; preserved-vs-resolved-vs-degraded continuity corroboration (wave_B); durable cross-run comparison of artifacts (depends on P2).
 
 ---
 

@@ -137,6 +137,10 @@ class ConsequenceClaim:
     planner_status: str | None
     action_status: str | None
     continuity_written: bool
+    decision_id: str | None = None
+    selected_op: str | None = None
+    op_effect_class: str | None = None
+    op_user_visible: bool | None = None
 
     def __post_init__(self) -> None:
         if not self.claim_id:
@@ -158,7 +162,9 @@ class ConsequenceClaim:
 
         Returns:
             A plain dict carrying `evidence_id`, `tick_id`, `consequence_path_outcome`,
-            `planner_status`, `action_status`, and `continuity_written`.
+            `planner_status`, `action_status`, `continuity_written`, and (R87) the
+            delivery-relevant decision facts `decision_id`, `selected_op`, `op_effect_class`,
+            `op_user_visible`.
 
         Raises:
             EvaluationError if `evidence_id` is empty.
@@ -173,6 +179,10 @@ class ConsequenceClaim:
             "planner_status": self.planner_status,
             "action_status": self.action_status,
             "continuity_written": self.continuity_written,
+            "decision_id": self.decision_id,
+            "selected_op": self.selected_op,
+            "op_effect_class": self.op_effect_class,
+            "op_user_visible": self.op_user_visible,
         }
 
 
@@ -193,6 +203,7 @@ class EvaluationEvidenceBundle:
     outward_expression_externalization_evidence: tuple[Mapping[str, object], ...]
     execution_timeline_evidence: tuple[Mapping[str, object], ...] = ()
     prior_consequence_claim_evidence: tuple[Mapping[str, object], ...] = ()
+    delivered_tool_result_evidence: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.bundle_id:
@@ -213,6 +224,7 @@ class EvaluationEvidenceBundle:
             "outward_expression_externalization_evidence",
             "execution_timeline_evidence",
             "prior_consequence_claim_evidence",
+            "delivered_tool_result_evidence",
         ):
             object.__setattr__(
                 self,
