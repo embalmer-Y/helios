@@ -1,6 +1,6 @@
 # Helios v2 Architecture Boundaries
 
-> Status: boundary-truth snapshot, last synced R87 (consequence-truth real-delivery verdict — B4 closeout)
+> Status: boundary-truth snapshot, last synced R90 (R88–R90 P5 evaluation framework are tests-only diagnostics; no owner or boundary change since the R87 consequence-truth real-delivery verdict — B4 closeout)
 > Scope: implementation-aligned owner and dependency truth for `helios_v2`
 
 ## 1. Purpose

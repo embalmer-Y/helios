@@ -1,6 +1,7 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R87. Test baseline: 968 passed / 4 skipped (network-free).
+> Status: living owner reference. Last synced: R90. Test baseline: 996 passed / 4 skipped (network-free).
+> Note: R88–R90 (the P5 evaluation framework — behavioral drift evaluator, long-run Turing-style harness, memory-fidelity probe) are read-only, tests-only diagnostics under `tests/` and introduce NO owner, stage-chain, or boundary change since the R87 owner sync; this guide's owner maturities are unchanged from R87.
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:

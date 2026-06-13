@@ -37,7 +37,11 @@ The current implementation baseline now includes:
 7. `30-31` the channel driver subsystem and the first concrete (CLI) driver with an opt-in channel-bound assembly,
 8. `32` execution-truth-corroborated consequence binding (wave_A closed at baseline),
 9. `33` the durable experience store with restart continuity and `34` semantic experience retrieval (the P2 memory base),
-10. a fail-fast runtime kernel and dependency gate that runs with or without injected observability, persistence, embedding, or channel transport.
+10. a fail-fast runtime kernel and dependency gate that runs with or without injected observability, persistence, embedding, or channel transport,
+11. the P3 de-shimmed cognition chain (`35-41` the fully-grounded `03` appraisal, `36-38`/`43-44` appraisal-derived dual-timescale neuromodulation and feeling, `45-52` affect-memory formation/workspace/ignition, `48-63` real gate inputs, `50-51` the interoceptive afferent, `59-60` the injectable external afferent), made the default assembly by `69-70`,
+12. `42-44` the durable continuity checkpoint and dual-timescale affect that resume across a process restart, and `82` the standard production assembly with persistence-by-default (closing the P0–P3 foundation gates, verified by the `83` long-run stability harness),
+13. the P4 tool/effector opener (`84` the sandboxed OS file-system effector, `85` LLM-driven autonomous tool selection, `86` the governed OS command-execution effector with an enforced risk-class gate, `87` the consequence-truth real-delivery verdict — the local effector loop closing FG-4 and the B4 blocking point),
+14. the P5 evaluation framework as read-only tests-only diagnostics (`88` the behavioral drift evaluator, `89` the long-run Turing-style harness, `90` the memory-fidelity probe).
 
 See `docs/OWNER_GUIDE.md` for the by-owner responsibility/completeness/next-step reference,
 `docs/ARCHITECTURE_PHILOSOPHY.zh-CN.md` for the final goal and P0→P7 phase roadmap, and
