@@ -691,3 +691,60 @@ def test_structured_gateway_failure_is_hard_stop() -> None:
         engine.run_thought_cycle(
             _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
         )
+
+
+# --- Requirement 79: structured-thought parsing robustness (reasoning model <think>/fence) ---
+
+from helios_v2.internal_thought.engine import (  # noqa: E402
+    StructuredThoughtParseError as _R79ParseError,
+    _extract_structured_json as _r79_extract,
+    _parse_structured_thought as _r79_parse,
+)
+
+
+def test_r79_extract_clean_json_is_identity() -> None:
+    text = '{"thought": "x", "sufficiency": 0.5}'
+    assert _r79_extract(text) == text
+
+
+def test_r79_extract_strips_think_block() -> None:
+    assert _r79_extract('<think>reasoning here</think>\n{"a": 1}') == '{"a": 1}'
+
+
+def test_r79_extract_strips_code_fence() -> None:
+    assert _r79_extract('```json\n{"a": 1}\n```') == '{"a": 1}'
+
+
+def test_r79_extract_strips_think_and_fence() -> None:
+    assert _r79_extract('<think>r</think>\n```json\n{"a": 1}\n```') == '{"a": 1}'
+
+
+def test_r79_extract_no_json_returns_empty() -> None:
+    assert _r79_extract('<think>only truncated reasoning, no json') == ''
+    assert _r79_extract('no json here') == ''
+    assert _r79_extract('') == ''
+
+
+def test_r79_parse_handles_think_and_fence_wrapped_envelope() -> None:
+    raw = '<think>let me think</think>\n```json\n' + _json.dumps(_envelope()) + '\n```'
+    evidence = _r79_parse(raw)
+    assert evidence.thought_text == "model thought"
+
+
+def test_r79_parse_no_json_raises_parse_error() -> None:
+    with pytest.raises(_R79ParseError):
+        _r79_parse('<think>truncated reasoning with no json object</think>')
+
+
+def test_r79_llm_path_parses_reasoning_model_output() -> None:
+    raw = (
+        '<think>weighing the state</think>\n```json\n'
+        + _json.dumps(_envelope(sufficiency=0.9, wants_to_continue=False, intends_action=True))
+        + '\n```'
+    )
+    gateway = JsonThoughtGateway(raw_text=raw)
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+    result, _trace = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+    assert result.execution_status == "completed"

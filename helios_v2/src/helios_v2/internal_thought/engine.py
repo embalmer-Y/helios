@@ -15,6 +15,7 @@ structured self-assessment evidence; it never owns the final judgment.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -128,6 +129,48 @@ def _optional_str(payload: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+
+
+def _extract_structured_json(completion_text: str) -> str:
+    """Owner: internal thought loop.
+
+    Purpose:
+        Extract the JSON object from a model completion that may wrap it in a reasoning
+        `<think>...</think>` block and/or a markdown code fence, before strict parsing. This
+        makes the structured-thought parse robust to reasoning models without changing the
+        owner's judgment or weakening fail-fast.
+
+    Inputs:
+        `completion_text` - the raw completion text from the gateway.
+
+    Returns:
+        The extracted JSON-object substring (first `{` to last `}`), or `""` when none exists
+        (including a reasoning-only or `length`-truncated completion with no JSON object).
+
+    Notes:
+        Identity-preserving on a clean bare JSON object (a model already returning bare JSON is
+        unchanged). It never repairs or fabricates JSON; it only removes a reasoning block and
+        code fence and slices to the outermost braces. The caller maps an empty result to an
+        explicit non-success outcome.
+    """
+
+    if not completion_text:
+        return ""
+    text = _THINK_BLOCK_RE.sub("", completion_text)
+    # Drop an unterminated <think> tail (reasoning truncated before the closing tag, no JSON).
+    lowered = text.lower()
+    if "<think>" in lowered and "</think>" not in lowered:
+        text = text[: lowered.index("<think>")]
+    # Remove markdown code fences, then slice to the outermost braces.
+    text = text.replace("```json", "").replace("```JSON", "").replace("```", "")
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return ""
+    return text[start : end + 1].strip()
+
+
 def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence:
     """Owner: internal thought loop.
 
@@ -151,8 +194,13 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
         parse error.
     """
 
+    extracted = _extract_structured_json(completion_text)
+    if not extracted:
+        raise StructuredThoughtParseError(
+            "No JSON object could be extracted from the completion"
+        )
     try:
-        payload = json.loads(completion_text)
+        payload = json.loads(extracted)
     except (json.JSONDecodeError, TypeError) as error:
         raise StructuredThoughtParseError(
             "Structured thought envelope is not valid JSON"

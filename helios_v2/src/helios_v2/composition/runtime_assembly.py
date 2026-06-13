@@ -102,6 +102,7 @@ from helios_v2.prompt_contract import (
     EmbodiedPromptConfig,
     EmbodiedPromptEngine,
     FirstVersionEmbodiedPromptPath,
+    OwnerGroundedEmbodiedPromptPath,
 )
 from helios_v2.feeling import InteroceptiveFeelingVector
 from helios_v2.runtime import (
@@ -183,6 +184,7 @@ from .bridges import (
     FirstVersionDominantDimensionReporter,
     FirstVersionEmbodiedPromptRequestBridge,
     SemanticEmbodiedPromptRequestBridge,
+    OwnerGroundedEmbodiedPromptRequestBridge,
     FirstVersionEvaluationRequestBridge,
     FirstVersionExperienceWritebackRequestBridge,
     FirstVersionFeelingConstructionPath,
@@ -556,6 +558,7 @@ def default_composition_config() -> CompositionConfig:
                     model=os.getenv("HELIOS_LLM_MODEL", "deepseek/deepseek-v4-flash"),
                     api_key_env="OPENAI_API_KEY",
                     base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                    max_tokens=2048,
                 ),
             ),
             thought_profile_name="thought-default",
@@ -895,6 +898,7 @@ _RUNTIME_PROFILE_FIELD_NAMES: tuple[str, ...] = (
     "temporal_source",
     "external_signal_source",
     "default_signal_mode",
+    "embodied_prompt_mode",
 )
 
 
@@ -938,6 +942,7 @@ class RuntimeProfile:
     temporal_source: "TemporalSource | None" = None
     external_signal_source: "SensorySource | None" = None
     default_signal_mode: str = "semantic"
+    embodied_prompt_mode: str = "v3"
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -946,6 +951,12 @@ class RuntimeProfile:
             raise CompositionError(
                 f"default_signal_mode must be 'semantic' or 'legacy_constant', "
                 f"got '{self.default_signal_mode}'"
+            )
+        # Validate the embodied-prompt mode: v3 (owner-grounded, default) or v1 (legacy escape
+        # hatch). An unknown mode is a composition error, not a silent fallback.
+        if self.embodied_prompt_mode not in ("v1", "v3"):
+            raise CompositionError(
+                f"embodied_prompt_mode must be 'v1' or 'v3', got '{self.embodied_prompt_mode}'"
             )
         # Semantic memory (`34`) requires durable persistence (`33`): an embedding gateway
         # without an experience store is a composition error, not a silent no-op.
@@ -1033,6 +1044,7 @@ def assemble_runtime(
     temporal_source: "TemporalSource | None | object" = _UNSET,
     external_signal_source: "SensorySource | None | object" = _UNSET,
     default_signal_mode: str | object = _UNSET,
+    embodied_prompt_mode: str | object = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1092,6 +1104,7 @@ def assemble_runtime(
         ("temporal_source", temporal_source),
         ("external_signal_source", external_signal_source),
         ("default_signal_mode", default_signal_mode),
+        ("embodied_prompt_mode", embodied_prompt_mode),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1466,10 +1479,20 @@ def assemble_runtime(
             else FirstVersionDirectedMemoryCandidateProvider()
         ),
     )
-    embodied_prompt = EmbodiedPromptEngine(
-        config=resolved_config.embodied_prompt,
-        prompt_path=FirstVersionEmbodiedPromptPath(),
-    )
+    embodied_prompt_mode = resolved_profile.embodied_prompt_mode
+    if embodied_prompt_mode == "v3":
+        embodied_prompt = EmbodiedPromptEngine(
+            config=replace(
+                resolved_config.embodied_prompt,
+                prompt_bootstrap_id="embodied-prompt-bootstrap:v3",
+            ),
+            prompt_path=OwnerGroundedEmbodiedPromptPath(),
+        )
+    else:
+        embodied_prompt = EmbodiedPromptEngine(
+            config=resolved_config.embodied_prompt,
+            prompt_path=FirstVersionEmbodiedPromptPath(),
+        )
     outward_expression = OutwardExpressionEngine(
         config=resolved_config.outward_expression,
         outward_expression_path=FirstVersionOutwardExpressionPath(),
@@ -1576,7 +1599,11 @@ def assemble_runtime(
         EmbodiedPromptRuntimeStage(
             prompt_layer=embodied_prompt,
             request_provider=(
-                SemanticEmbodiedPromptRequestBridge()
+                OwnerGroundedEmbodiedPromptRequestBridge(
+                    identity_carry_provider=lambda: governance_stage_ref.prior_carry_state,
+                )
+                if embodied_prompt_mode == "v3"
+                else SemanticEmbodiedPromptRequestBridge()
                 if semantic_memory_enabled
                 else FirstVersionEmbodiedPromptRequestBridge()
             ),

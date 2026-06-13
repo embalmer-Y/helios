@@ -15,7 +15,12 @@ from .contracts import (
     PublishEmbodiedPromptContractOp,
     PublishOutwardExpressionPromptViewOp,
 )
-from .engine import EmbodiedPromptEngine, EmbodiedPromptPath, FirstVersionEmbodiedPromptPath
+from .engine import (
+    EmbodiedPromptEngine,
+    EmbodiedPromptPath,
+    FirstVersionEmbodiedPromptPath,
+    OwnerGroundedEmbodiedPromptPath,
+)
 
 __all__ = [
     "BuildEmbodiedPromptOp",
@@ -27,6 +32,7 @@ __all__ = [
     "EmbodiedPromptPath",
     "EmbodiedPromptRequest",
     "FirstVersionEmbodiedPromptPath",
+    "OwnerGroundedEmbodiedPromptPath",
     "OutwardExpressionPromptView",
     "PromptActionBoundary",
     "PromptContractError",

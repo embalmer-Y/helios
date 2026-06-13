@@ -247,7 +247,7 @@ Interpretation rules:
 
 Current migration-state facts that must remain explicit rather than implied away:
 
-1. `16` is stable at the current baseline, but its outward-expression path remains draft-only by design; final execution authority intentionally stays outside that owner family.
+1. `16` is stable at the current baseline, but its outward-expression path remains draft-only by design; final execution authority intentionally stays outside that owner family. With R79 the default embodied-prompt path is the v3 `OwnerGroundedEmbodiedPromptPath` (identity rendered from the prior-tick `14` `identity_state_snapshot`, never hardcoded; `embodied_prompt_mode="v1"` is a legacy escape hatch), and `11`'s structured-thought parse is robust to a reasoning model's `<think>`/code-fence output (no-JSON stays an explicit `insufficient_generation`). Identity stays owned by `14`; the prompt remains a formatter.
 2. `17` is stable as a read-only diagnostic owner, but its first-version scoring depth is still shallower than the final project goal; baseline coverage does not mean complete evaluation semantics.
 3. `18` now carries deferred continuity across ticks through owner-private stage state plus explicit request carry records, and the current baseline also includes long-horizon decay, same-key merge, and explicit resolved-or-expired accounting. It remains deterministic and bounded rather than a fully open-ended proactive-evolution policy.
 4. Any later requirement that deepens `16-18` must update both its own package docs and this file's owner snapshot if boundary truth changes materially.

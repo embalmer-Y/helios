@@ -1,6 +1,6 @@
 # Helios v2 Owner Guide
 
-> Status: living owner reference. Last synced: R69. Test baseline: 775 passed (network-free).
+> Status: living owner reference. Last synced: R79. Test baseline: 857 passed (network-free).
 > Role: the by-owner explanation of responsibility, role in the loop, completeness, and the
 > next development/optimization direction for every Helios v2 owner.
 > Companion documents:
@@ -140,6 +140,7 @@ two transport stages for 21).
 - Responsibility: embodied subjective prompt-contract assembly for the `thought` and `outward_expression` consumers; anti-theatrical constraints; capability/authority boundary rendering. Does not own thought execution, planner authority, or governance.
 - Role in the loop: formats committed state + retrieval + capability boundaries into the contract the thought owner and outward-expression owner consume.
 - Next step: keep it a contract formatter (never a reply-first behavior owner); enrich layers as real upstream signals land. Deepening only.
+- R79 (v3 owner-grounded, default): adds `OwnerGroundedEmbodiedPromptPath` (default `embodied_prompt_mode="v3"`, `"v1"` legacy escape hatch). Identity is rendered from the prior-tick `14` `identity_state_snapshot` (never hardcoded "you are a person / not an AI"), with natural-language fields + a focused/peripheral/filtered attention field + ready_channels + an upgraded anti-theatrical rule (state-supported only, never self-describe as AI). Identity stays owned by `14`; the prompt remains a formatter.
 
 ### 2.12 `16` Outward Expression Draft — `helios_v2.outward_expression`
 - Completeness: `baseline_real` (draft-only by design).
@@ -158,6 +159,7 @@ two transport stages for 21).
 - Responsibility: the sole owner of fired-path thought execution and the structured judgment (sufficiency, continuation, recall intent, memory handoff, action proposal, self-revision proposal). The model supplies content + structured self-assessment; the owner keeps all final judgment. Does not own persistence, planning, or governance acceptance.
 - Role in the loop: the cognitive heart — sources thought content from the `25` LLM gateway through a neutral structured request and parses it into owner-owned judgment.
 - Next step: stronger sufficiency/continuation/consequence closure; tighter coupling to real upstream signals as P3 de-shims land. This is the most mature cognitive owner.
+- R79 (parsing robustness): `_parse_structured_thought` strips a `<think>` block + markdown code fence before parsing (a reasoning model's output now parses), the thought profile `max_tokens` is 2048 to avoid reasoning truncation, and a no-JSON completion stays an explicit `insufficient_generation` (no fabrication). Clean JSON is unchanged; no regression.
 
 ### 2.15 `12` Action Proposal and Externalization Contract — `helios_v2.action_externalization`
 - Completeness: `baseline_real`.

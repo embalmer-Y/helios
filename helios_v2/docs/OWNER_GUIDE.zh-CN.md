@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R69。测试基线：775 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R79。测试基线：857 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -134,6 +134,7 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 职责：为 `thought` 与 `outward_expression` 消费者装配具身主观 prompt 契约；反表演约束；能力/权限边界渲染。不拥有思考执行、planner 权限或治理。
 - 在循环中的作用：把承诺状态 + 检索 + 能力边界格式化成思考 owner 与外化 owner 消费的契约。
 - 下一步：保持其为契约 formatter（绝不变成 reply-first 行为 owner）；随真实上游信号到来丰富层。仅深化。
+- R79（v3 owner-grounded，默认）：新增 `OwnerGroundedEmbodiedPromptPath`（默认 `embodied_prompt_mode="v3"`，`"v1"` 为 legacy escape hatch）。身份框架从 `14` 上一 tick `identity_state_snapshot` 渲染（**不硬编码**"你是人/不是AI"），自然语言 11 字段 + focused/peripheral/filtered 注意力场 + ready_channels + 升级反表演（只表达状态支撑、不自指 AI）。身份归 `14`，prompt 仍是 formatter。
 
 ### 2.12 `16` 外化表达草稿 — `helios_v2.outward_expression`
 - 完成度：`baseline_real`（设计上仅草稿）。
@@ -152,6 +153,7 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 职责：触发路径思考执行与结构化判断（充分性、延续、recall intent、记忆 handoff、行动提议、自我修订提议）的唯一 owner。模型供给内容 + 结构化自评；owner 保留全部最终判断。不拥有持久化、规划或治理接受。
 - 在循环中的作用：认知核心——经 `25` LLM 网关用中性结构化请求取思考内容，并解析成 owner 拥有的判断。
 - 下一步：更强的充分性/延续/后果收口；随 P3 去 shim 落地更紧地耦合真实上游信号。这是最成熟的认知 owner。
+- R79（解析鲁棒化）：`_parse_structured_thought` 解析前 strip `<think>` 块 + markdown 围栏（reasoning 模型输出可解析），thought profile `max_tokens`→2048 避免 reasoning 截断；提取后无 JSON → 显式 `insufficient_generation`（不虚构）。干净 JSON 恒等，无回归。
 
 ### 2.15 `12` 行动提议与外化契约 — `helios_v2.action_externalization`
 - 完成度：`baseline_real`。

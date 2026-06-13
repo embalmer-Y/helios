@@ -87,17 +87,17 @@ class RaisingThoughtProvider:
 
 @dataclass
 class MalformedStructuredThoughtProvider:
-    """Provider double that returns a live-like malformed structured response."""
+    """Provider double returning a reasoning-only completion with no extractable JSON object."""
 
     def complete(self, profile, request, api_key) -> ProviderCompletion:
         del profile, request, api_key
         return ProviderCompletion(
             output_text=(
-                "<think>internal reasoning leaked by provider</think>"
-                '{"thought":"reply to the user","sufficiency":0.9,'
-                '"wants_to_continue":false,"continue_reason":"",'
-                '"proposed_action":{"intends_action":true,"summary":"reply"},'
-                '"self_revision":{"intends_revision":false,"summary":""}}'
+                # A reasoning-only completion that never emitted a JSON object (e.g. the
+                # reasoning consumed the whole budget). After R79 think-stripping there is no
+                # JSON object to extract, so `11` still closes the tick as insufficient.
+                "<think>internal reasoning that never produced a JSON object</think>"
+                "I was unable to produce a structured answer."
             ),
             finish_reason="stop",
         )
@@ -3377,3 +3377,57 @@ def test_r68_identity_governance_second_tick_reads_carry_state() -> None:
     # governance_trace_summary is non-empty when trace history is present.
     assert request.governance_trace_summary != {}
     assert request.governance_trace_summary["total_ticks_observed"] == 1
+
+
+# --- Requirement 79: default-v3 owner-grounded embodied prompt assembly ---
+
+
+def _prompt_layer_names(result) -> set[str]:
+    prompt_stage = result.stage_results["embodied_subjective_prompt_and_action_autonomy"]
+    return {
+        layer.layer_name
+        for contract in prompt_stage.contracts
+        for layer in contract.layers
+    }
+
+
+def test_default_assembly_uses_v3_embodied_prompt() -> None:
+    handle = _assemble()  # default embodied_prompt_mode == "v3"
+    handle.startup()
+    result = handle.tick()
+    names = _prompt_layer_names(result)
+    assert "identity_grounding" in names
+    assert "attention_breakdown" in names
+    assert "ready_channels" in names
+
+
+def test_v1_escape_hatch_uses_v1_embodied_prompt() -> None:
+    handle = _assemble(embodied_prompt_mode="v1")
+    handle.startup()
+    result = handle.tick()
+    names = _prompt_layer_names(result)
+    assert "anti_theatrical_constraints" in names  # v1-only layer
+    assert "identity_grounding" not in names
+
+
+def test_v3_identity_grounding_is_owner_sourced_not_hardcoded() -> None:
+    handle = _assemble()
+    handle.startup()
+    result = handle.tick()
+    prompt_stage = result.stage_results["embodied_subjective_prompt_and_action_autonomy"]
+    identity_contents = [
+        layer.content
+        for contract in prompt_stage.contracts
+        for layer in contract.layers
+        if layer.layer_name == "identity_grounding"
+    ]
+    assert identity_contents
+    for content in identity_contents:
+        lowered = content.lower()
+        assert "you are a person" not in lowered
+        assert "not an ai" not in lowered
+
+
+def test_invalid_embodied_prompt_mode_is_composition_error() -> None:
+    with pytest.raises(CompositionError):
+        _assemble(embodied_prompt_mode="v2")

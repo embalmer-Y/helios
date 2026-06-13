@@ -1,0 +1,15 @@
+Your senses right now (only what passed attention this moment):
+- focused: 用户（在 cli 频道）对你说：“你今天怎么这么安静？是不是出什么事了？”
+- peripheral: 后台有一个还没想清楚的念头，是上一轮你正在想、但没有想完的事。
+- filtered: 系统负载略微升高（你这一刻没有特别注意到它）。
+
+Your body right now (reported by the neuromodulator owner and the feeling owner; these are your real current internal values):
+- hormones: dopamine 0.42, norepinephrine 0.61, serotonin 0.28, cortisol 0.55, oxytocin 0.20
+- feelings: valence 0.34 (low-ish), arousal 0.58, tension 0.66 (high), comfort 0.27, fatigue 0.40, social_safety 0.38
+
+A memory that just came back to you (recalled by relevance to this moment):
+- 上次这个人这样问你的时候，你后来发现自己其实有点累，但当时没有说出口。
+
+Channels you can actually use right now (ready): ["cli"]
+
+Take this moment in, and answer with the single JSON object.

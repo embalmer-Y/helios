@@ -2206,6 +2206,155 @@ class SemanticEmbodiedPromptRequestBridge:
         )
 
 
+def _attention_field_from_frame(frame, present_field, directed_retrieval_result) -> dict:
+    """Owner: composition (R79). Project a focused/peripheral/filtered attention field.
+
+    First-version owner-neutral projection: focused = the present external field; peripheral =
+    active retrieval/continuity cues; filtered = internal body signals present but not in focus.
+    A deeper `07`/`08` focal mapping is a later refinement. It forwards bounded raw facts only.
+    """
+
+    from helios_v2.runtime.stages import SensoryIngressStageResult
+
+    peripheral: list[str] = []
+    bundle = getattr(directed_retrieval_result, "bundle", None)
+    if bundle is not None:
+        if bundle.short_term_context:
+            peripheral.append(f"short-term: {bundle.short_term_context[0].summary[:60]}")
+        if bundle.autobiographical_hits:
+            peripheral.append(f"recalled: {bundle.autobiographical_hits[0].summary[:60]}")
+    filtered: list[str] = []
+    stage_results = frame.stage_results or {}
+    sensory = stage_results.get("sensory_ingress")
+    if isinstance(sensory, SensoryIngressStageResult):
+        internal = [s for s in sensory.batch.stimuli if s.modality in _INTERNAL_MODALITIES]
+        if internal:
+            filtered.append("internal body signals present but not in focus this moment")
+    return {
+        "focused": present_field,
+        "peripheral": tuple(peripheral),
+        "filtered": tuple(filtered),
+    }
+
+
+def _identity_self_summary_from_carry(carry) -> str:
+    """Owner: composition (R79). Render the v3 identity self-summary from the `14` governance carry.
+
+    Identity content is owned by `14`: this projects the prior-tick governed
+    `identity_state_snapshot` (`self_definition` / `identity_narrative`) into a bounded
+    first-person line, or a continuity cold-start on the first tick (before any `14` carry
+    exists). It never asserts a hardcoded persona; the prompt path is a pure formatter of this
+    owner-sourced text.
+    """
+
+    snapshot = getattr(carry, "identity_state_snapshot", None) if carry is not None else None
+    if snapshot:
+        snap = dict(snapshot)
+        parts: list[str] = []
+        self_def = snap.get("self_definition")
+        narrative = snap.get("identity_narrative")
+        if isinstance(self_def, str) and self_def:
+            parts.append(self_def)
+        if isinstance(narrative, str) and narrative:
+            parts.append(narrative)
+        if parts:
+            return "Who I am, from my governed identity state: " + " ".join(parts)
+    return "Who I am: a continuous presence that carries its state and memory forward across ticks."
+
+
+@dataclass
+class OwnerGroundedEmbodiedPromptRequestBridge:
+    """Owner: composition (R79, v3 owner-grounded embodied prompt).
+
+    Purpose:
+        Build the v3 thought and outward-expression embodied-prompt requests, filling the
+        additive owner-grounded keys the `OwnerGroundedEmbodiedPromptPath` reads:
+        `identity_self_summary` (from the prior-tick `14` governance carry), `attention_field`
+        (focused/peripheral/filtered from the real frame), and `ready_channels`.
+
+    Notes:
+        Owner-neutral glue. It reuses the R70 real-state projections for the present field,
+        affect, continuation, and retrieval text; identity content is owned by `14` (this bridge
+        only renders the prior-tick snapshot or a continuity cold-start), attention tiers are
+        projected from the real frame, and `ready_channels` are the assembly's bound channels.
+        It derives no cognitive policy and renders no prompt.
+    """
+
+    identity_carry_provider: "Callable[[], GovernanceCarryState | None] | None" = None
+
+    def build_requests(
+        self,
+        frame,
+        conscious_result,
+        thought_gating_result,
+        directed_retrieval_result,
+    ) -> tuple[EmbodiedPromptRequest, ...]:
+        tick_id = frame.tick_id
+        present_field = _present_field_text(frame)
+        attention_field = _attention_field_from_frame(
+            frame, present_field, directed_retrieval_result
+        )
+        carry = (
+            self.identity_carry_provider()
+            if self.identity_carry_provider is not None
+            else None
+        )
+        identity_self_summary = _identity_self_summary_from_carry(carry)
+        stimulus_summary = {
+            "present_field": present_field,
+            "attention_field": attention_field,
+        }
+        state_summary = {
+            "affective_summary": _affective_summary_text(frame),
+            "continuation_summary": _continuation_summary_text(frame, thought_gating_result),
+        }
+        retrieval_summary = {
+            "retrieval_context": _retrieval_context_text(frame, directed_retrieval_result),
+            "continuity_context": _continuity_context_text(directed_retrieval_result),
+        }
+        capability_summary = {
+            "available_channels": ("cli",),
+            "available_ops": ("reply_message",),
+            "forbidden_capabilities": ("direct_execution", "invented_channel"),
+            "ready_channels": ("cli",),
+        }
+        identity_boundary_summary = {
+            "identity_boundary": "identity revision remains proposal-only and governance-validated",
+            "identity_self_summary": identity_self_summary,
+        }
+        conscious_state_id = conscious_result.state.state_id
+        gate_result_id = thought_gating_result.result.result_id
+        bundle_id = directed_retrieval_result.bundle.bundle_id
+        return (
+            EmbodiedPromptRequest(
+                request_id=f"embodied-prompt-request:thought:runtime:{tick_id}",
+                consumer_kind="thought",
+                source_conscious_state_id=conscious_state_id,
+                source_gate_result_id=gate_result_id,
+                source_retrieval_bundle_id=bundle_id,
+                stimulus_summary=stimulus_summary,
+                state_summary=state_summary,
+                retrieval_summary=retrieval_summary,
+                capability_summary=capability_summary,
+                identity_boundary_summary=identity_boundary_summary,
+                tick_id=tick_id,
+            ),
+            EmbodiedPromptRequest(
+                request_id=f"embodied-prompt-request:outward-expression:runtime:{tick_id}",
+                consumer_kind="outward_expression",
+                source_conscious_state_id=conscious_state_id,
+                source_gate_result_id=gate_result_id,
+                source_retrieval_bundle_id=bundle_id,
+                stimulus_summary=stimulus_summary,
+                state_summary=state_summary,
+                retrieval_summary=retrieval_summary,
+                capability_summary=capability_summary,
+                identity_boundary_summary=identity_boundary_summary,
+                tick_id=tick_id,
+            ),
+        )
+
+
 @dataclass
 class SemanticInternalThoughtRequestBridge:
     """Owner: composition (R70).
