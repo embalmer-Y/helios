@@ -748,3 +748,84 @@ def test_r79_llm_path_parses_reasoning_model_output() -> None:
         _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
     )
     assert result.execution_status == "completed"
+
+
+# --- Requirement 81: optional hormone forecast parse + publish ---
+
+
+def test_r81_parse_extracts_hormone_forecast() -> None:
+    env = _envelope()
+    env["hormone_response_i_predict"] = {"dopamine": 0.8, "cortisol": 0.1}
+    evidence = _r79_parse(_json.dumps(env))
+    assert evidence.hormone_prediction == {"dopamine": 0.8, "cortisol": 0.1}
+
+
+def test_r81_parse_absent_forecast_is_none() -> None:
+    evidence = _r79_parse(_json.dumps(_envelope()))
+    assert evidence.hormone_prediction is None
+
+
+def test_r81_parse_null_forecast_is_none() -> None:
+    env = _envelope()
+    env["hormone_response_i_predict"] = None
+    evidence = _r79_parse(_json.dumps(env))
+    assert evidence.hormone_prediction is None
+
+
+def test_r81_parse_ignores_unknown_channel() -> None:
+    env = _envelope()
+    env["hormone_response_i_predict"] = {"dopamine": 0.5, "not_a_channel": 0.9}
+    evidence = _r79_parse(_json.dumps(env))
+    assert evidence.hormone_prediction == {"dopamine": 0.5}
+
+
+def test_r81_parse_rejects_out_of_range_forecast() -> None:
+    env = _envelope()
+    env["hormone_response_i_predict"] = {"dopamine": 1.5}
+    with pytest.raises(_R79ParseError):
+        _r79_parse(_json.dumps(env))
+
+
+def test_r81_parse_rejects_non_object_forecast() -> None:
+    env = _envelope()
+    env["hormone_response_i_predict"] = "high dopamine"
+    with pytest.raises(_R79ParseError):
+        _r79_parse(_json.dumps(env))
+
+
+def test_r81_llm_path_publishes_forecast_on_result() -> None:
+    env = _envelope(sufficiency=0.9, wants_to_continue=False, intends_action=True)
+    env["hormone_response_i_predict"] = {"dopamine": 0.85}
+    gateway = JsonThoughtGateway(payload=env)
+    engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
+    result, _ = engine.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+    assert result.execution_status == "completed"
+    assert dict(result.hormone_response_i_predict) == {"dopamine": 0.85}
+
+
+def test_r81_forecast_does_not_change_judgment() -> None:
+    base = _envelope(sufficiency=0.9, wants_to_continue=False, intends_action=True)
+    with_forecast = dict(base)
+    with_forecast["hormone_response_i_predict"] = {"dopamine": 0.85, "cortisol": 0.2}
+
+    engine_a = InternalThoughtEngine(
+        config=_build_config(), thought_path=_structured_path(JsonThoughtGateway(payload=base))
+    )
+    engine_b = InternalThoughtEngine(
+        config=_build_config(),
+        thought_path=_structured_path(JsonThoughtGateway(payload=with_forecast)),
+    )
+    result_a, _ = engine_a.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+    result_b, _ = engine_b.run_thought_cycle(
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+    )
+    # The forecast is carried content; it must not change any judgment field.
+    assert result_a.sufficiency_level == result_b.sufficiency_level
+    assert result_a.continuation_requested == result_b.continuation_requested
+    assert (result_a.action_proposal is None) == (result_b.action_proposal is None)
+    assert result_a.hormone_response_i_predict is None
+    assert dict(result_b.hormone_response_i_predict) == {"dopamine": 0.85, "cortisol": 0.2}

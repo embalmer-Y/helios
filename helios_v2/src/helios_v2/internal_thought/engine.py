@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from helios_v2.directed_retrieval import ThoughtWindowBundle
 from helios_v2.llm import LlmGatewayAPI, LlmMessage, LlmRequest
@@ -36,6 +36,7 @@ from .contracts import (
     ThoughtActionProposalCarrier,
     ThoughtContent,
     ThoughtCycleResult,
+    _HORMONE_PREDICTION_CHANNELS,
 )
 
 # Owner-level constant: how strongly the model's self-assessed sufficiency signal moves the
@@ -107,6 +108,9 @@ class StructuredThoughtEvidence:
     action_summary: str
     intends_self_revision: bool
     self_revision_summary: str
+    # R81: optional model-supplied subjective hormone forecast (channel -> `[0, 1]`) or None. It is
+    # carried content for the `04` corroborator, never an input to this owner's judgment.
+    hormone_prediction: Mapping[str, float] | None = None
 
 
 def _require_bool(payload: dict[str, Any], key: str) -> bool:
@@ -127,6 +131,50 @@ def _optional_str(payload: dict[str, Any], key: str) -> str:
             f"Structured thought envelope field '{key}' must be a string when present"
         )
     return value.strip()
+
+
+def _optional_hormone_prediction(payload: dict[str, Any]) -> Mapping[str, float] | None:
+    """Owner: internal thought loop (R81).
+
+    Purpose:
+        Parse the optional `hormone_response_i_predict` field into an owner-neutral channel->value
+        mapping (or `None`). The model supplies it as a subjective forecast; this owner only
+        validates and bounds it, then carries it as content.
+
+    Returns:
+        A `dict` of recognized channel names to floats in `[0, 1]`, or `None` when the field is
+        absent, JSON `null`, or contains no recognized channel.
+
+    Raises:
+        StructuredThoughtParseError when present-but-not-an-object, or when a recognized channel
+        carries a non-numeric or out-of-range value (consistent with the strict parse).
+
+    Notes:
+        Unrecognized keys are ignored (forward-compatible); a provided subset is allowed. The owner
+        does not import the `04` contract; the nine channel names are a documented convention.
+    """
+
+    value = payload.get("hormone_response_i_predict")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise StructuredThoughtParseError(
+            "Structured thought envelope 'hormone_response_i_predict' must be an object or null"
+        )
+    prediction: dict[str, float] = {}
+    for channel, level in value.items():
+        if channel not in _HORMONE_PREDICTION_CHANNELS:
+            continue
+        if isinstance(level, bool) or not isinstance(level, (int, float)):
+            raise StructuredThoughtParseError(
+                f"Structured thought envelope hormone forecast '{channel}' must be numeric"
+            )
+        if level < 0.0 or level > 1.0:
+            raise StructuredThoughtParseError(
+                f"Structured thought envelope hormone forecast '{channel}' must be within [0, 1]"
+            )
+        prediction[channel] = float(level)
+    return prediction or None
 
 
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
@@ -249,6 +297,8 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
     )
     self_revision_summary = _optional_str(revision_payload, "summary") if revision_payload else ""
 
+    hormone_prediction = _optional_hormone_prediction(payload)
+
     return StructuredThoughtEvidence(
         thought_text=thought_value.strip(),
         model_sufficiency=float(sufficiency_value),
@@ -258,6 +308,7 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
         action_summary=action_summary,
         intends_self_revision=intends_self_revision,
         self_revision_summary=self_revision_summary,
+        hormone_prediction=hormone_prediction,
     )
 
 
@@ -279,6 +330,9 @@ class _ThoughtJudgment:
     memory_handoff: MemoryHandoffDirective | None
     action_proposal: ThoughtActionProposalCarrier | None
     self_revision_proposal: SelfRevisionProposalCarrier | None
+    # R81: carried model hormone forecast (None for the deterministic path); pass-through content,
+    # not a judgment input.
+    hormone_prediction: Mapping[str, float] | None = None
 
 
 def _derive_thought_judgment(
@@ -420,6 +474,7 @@ def _derive_thought_judgment(
         memory_handoff=memory_handoff,
         action_proposal=action_proposal,
         self_revision_proposal=self_revision_proposal,
+        hormone_prediction=(evidence.hormone_prediction if evidence is not None else None),
     )
 
 
@@ -446,6 +501,7 @@ def _assemble_completed_result(
         action_proposal=judgment.action_proposal,
         self_revision_proposal=judgment.self_revision_proposal,
         tick_id=request.tick_id,
+        hormone_response_i_predict=judgment.hormone_prediction,
     )
 
 
@@ -674,6 +730,10 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
             '  "self_revision": {"intends_revision": <true if your self-model should change>, "summary": "<optional>"}',
             "}",
             "Set wants_to_continue to false and intends_action to false when no action is warranted.",
+            "You may optionally add a 'hormone_response_i_predict' field: an object forecasting your "
+            "own neuromodulator response, with any of these keys set to a number 0..1 - "
+            "dopamine, norepinephrine, serotonin, acetylcholine, cortisol, oxytocin, opioid_tone, "
+            "excitation, inhibition. Omit it or set it to null if you have no such sense.",
         ]
         system_message = LlmMessage(role="system", content="\n".join(system_lines))
 

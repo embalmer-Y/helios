@@ -22,6 +22,13 @@ from .contracts import (
     PublishNeuromodulatorStateOp,
     UpdateNeuromodulatorsOp,
 )
+from .corroborator import (
+    HORMONE_CORROBORATION_VERDICTS,
+    CorroborationBiasedNeuromodulatorUpdatePath,
+    HormoneCorroborationOutcome,
+    HormonePredictCorroborator,
+    HormonePredictionSource,
+)
 from .engine import (
     ActiveChannelReporter,
     AppraisalDerivedNeuromodulatorUpdatePath,
@@ -33,8 +40,13 @@ from .engine import (
 __all__ = [
     "ActiveChannelReporter",
     "AppraisalDerivedNeuromodulatorUpdatePath",
+    "CorroborationBiasedNeuromodulatorUpdatePath",
     "DecayFamily",
     "DualTimescaleNeuromodulatorUpdatePath",
+    "HORMONE_CORROBORATION_VERDICTS",
+    "HormoneCorroborationOutcome",
+    "HormonePredictCorroborator",
+    "HormonePredictionSource",
     "LearnedParameterCategory",
     "NeuromodulatorConfig",
     "NeuromodulatorEngine",

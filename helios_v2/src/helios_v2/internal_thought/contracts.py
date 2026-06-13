@@ -51,6 +51,22 @@ _THOUGHT_EXECUTION_STATUSES = {
 }
 _ACTION_PROPOSAL_SCOPES = {"internal", "external"}
 
+# R81: the nine neuromodulator channel names the model may forecast in `hormone_response_i_predict`.
+# Owner-local convention (a documented mirror of the `04` `NeuromodulatorLevels` shape); `11` keeps
+# the forecast an owner-neutral channel->value mapping and imports no `04` contract, so the affect
+# owner stays upstream-independent of the thought owner.
+_HORMONE_PREDICTION_CHANNELS = (
+    "dopamine",
+    "norepinephrine",
+    "serotonin",
+    "acetylcholine",
+    "cortisol",
+    "oxytocin",
+    "opioid_tone",
+    "excitation",
+    "inhibition",
+)
+
 
 @dataclass(frozen=True)
 class InternalThoughtConfig:
@@ -278,6 +294,10 @@ class ThoughtCycleResult:
     action_proposal: ThoughtActionProposalCarrier | None
     self_revision_proposal: SelfRevisionProposalCarrier | None
     tick_id: int | None
+    # R81: optional model-supplied subjective hormone forecast (channel name -> `[0, 1]`), carried
+    # to the next tick's `04` corroborator. Model-supplied content, never an owner judgment; it
+    # changes no sufficiency/continuation/recall/proposal decision.
+    hormone_response_i_predict: Mapping[str, float] | None = None
 
     def __post_init__(self) -> None:
         if not self.result_id:
@@ -293,6 +313,7 @@ class ThoughtCycleResult:
             "ThoughtCycleResult.continuation_pressure_delta",
             self.continuation_pressure_delta,
         )
+        self._validate_hormone_prediction()
         if self.execution_status == "completed":
             if self.thought is None:
                 raise InternalThoughtError(
@@ -320,6 +341,40 @@ class ThoughtCycleResult:
                 raise InternalThoughtError(
                     "MemoryHandoffDirective must preserve the source thought id of the published ThoughtContent"
                 )
+
+    def _validate_hormone_prediction(self) -> None:
+        """Owner: internal thought loop (R81). Validate/normalize the optional hormone forecast.
+
+        `None` is allowed (no forecast). When present it must be a mapping whose recognized channel
+        keys (`_HORMONE_PREDICTION_CHANNELS`) carry numeric `[0, 1]` values; unrecognized keys are
+        rejected so the forecast cannot smuggle arbitrary content. The normalized forecast is frozen
+        as a `MappingProxyType`. It is model-supplied content carried to `04`; it is not validated as
+        an owner decision.
+        """
+
+        forecast = self.hormone_response_i_predict
+        if forecast is None:
+            return
+        if not isinstance(forecast, Mapping):
+            raise InternalThoughtError(
+                "ThoughtCycleResult.hormone_response_i_predict must be a mapping or None"
+            )
+        normalized: dict[str, float] = {}
+        for key, value in forecast.items():
+            if key not in _HORMONE_PREDICTION_CHANNELS:
+                raise InternalThoughtError(
+                    f"ThoughtCycleResult.hormone_response_i_predict has unknown channel '{key}'"
+                )
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise InternalThoughtError(
+                    f"ThoughtCycleResult.hormone_response_i_predict['{key}'] must be numeric"
+                )
+            if value < 0.0 or value > 1.0:
+                raise InternalThoughtError(
+                    f"ThoughtCycleResult.hormone_response_i_predict['{key}'] must be within [0, 1]"
+                )
+            normalized[key] = float(value)
+        object.__setattr__(self, "hormone_response_i_predict", MappingProxyType(normalized))
 
 
 @dataclass(frozen=True)

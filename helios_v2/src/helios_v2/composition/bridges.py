@@ -25,7 +25,7 @@ the final owner policy; later owner-deepening waves replace them through the own
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Mapping
 
 from helios_v2.appraisal.engine import (
     AggregateJudgmentEstimator,
@@ -1610,6 +1610,41 @@ class PriorDriveUrgencyHolder:
         """Owner: composition. Return the carried prior-tick drive urgency (bounded)."""
 
         return self.urgency
+
+
+@dataclass
+class PriorHormonePredictionHolder:
+    """Owner: composition (R81).
+
+    Purpose:
+        Carry the prior tick's `11` model hormone forecast forward into the next tick's `04`
+        corroborator, since `04` runs before `11` (a forecast made while thinking in tick N can only
+        bias tick N+1's drive). Mirrors the R49 recall-directive / R62 drive-urgency carry seams.
+
+    Notes:
+        Owner-neutral carry. It transports the `11`-owned forecast (a channel->value mapping) verbatim
+        and computes no neuromodulation. It structurally satisfies the `04`-owned
+        `HormonePredictionSource` protocol (`current_prediction`), so it is injected directly into the
+        `04` corroboration path. `current_prediction()` returns `None` until the first forecast exists
+        and after any tick that published none.
+    """
+
+    prediction: "Mapping[str, float] | None" = None
+
+    def set_prediction(self, prediction: "Mapping[str, float] | None") -> None:
+        """Owner: composition. Store the prior tick's `11` hormone forecast (or clear it)."""
+
+        self.prediction = dict(prediction) if prediction else None
+
+    def clear(self) -> None:
+        """Owner: composition. Clear the carry (no forecast for the next tick's `04`)."""
+
+        self.prediction = None
+
+    def current_prediction(self) -> "Mapping[str, float] | None":
+        """Owner: composition. Return the carried prior-tick forecast (or `None`)."""
+
+        return self.prediction
 
 
 # R63: documented cold-start fallback values for the `09` gate's `selected_stimuli` projection.

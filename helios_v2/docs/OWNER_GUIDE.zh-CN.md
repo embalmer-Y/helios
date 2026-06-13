@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R80。测试基线：861 passed（离线）。
+> 状态：活文档（owner 参考）。最近同步：R81。测试基线：881 passed（离线）。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -84,7 +84,7 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 完成度：`baseline_real`（语义记忆装配下水平已由 appraisal 推导,并自 R43 起经双时间尺度动力学跨 tick 演化、跨重启续存）。
 - 职责：独立建模的神经调质水平状态（DA/NE/5-HT/ACh/皮质醇/催产素/阿片 + 兴奋/抑制），含显式可学习参数类别。不拥有体感主观化或行动。
 - 在循环中的作用：应当偏置门控阈值、检索、外化强度的调制层。
-- 完成度细节：`36`（P3 第二刀去 shim）在语义记忆装配下把常量更新路径替换为 `04` owner 拥有的 `AppraisalDerivedNeuromodulatorUpdatePath`（遵循 owner 既有的 `NeuromodulatorUpdatePath` 协议；引擎与契约不变）。**R56 起该路径由 composition 回迁到 `04` owner 包 `helios_v2.neuromodulation`**：哪个显著性驱动哪个神经调质通道、强度多少，是 `04` 的本职认知策略，此前误置于 assembly-only 的 composition 胶水里（违反 §4.5 / §3.2），现已收回 owner，composition 只构造/注入/包裹它（行为字节级不变，纯回迁）。它先对 rapid-appraisal 批次按维度取最大聚合，再按 `clamp(tonic_baseline + sum(sensitivity_k * salience_k), legal_min, legal_max)` 推导每个通道的**瞬时 drive**：多巴胺由 reward（外加弱 novelty）驱动、去甲肾上腺素由 novelty 与 uncertainty 驱动、皮质醇由 threat 驱动，其余通道回归各自 tonic 基线。`43`（P2/P3 铰链）在此之上加了**双时间尺度动力学**：语义装配下 update path 换成 owner 持有的 `DualTimescaleNeuromodulatorUpdatePath`（包裹上面的 drive path）,每通道 `next = clamp(prior + alpha_phasic*(drive-prior) + alpha_tonic*(baseline-prior))`（相位快、张力慢,`0 < alpha_tonic < alpha_phasic <= 1`,挂 `decay_speed_persistence` 类别,P5 可学）。瞬时 drive 与跨 tick carry/衰减现已同处 `04` owner 包。`NeuromodulatorUpdatePath`/`update_state` 加可选 `prior_levels`/`prior_state`（默认 None 字节级复刻无状态）;`NeuromodulatorRuntimeStage` 像 09/18 持有上一 tick 状态并提供 `seed_prior_state`。冷启动 prior=tonic baseline（一步,无伪造历史）;积分器有界;不稳定 alpha 构造期被拒。`04` 状态经 R42 检查点（快照升 v2 加 `neuromodulator_levels`）跨重启续存。默认、纯时近、离线装配保留无状态常量路径。**R80（四通道补全）**：5-HT/Oxy/Opioid/ACh 此前恒定 tonic baseline，现由 `03` salience 派生真实 drive（5-HT←social×(1−threat)、Oxy←social、Opioid←reward+social、ACh←novelty；`C_engineering_hypothesis` grounding，brain.mmd 功能类比非校准，系数挂 `channel_gain_sensitivity` P5 可学；excitation/inhibition 仍留 baseline；映射归 `04` owner 只读 salience）。语义装配下情感系统从 3 通道扩到 7 通道 appraisal-responsive，拓宽 `05` 体感广度（FG-2）；R43 双时标 wrapper 自动 carry 这 4 通道。
+- 完成度细节：`36`（P3 第二刀去 shim）在语义记忆装配下把常量更新路径替换为 `04` owner 拥有的 `AppraisalDerivedNeuromodulatorUpdatePath`（遵循 owner 既有的 `NeuromodulatorUpdatePath` 协议；引擎与契约不变）。**R56 起该路径由 composition 回迁到 `04` owner 包 `helios_v2.neuromodulation`**：哪个显著性驱动哪个神经调质通道、强度多少，是 `04` 的本职认知策略，此前误置于 assembly-only 的 composition 胶水里（违反 §4.5 / §3.2），现已收回 owner，composition 只构造/注入/包裹它（行为字节级不变，纯回迁）。它先对 rapid-appraisal 批次按维度取最大聚合，再按 `clamp(tonic_baseline + sum(sensitivity_k * salience_k), legal_min, legal_max)` 推导每个通道的**瞬时 drive**：多巴胺由 reward（外加弱 novelty）驱动、去甲肾上腺素由 novelty 与 uncertainty 驱动、皮质醇由 threat 驱动，其余通道回归各自 tonic 基线。`43`（P2/P3 铰链）在此之上加了**双时间尺度动力学**：语义装配下 update path 换成 owner 持有的 `DualTimescaleNeuromodulatorUpdatePath`（包裹上面的 drive path）,每通道 `next = clamp(prior + alpha_phasic*(drive-prior) + alpha_tonic*(baseline-prior))`（相位快、张力慢,`0 < alpha_tonic < alpha_phasic <= 1`,挂 `decay_speed_persistence` 类别,P5 可学）。瞬时 drive 与跨 tick carry/衰减现已同处 `04` owner 包。`NeuromodulatorUpdatePath`/`update_state` 加可选 `prior_levels`/`prior_state`（默认 None 字节级复刻无状态）;`NeuromodulatorRuntimeStage` 像 09/18 持有上一 tick 状态并提供 `seed_prior_state`。冷启动 prior=tonic baseline（一步,无伪造历史）;积分器有界;不稳定 alpha 构造期被拒。`04` 状态经 R42 检查点（快照升 v2 加 `neuromodulator_levels`）跨重启续存。默认、纯时近、离线装配保留无状态常量路径。**R80（四通道补全）**：5-HT/Oxy/Opioid/ACh 此前恒定 tonic baseline，现由 `03` salience 派生真实 drive（5-HT←social×(1−threat)、Oxy←social、Opioid←reward+social、ACh←novelty；`C_engineering_hypothesis` grounding，brain.mmd 功能类比非校准，系数挂 `channel_gain_sensitivity` P5 可学；excitation/inhibition 仍留 baseline；映射归 `04` owner 只读 salience）。语义装配下情感系统从 3 通道扩到 7 通道 appraisal-responsive，拓宽 `05` 体感广度（FG-2）；R43 双时标 wrapper 自动 carry 这 4 通道。**R81（激素预测对账）**：项目内首条"模型断言 + owner 对账"路径（`C_engineering_hypothesis` 预测误差类比，P5 学习雏形）。`11` 可在结构化思考输出里主观断言 9 通道 `hormone_response_i_predict` 预测（可 null），经 owner-neutral 的 `PriorHormonePredictionHolder` carry 到下一 tick 的 `04`（因 `04` 在 `11` 之前跑）。`04` 新增 `helios_v2.neuromodulation.corroborator` 的 `HormonePredictCorroborator`：逐通道把 carry 来的预测与同 tick R80 公式 drive 做三态对账（corroborate/conflict/silent），**仅在方向一致（corroborate）时**施加有界 clamp 偏置 `drive + gain*(预测−drive)`——模型只能在公式已认同的方向上微调幅度，绝不能否决或反向覆盖 owner 计算（§14 内容/判断分离）。`CorroborationBiasedNeuromodulatorUpdatePath` 嵌在 R43 双时标 wrapper 内，偏置与 drive 同层被双时标平滑。新增 `hormone_predict_coupling` 学习参数类别（coupling gain + agreement deadzone，P5 可学）。挂同一语义 opt-in；预测缺席时（fake provider 不发）corroborator 字节级复刻 R80 drive，故默认/离线与既有语义装配 level 断言不变。
 - 下一步：（1）✅ 双时间尺度 tonic/phasic 衰减携带上一 tick 水平 + 跨重启续存——**R43 已交付**；（2）`P5` 用奖励预测误差（DA）与结果反馈学习有界 sensitivity/alpha 系数，保持方程形状；（3）跨通道耦合（已声明的 `cross_channel_coupling_strength` 类别），超越首版独立映射；（4）下游耦合——`04` 的两个消费者现已都真实：去甲肾上腺素耦合进 `09` 门控（`37`），完整 `04` 状态驱动 `05` 体感（`38`）；仍待：cortisol/inhibition 硬门控进 `09`、以及其余通道（多巴胺→检索/探索）进各自消费者（FG-1/FG-2）；（5）给 `03` 其余四维去 shim，使所有神经调质驱动皆为真实。
 
 ### 2.5 `05` 内感受体感层 — `helios_v2.feeling`
@@ -135,6 +135,7 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 在循环中的作用：把承诺状态 + 检索 + 能力边界格式化成思考 owner 与外化 owner 消费的契约。
 - 下一步：保持其为契约 formatter（绝不变成 reply-first 行为 owner）；随真实上游信号到来丰富层。仅深化。
 - R79（v3 owner-grounded，默认）：新增 `OwnerGroundedEmbodiedPromptPath`（默认 `embodied_prompt_mode="v3"`，`"v1"` 为 legacy escape hatch）。身份框架从 `14` 上一 tick `identity_state_snapshot` 渲染（**不硬编码**"你是人/不是AI"），自然语言 11 字段 + focused/peripheral/filtered 注意力场 + ready_channels + 升级反表演（只表达状态支撑、不自指 AI）。身份归 `14`，prompt 仍是 formatter。
+- R81（第 12 字段）：v3 response_schema 增加可选第 12 字段 `hormone_response_i_predict`（9 通道→`[0,1]` 的可空对象，模型可省略/null）。纯 schema 文本增补，无契约字段变更；实际解析与对账见 `11`（2.14）与 `04`（2.4）。
 
 ### 2.12 `16` 外化表达草稿 — `helios_v2.outward_expression`
 - 完成度：`baseline_real`（设计上仅草稿）。
@@ -154,6 +155,7 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 在循环中的作用：认知核心——经 `25` LLM 网关用中性结构化请求取思考内容，并解析成 owner 拥有的判断。
 - 下一步：更强的充分性/延续/后果收口；随 P3 去 shim 落地更紧地耦合真实上游信号。这是最成熟的认知 owner。
 - R79（解析鲁棒化）：`_parse_structured_thought` 解析前 strip `<think>` 块 + markdown 围栏（reasoning 模型输出可解析），thought profile `max_tokens`→2048 避免 reasoning 截断；提取后无 JSON → 显式 `insufficient_generation`（不虚构）。干净 JSON 恒等，无回归。
+- R81（激素预测字段）：`_parse_structured_thought` 放过可选 `hormone_response_i_predict`（9 通道→`[0,1]` 的可空 dict；缺省/null→无预测，越界/类型错→parse error，未知键忽略），存入 `StructuredThoughtEvidence.hormone_prediction` 并经判断助手透传到 `ThoughtCycleResult.hormone_response_i_predict`。这是模型供给的**内容**，绝不改充分性/延续/提议判断；由 owner-neutral carry 送往下一 tick 的 `04`（见 2.4）。`11` 不 import `04` 的 `NeuromodulatorLevels`（9 通道名是文档化约定）。
 
 ### 2.15 `12` 行动提议与外化契约 — `helios_v2.action_externalization`
 - 完成度：`baseline_real`。

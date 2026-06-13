@@ -163,10 +163,14 @@ _V3_RESPONSE_SCHEMA = (
     "Respond with a single JSON object with exactly these keys: "
     "what_i_feel, what_i_think, i_want_to_say, i_will_send_it, i_send_through, "
     "i_want_to_act, act_type, remember_this, remember_because, i_want_to_think_more, "
-    "think_more_about. Hard rules: i_will_send_it is true only if i_want_to_say is not null; "
+    "think_more_about. You may optionally add hormone_response_i_predict: a nullable object "
+    "forecasting your own neuromodulator response, with any of these keys set to a number 0..1 - "
+    "dopamine, norepinephrine, serotonin, acetylcholine, cortisol, oxytocin, opioid_tone, "
+    "excitation, inhibition (omit it or set it to null if you have no such sense). "
+    "Hard rules: i_will_send_it is true only if i_want_to_say is not null; "
     "i_send_through is non-null only if i_will_send_it is true and only one of the ready channels; "
     "remember_because is non-null only if remember_this is true; think_more_about is non-null "
-    "only if i_want_to_think_more is true."
+    "only if i_want_to_think_more is true; hormone_response_i_predict is optional and may be null."
 )
 
 _V3_ANTI_THEATRICAL = (

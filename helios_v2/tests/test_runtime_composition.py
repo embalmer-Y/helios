@@ -3431,3 +3431,61 @@ def test_v3_identity_grounding_is_owner_sourced_not_hardcoded() -> None:
 def test_invalid_embodied_prompt_mode_is_composition_error() -> None:
     with pytest.raises(CompositionError):
         _assemble(embodied_prompt_mode="v2")
+
+
+# --- Requirement 81: hormone-predict corroboration wiring + cross-tick carry seam ---
+
+
+def test_r81_semantic_assembly_wires_hormone_prediction_holder() -> None:
+    # The corroboration carry holder exists under the semantic assembly (store + embedding
+    # injected), and is absent under the legacy-constant assembly.
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    semantic = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    assert semantic.hormone_prediction_holder is not None
+
+    legacy = _assemble()  # default_signal_mode == legacy_constant, no store/embedding
+    assert legacy.hormone_prediction_holder is None
+
+
+def test_r81_carry_populates_holder_from_thought_forecast() -> None:
+    # The owner-neutral carry reads the `11` result's published forecast and stores it for the
+    # next tick's `04`. Duck-typed result avoids coupling to whether the semantic gate fired.
+    from types import SimpleNamespace
+
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+
+    fired = SimpleNamespace(
+        stage_results={
+            "internal_thought_loop_owner": SimpleNamespace(
+                result=SimpleNamespace(hormone_response_i_predict={"dopamine": 0.8})
+            )
+        }
+    )
+    handle._carry_hormone_prediction(fired)
+    assert handle.hormone_prediction_holder.current_prediction() == {"dopamine": 0.8}
+
+
+def test_r81_carry_clears_holder_on_no_forecast_and_no_fire() -> None:
+    from types import SimpleNamespace
+
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(experience_store=store, embedding_gateway=_embedding_gateway())
+    handle.hormone_prediction_holder.set_prediction({"dopamine": 0.5})
+
+    # A fired tick that published no forecast clears the carry.
+    no_forecast = SimpleNamespace(
+        stage_results={
+            "internal_thought_loop_owner": SimpleNamespace(
+                result=SimpleNamespace(hormone_response_i_predict=None)
+            )
+        }
+    )
+    handle._carry_hormone_prediction(no_forecast)
+    assert handle.hormone_prediction_holder.current_prediction() is None
+
+    # A non-fired tick (no `11` result) also clears the carry.
+    handle.hormone_prediction_holder.set_prediction({"dopamine": 0.5})
+    no_fire = SimpleNamespace(stage_results={})
+    handle._carry_hormone_prediction(no_fire)
+    assert handle.hormone_prediction_holder.current_prediction() is None

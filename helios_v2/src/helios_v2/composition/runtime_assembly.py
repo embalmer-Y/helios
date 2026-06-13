@@ -73,7 +73,9 @@ from helios_v2.memory import (
 )
 from helios_v2.neuromodulation import (
     AppraisalDerivedNeuromodulatorUpdatePath,
+    CorroborationBiasedNeuromodulatorUpdatePath,
     DualTimescaleNeuromodulatorUpdatePath,
+    HormonePredictCorroborator,
     NeuromodulatorConfig,
     NeuromodulatorEngine,
     NeuromodulatorLevels,
@@ -205,6 +207,7 @@ from .bridges import (
     FirstVersionWorkspaceCompetitionPath,
     PriorThoughtRecallHolder,
     PriorDriveUrgencyHolder,
+    PriorHormonePredictionHolder,
     ThoughtDirectedRetrievalRequestBridge,
     EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
@@ -396,6 +399,7 @@ def default_composition_config() -> CompositionConfig:
                 "cross_channel_coupling_strength",
                 "decay_speed_persistence",
                 "gate_influence_strength",
+                "hormone_predict_coupling",
             ),
         ),
         feeling=InteroceptiveFeelingConfig(
@@ -592,6 +596,7 @@ class RuntimeHandle:
     memory_record_bridge: "MemoryRecordBridge | None" = None
     prior_thought_recall_holder: "PriorThoughtRecallHolder | None" = None
     drive_urgency_holder: "PriorDriveUrgencyHolder | None" = None
+    hormone_prediction_holder: "PriorHormonePredictionHolder | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     temporal_source: "TemporalSource | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
@@ -659,6 +664,7 @@ class RuntimeHandle:
         self._carry_recall_directive(result)
         self._carry_temporal(result)
         self._carry_drive_urgency(result)
+        self._carry_hormone_prediction(result)
         self._persist_experience(result)
         self._persist_memory(result)
         self._checkpoint_continuity(result)
@@ -760,6 +766,28 @@ class RuntimeHandle:
         drive_state = getattr(autonomy_result, "drive_state", None)
         if drive_state is not None:
             self.drive_urgency_holder.set_from_drive_state(drive_state)
+
+    def _carry_hormone_prediction(self, result: RuntimeTickResult) -> None:
+        """Capture the just-completed tick's `11` hormone forecast for the next tick's `04` (R81).
+
+        Owner-neutral carry: it reads the `11` internal-thought stage result's published
+        `hormone_response_i_predict` and stores it in the holder, so the next tick's `04`
+        corroborator checks the model's prior-tick forecast against that tick's formula drive (since
+        `04` runs before `11`). When the gate did not fire (no `11` result) or no forecast was
+        published, the holder is cleared so the next tick's `04` sees no forecast (silent). It
+        transports the `11`-owned forecast verbatim and computes no neuromodulation. A no-op when no
+        holder is wired (non-semantic assembly).
+        """
+
+        if self.hormone_prediction_holder is None:
+            return
+        stage_result = result.stage_results.get("internal_thought_loop_owner")
+        cycle_result = getattr(stage_result, "result", None)
+        forecast = getattr(cycle_result, "hormone_response_i_predict", None)
+        if forecast:
+            self.hormone_prediction_holder.set_prediction(forecast)
+        else:
+            self.hormone_prediction_holder.clear()
 
     def _persist_experience(self, result: RuntimeTickResult) -> None:
         """Durably append the just-completed tick's `15` continuity records when enabled.
@@ -1356,15 +1384,25 @@ def assemble_runtime(
         dimension_estimator=dimension_estimator,
         aggregate_estimator=aggregate_estimator,
     )
-    # `04` neuromodulation de-shim (R36) + dual-timescale dynamics (R43): when enabled, levels are
-    # derived from the real appraisal batch (R36 instantaneous drive) and then evolved across ticks
-    # by an owner-owned dual-timescale leaky-integrator that carries the prior-tick state (R43).
-    # When off, the constant first-version update path is unchanged (stateless).
+    # `04` neuromodulation de-shim (R36) + dual-timescale dynamics (R43) + hormone-predict
+    # corroboration (R81): when enabled, levels are derived from the real appraisal batch (R36
+    # instantaneous drive), then biased by the prior-tick model hormone forecast on directional
+    # agreement (R81 corroboration, owner-judged and bounded), then evolved across ticks by the
+    # owner-owned dual-timescale leaky-integrator (R43). The corroboration holder is owner-neutral
+    # and is `None` (a no-op) until the model actually forecasts. When off, the constant
+    # first-version update path is unchanged (stateless).
+    hormone_prediction_holder = (
+        PriorHormonePredictionHolder() if semantic_memory_enabled else None
+    )
     neuromodulator = NeuromodulatorEngine(
         config=resolved_config.neuromodulator,
         update_path=(
             DualTimescaleNeuromodulatorUpdatePath(
-                drive_path=AppraisalDerivedNeuromodulatorUpdatePath()
+                drive_path=CorroborationBiasedNeuromodulatorUpdatePath(
+                    drive_path=AppraisalDerivedNeuromodulatorUpdatePath(),
+                    prediction_source=hormone_prediction_holder,
+                    corroborator=HormonePredictCorroborator(),
+                )
             )
             if semantic_memory_enabled
             else FirstVersionNeuromodulatorUpdatePath()
@@ -1736,6 +1774,7 @@ def assemble_runtime(
         ),
         prior_thought_recall_holder=prior_thought_recall_holder,
         drive_urgency_holder=drive_urgency_holder,
+        hormone_prediction_holder=hormone_prediction_holder,
         embed_record=_embed_text if embedding_gateway is not None else None,
         temporal_source=temporal_source,
         continuity_checkpoint=continuity_checkpoint,

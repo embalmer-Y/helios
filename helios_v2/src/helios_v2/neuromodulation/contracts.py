@@ -29,6 +29,10 @@ LearnedParameterCategory = Literal[
     "cross_channel_coupling_strength",
     "decay_speed_persistence",
     "gate_influence_strength",
+    # R81: the bounded coupling gain (and agreement deadzone) by which a corroborated model
+    # hormone forecast biases the formula drive. A distinct learnable surface from the channel
+    # gains, so P5 can tune the forecast-corroboration coupling independently.
+    "hormone_predict_coupling",
 ]
 
 DecayFamily = Literal["dual_timescale_tonic_phasic"]
@@ -91,6 +95,7 @@ class NeuromodulatorConfig:
             "cross_channel_coupling_strength",
             "decay_speed_persistence",
             "gate_influence_strength",
+            "hormone_predict_coupling",
         }
         if set(self.mandatory_learned_parameters) != expected_learned_parameters:
             raise NeuromodulatorError(
