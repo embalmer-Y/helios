@@ -8,7 +8,9 @@ runtime (the durable-but-repeatable production-shaped assembly with a determinis
 
 from __future__ import annotations
 
+import json
 import math
+import time
 import tracemalloc
 from dataclasses import dataclass, field
 from typing import Mapping
@@ -89,6 +91,10 @@ class LongRunConfig:
     ticks: int
     sample_every: int = 0  # 0 -> auto (about 50 evenly-spaced samples)
     memory_ceiling_mb: float = 500.0
+    # Opt-in: stream one JSON object per sampled tick to this path (the shared trace substrate a
+    # later drift evaluator / turing harness reuses). Each line carries tick, tick_duration_ms,
+    # store_count, memory_mb, and the owner fields. `None` writes no file.
+    jsonl_path: str | None = None
 
     def resolved_sample_every(self) -> int:
         if self.sample_every > 0:
@@ -266,22 +272,38 @@ def run_long_run(handle, config: LongRunConfig) -> LongRunReport:
     start_current, _ = tracemalloc.get_traced_memory()
     report.memory_start_mb = start_current / (1024 * 1024)
 
-    for tick_index in range(config.ticks):
-        try:
-            result = handle.tick()
-        except Exception as error:  # noqa: BLE001 - a per-tick crash is the headline fact
-            report.crash = f"tick {tick_index}: {type(error).__name__}: {error}"
-            break
-        report.ticks_completed += 1
-        fields = _extract_fields(result)
-        for name, value in fields.items():
-            stat = report.field_stats.get(name)
-            if stat is not None:
-                stat.observe(value)
-        if tick_index % sample_every == 0:
-            sample = {"tick": float(tick_index)}
-            sample.update(fields)
-            report.evolution_samples.append(sample)
+    jsonl_file = open(config.jsonl_path, "w", encoding="utf-8") if config.jsonl_path else None
+    try:
+        for tick_index in range(config.ticks):
+            tick_started = time.perf_counter()
+            try:
+                result = handle.tick()
+            except Exception as error:  # noqa: BLE001 - a per-tick crash is the headline fact
+                report.crash = f"tick {tick_index}: {type(error).__name__}: {error}"
+                break
+            tick_duration_ms = (time.perf_counter() - tick_started) * 1000.0
+            report.ticks_completed += 1
+            fields = _extract_fields(result)
+            for name, value in fields.items():
+                stat = report.field_stats.get(name)
+                if stat is not None:
+                    stat.observe(value)
+            if tick_index % sample_every == 0:
+                current_mem, _peak = tracemalloc.get_traced_memory()
+                sample = {
+                    "tick": float(tick_index),
+                    "tick_duration_ms": round(tick_duration_ms, 4),
+                    "store_count": float(_store_count(handle)),
+                    "memory_mb": round(current_mem / (1024 * 1024), 4),
+                }
+                sample.update(fields)
+                report.evolution_samples.append(sample)
+                if jsonl_file is not None:
+                    jsonl_file.write(json.dumps(sample) + "\n")
+                    jsonl_file.flush()
+    finally:
+        if jsonl_file is not None:
+            jsonl_file.close()
 
     current, peak = tracemalloc.get_traced_memory()
     report.memory_end_mb = current / (1024 * 1024)

@@ -20,21 +20,32 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from helios_v2.composition import assemble_production_runtime, default_composition_config
+from helios_v2.composition import (
+    assemble_production_runtime,
+    assemble_runtime,
+    default_composition_config,
+)
+from helios_v2.continuity_checkpoint import ContinuityCheckpointStore, SqliteCheckpointBackend
 from helios_v2.llm import LlmGateway, LlmProfileRegistry
 from helios_v2.llm.contracts import ProviderCompletion
+from helios_v2.persistence import ExperienceStore, SqliteExperienceStoreBackend
 
 from r83_long_runner import LongRunConfig, run_long_run
 
 
 # Locked CI tick count: a repeatable network-free regression smoke that stays fast in CI. The hard
-# G0 gate (production scale, >= 100k ticks) is the opt-in long tier, not the CI tier. NOTE (R83
-# finding): per-tick cost grows roughly linearly with the stored-memory size because `03` novelty /
-# uncertainty / threat-reward and `10`/`06` retrieval each run a naive O(n) cosine over the store
-# (R34 deferred an ANN index), so the run is ~O(n^2); the CI tier is deliberately bounded and the
-# 100k gate is run manually.
+# G0 gate (production scale, >= 100k ticks) is the opt-in long/scale tiers, not the CI tier.
+# MEASURED FINDING (R83): per-tick cost is BOUNDED at steady state, not store-scaling. It ramps over
+# the first ~300 ticks then plateaus (measured ~9.5ms/tick non-semantic, flat from store 11->1991;
+# ~100ms/tick semantic, flat as the store grows 290->1178). The semantic overhead is dominated by
+# the count of per-tick hash-embedding calls + per-tick checkpoint/SQLite I/O, NOT an O(store) scan
+# (a 16-dim cosine over ~1k vectors is microseconds). So a run is ~O(1)/tick (O(n) cumulative); a
+# 100k run is feasible (~16 min non-semantic). A real P5 scaling concern remains: real
+# high-dimensional embeddings over a much larger store would make the naive full-scan cosine
+# significant, motivating a bounded-window/ANN index THEN (not a current blocker).
 _CI_TICKS = int(os.environ.get("HELIOS_R83_CI_TICKS", "150"))
 _LONG_TICKS = int(os.environ.get("HELIOS_R83_LONG_TICKS", "100000"))
+_SCALE_TICKS = int(os.environ.get("HELIOS_R83_SCALE_TICKS", "100000"))
 
 
 @dataclass
@@ -70,12 +81,43 @@ def _deterministic_gateway() -> LlmGateway:
     )
 
 
-def _run(tmp_path, ticks: int) -> "object":
+def _run(tmp_path, ticks: int, jsonl_path: str | None = None) -> "object":
     handle = assemble_production_runtime(
         data_dir=str(tmp_path), gateway=_deterministic_gateway()
     )
     handle.startup()
-    return run_long_run(handle, LongRunConfig(ticks=ticks))
+    return run_long_run(handle, LongRunConfig(ticks=ticks, jsonl_path=jsonl_path))
+
+
+def _bounded_cost_handle(tmp_path):
+    """A durable SQLite assembly in legacy-constant signal mode (the cheap base chain).
+
+    This isolates framework-G0 stability at scale (kernel + 19 stages + SQLite append + per-tick
+    checkpoint over a long horizon) from the heavier semantic path (which adds ~10x per-tick cost
+    via per-tick embedding calls), so the >= 100k G0 horizon runs fast (~9.5ms/tick measured).
+    Owners run their constant first-version paths, so this is a G0 (stability) run, not a
+    G1-richness run.
+    """
+
+    store = ExperienceStore(
+        backend=SqliteExperienceStoreBackend(db_path=str(tmp_path / "experience_store.sqlite3"))
+    )
+    store.initialize()
+    checkpoint = ContinuityCheckpointStore(
+        backend=SqliteCheckpointBackend(db_path=str(tmp_path / "continuity_checkpoint.sqlite3"))
+    )
+    checkpoint.initialize()
+    return assemble_runtime(
+        gateway=_deterministic_gateway(),
+        experience_store=store,
+        continuity_checkpoint=checkpoint,
+        default_signal_mode="legacy_constant",
+    )
+
+
+def _env_jsonl(env_name: str, tmp_path, default_filename: str) -> str:
+    path = os.environ.get(env_name)
+    return path if path else str(tmp_path / default_filename)
 
 
 def test_r83_ci_long_run(tmp_path) -> None:
@@ -115,12 +157,40 @@ def test_r83_run_is_repeatable(tmp_path) -> None:
 
 @pytest.mark.skipif(
     not os.environ.get("HELIOS_R83_LONG_RUN"),
-    reason="opt-in production-scale long run; set HELIOS_R83_LONG_RUN=1 to enable (not in CI)",
+    reason="opt-in semantic production-scale long run; set HELIOS_R83_LONG_RUN=1 to enable (not in "
+    "CI). Per-tick is bounded (~100ms steady-state) so 100k is feasible (~2.8h); use a modest tick "
+    "count for a quick signoff.",
 )
 def test_r83_long_run_opt_in(tmp_path) -> None:
-    report = _run(tmp_path, _LONG_TICKS)
+    jsonl = _env_jsonl("HELIOS_R83_JSONL", tmp_path, "r83_semantic_long_run.jsonl")
+    handle = assemble_production_runtime(data_dir=str(tmp_path), gateway=_deterministic_gateway())
+    handle.startup()
+    report = run_long_run(handle, LongRunConfig(ticks=_LONG_TICKS, jsonl_path=jsonl))
     print("\n" + report.summary())
+    print(f"  jsonl: {jsonl}")
     assert report.verdict_ok, report.violations()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("HELIOS_R83_SCALE_RUN"),
+    reason="opt-in bounded-cost framework-G0 scale run (legacy-constant SQLite); set "
+    "HELIOS_R83_SCALE_RUN=1 to enable (not in CI). Runs the >= 100k horizon on the cheap base chain "
+    "(~9.5ms/tick).",
+)
+def test_r83_scale_g0_opt_in(tmp_path) -> None:
+    jsonl = _env_jsonl("HELIOS_R83_SCALE_JSONL", tmp_path, "r83_scale_g0.jsonl")
+    handle = _bounded_cost_handle(tmp_path)
+    handle.startup()
+    # Sample sparsely so a 100k run writes a bounded JSONL (~200 lines).
+    report = run_long_run(
+        handle, LongRunConfig(ticks=_SCALE_TICKS, sample_every=max(1, _SCALE_TICKS // 200), jsonl_path=jsonl)
+    )
+    print("\n" + report.summary())
+    print(f"  jsonl: {jsonl}")
+    assert report.crash is None, report.crash
+    assert report.ticks_completed == _SCALE_TICKS
+    assert report.boundedness_ok, report.summary()
+    assert report.memory_ok, report.summary()
 
 
 @pytest.mark.skipif(

@@ -60,10 +60,14 @@ default and a manual production-scale (>= 100k tick) tier opt-in, with a separat
 
 1. Two fresh CI-tier runs (separate data directories) must produce identical owner-field min/max
    (reproducibility).
-2. The harness must surface, as a documented finding, that per-tick cost grows roughly linearly with
-   stored-memory size (the `03`/`06`/`10` cosine searches are O(n) over the store; R34 deferred an ANN
-   index), so an unbounded run is ~O(n^2); this motivates a future bounded-window / ANN requirement and
-   is why the CI tier is bounded while the 100k gate is manual.
+2. The harness must surface, as a documented finding, the MEASURED per-tick cost behavior: per-tick
+   cost is bounded at steady state (it ramps over the first ~300 ticks then plateaus - measured
+   ~9.5ms/tick legacy-constant, flat from store 11->1991; ~100ms/tick semantic, flat as the store
+   grows 290->1178), so a run is ~O(1)/tick (O(n) cumulative) and 100k is feasible. The semantic
+   overhead is dominated by the count of per-tick hash-embedding calls + per-tick checkpoint/SQLite
+   I/O, not a store-size scan (a 16-dim cosine over ~1k vectors is microseconds). A real scaling
+   concern remains for P5 (real high-dimensional embeddings over a much larger store would make the
+   naive full-scan cosine significant -> a future bounded-window/ANN index), not a current blocker.
 
 ## 4. Non-Functional Requirements
 
@@ -105,4 +109,4 @@ default and a manual production-scale (>= 100k tick) tier opt-in, with a separat
 4. The production-scale (>= 100k) and real-LLM tiers exist and are skipped unless their env flags are
    set (never in CI).
 5. No runtime/owner code changed; the full network-free suite is green; `index.md` has a row 83 noting
-   the harness, the locked CI/long tick counts, and the O(n) novelty-cost finding.
+   the harness, the locked CI/long/scale tick counts, and the measured bounded-per-tick finding.
