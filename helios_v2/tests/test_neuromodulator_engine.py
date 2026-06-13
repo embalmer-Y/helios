@@ -296,11 +296,10 @@ def test_derived_is_deterministic_for_identical_batch() -> None:
 def test_derived_non_driven_channels_equal_clamped_tonic_baseline() -> None:
     levels = _derived_levels(_batch_with(threat=1.0, reward=1.0, novelty=1.0, uncertainty=1.0))
     baseline = _build_config().tonic_baseline
-    # Channels with no first-version driver regress to the tonic baseline regardless of salience.
-    assert levels.serotonin == pytest.approx(baseline.serotonin)
-    assert levels.acetylcholine == pytest.approx(baseline.acetylcholine)
-    assert levels.oxytocin == pytest.approx(baseline.oxytocin)
-    assert levels.opioid_tone == pytest.approx(baseline.opioid_tone)
+    # R80 made serotonin/oxytocin/opioid_tone/acetylcholine appraisal-derived; only
+    # excitation/inhibition have no first-version driver and regress to the tonic baseline.
+    assert levels.excitation == pytest.approx(baseline.excitation)
+    assert levels.inhibition == pytest.approx(baseline.inhibition)
 
 
 def test_derived_path_aggregates_batch_by_per_dimension_max() -> None:
@@ -428,3 +427,32 @@ def test_dual_timescale_engine_carries_prior_state_across_calls() -> None:
     s2 = engine.update_state(_build_batch(), tick_id=2, prior_state=s1)
     # With a sustained high drive, level rises further on tick 2 than the cold-start tick 1.
     assert s2.levels.dopamine > s1.levels.dopamine
+
+
+# --- Requirement 80: appraisal-derived serotonin / oxytocin / opioid / acetylcholine ---
+
+
+def test_r80_serotonin_rises_with_social_safety_and_falls_with_threat() -> None:
+    baseline = _build_config().tonic_baseline
+    safe = _derived_levels(_batch_with(social=0.9, threat=0.1))
+    threatened = _derived_levels(_batch_with(social=0.9, threat=0.9))
+    assert safe.serotonin > baseline.serotonin
+    assert safe.serotonin > threatened.serotonin
+
+
+def test_r80_oxytocin_rises_with_social() -> None:
+    high = _derived_levels(_batch_with(social=0.9))
+    low = _derived_levels(_batch_with(social=0.1))
+    assert high.oxytocin > low.oxytocin
+
+
+def test_r80_opioid_rises_with_reward_and_social() -> None:
+    high = _derived_levels(_batch_with(reward=0.9, social=0.9))
+    low = _derived_levels(_batch_with(reward=0.1, social=0.1))
+    assert high.opioid_tone > low.opioid_tone
+
+
+def test_r80_acetylcholine_rises_with_novelty() -> None:
+    high = _derived_levels(_batch_with(novelty=0.9))
+    low = _derived_levels(_batch_with(novelty=0.1))
+    assert high.acetylcholine > low.acetylcholine

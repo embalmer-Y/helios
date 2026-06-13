@@ -375,6 +375,14 @@ class AppraisalDerivedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
     reward_to_dopamine: float = 0.5
     novelty_to_dopamine: float = 0.15
     threat_to_cortisol: float = 0.5
+    # R80: appraisal-derived drives for the four affective channels (C_engineering_hypothesis
+    # grounding from brain.mmd roles). Bounded first-version constants under the config's
+    # channel_gain_sensitivity learned-parameter category (P5-learnable).
+    serotonin_social_safety: float = 0.4
+    oxytocin_social: float = 0.4
+    opioid_reward: float = 0.3
+    opioid_social: float = 0.2
+    acetylcholine_novelty: float = 0.4
 
     def update_levels(
         self,
@@ -408,12 +416,34 @@ class AppraisalDerivedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
                 low.cortisol,
                 high.cortisol,
             ),
-            # Remaining channels regress to the tonic baseline (clamped) in this slice; their
-            # real drivers are later de-shim slices.
-            serotonin=_clamp(base.serotonin, low.serotonin, high.serotonin),
-            acetylcholine=_clamp(base.acetylcholine, low.acetylcholine, high.acetylcholine),
-            oxytocin=_clamp(base.oxytocin, low.oxytocin, high.oxytocin),
-            opioid_tone=_clamp(base.opioid_tone, low.opioid_tone, high.opioid_tone),
+            # R80: serotonin/oxytocin/opioid_tone/acetylcholine are now appraisal-derived
+            # (C_engineering_hypothesis grounding from brain.mmd roles): mood stability from
+            # social safety under low threat, social bonding from social presence, reward
+            # satisfaction + social comfort, and attention/encoding gain from novelty.
+            # excitation/inhibition remain at the tonic baseline (their drivers are a later slice).
+            serotonin=_clamp(
+                base.serotonin
+                + self.serotonin_social_safety * salience.social * (1.0 - salience.threat),
+                low.serotonin,
+                high.serotonin,
+            ),
+            acetylcholine=_clamp(
+                base.acetylcholine + self.acetylcholine_novelty * salience.novelty,
+                low.acetylcholine,
+                high.acetylcholine,
+            ),
+            oxytocin=_clamp(
+                base.oxytocin + self.oxytocin_social * salience.social,
+                low.oxytocin,
+                high.oxytocin,
+            ),
+            opioid_tone=_clamp(
+                base.opioid_tone
+                + self.opioid_reward * salience.reward
+                + self.opioid_social * salience.social,
+                low.opioid_tone,
+                high.opioid_tone,
+            ),
             excitation=_clamp(base.excitation, low.excitation, high.excitation),
             inhibition=_clamp(base.inhibition, low.inhibition, high.inhibition),
         )
