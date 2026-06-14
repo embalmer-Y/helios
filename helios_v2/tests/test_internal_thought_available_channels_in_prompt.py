@@ -165,3 +165,50 @@ def test_available_channels_does_not_special_case_reply_message() -> None:
     assert "Reply:" not in text
     assert "Tool:" not in text
     assert "no_action:" not in text
+
+
+def test_available_channels_uses_explicit_driver_op_prefixes() -> None:
+    """R95 followup (C6): the Available channels section uses explicit
+    `Driver: X` and `Op: Y` prefixes (not the legacy indented-list
+    `1. cli / - reply_message:` format). Empirical evidence: the
+    indented format caused some LLMs to confuse a driver name with an
+    op name (e.g. picking `tool_op: "cli"` instead of
+    `tool_op: "reply_message"`); the explicit prefixes remove the
+    ambiguity.
+
+    The section also carries an explicit prose warning that DRIVER
+    names are NEVER valid `tool_op` values — the LLM must use the
+    token after `Op:`."""
+    text = _build_system_text(
+        (
+            {
+                "driver_id": "cli",
+                "op_name": "reply_message",
+                "required_params": ("outbound_text",),
+                "effect_class": "external_world",
+                "risk_class": "unrestricted",
+                "bound_user_ids": ("*",),
+            },
+            {
+                "driver_id": "fs_sandbox",
+                "op_name": "fs_read",
+                "required_params": ("path",),
+                "effect_class": "local_host",
+                "risk_class": "unrestricted",
+                "bound_user_ids": ("*",),
+            },
+        )
+    )
+    # The new format prefixes are present.
+    assert "Driver: cli" in text
+    assert "Driver: fs_sandbox" in text
+    assert "Op: reply_message" in text
+    assert "Op: fs_read" in text
+    # The legacy indented-list format is gone.
+    assert "1. cli" not in text
+    assert "  - reply_message:" not in text
+    # The section explains that DRIVER names are NEVER valid tool_op values.
+    assert "NEVER valid `tool_op`" in text
+    assert "DRIVER names" in text
+    # The schema line for tool_op also forbids driver names explicitly.
+    assert "NEVER a driver name" in text or "NEVER a driver" in text

@@ -1021,11 +1021,20 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
         # alongside any other op the driver offers, and the LLM autonomously
         # decides when to use it (e.g. if a message came from `qq`, the LLM
         # picks `qq`'s send op, not `cli.reply_message`).
+        # R95 followup (C6): the section uses explicit `Driver: X` / `Op: Y`
+        # prefixes (instead of indented-list `1. cli / - reply_message:`) so
+        # the LLM cannot confuse a driver name with an op name. Empirical
+        # evidence: deepseek-v4-pro with the indented format sometimes picked
+        # `tool_op: "cli"` (driver) instead of `tool_op: "reply_message"` (op);
+        # the explicit `Op:` prefix removes the ambiguity.
         available_channel_ops = summary.get("available_channel_ops")
         if isinstance(available_channel_ops, (tuple, list)) and available_channel_ops:
             system_lines.append("")
             system_lines.append(
-                "Available channels (you may pick any one tool op per cycle, or pick none):"
+                "Available channels (you may pick any one tool op per cycle, or pick none)."
+                " Each line is one DRIVER, and the OPS under it are the only legal op names"
+                " for `tool_op` (drivers themselves are NEVER op names — only the op name"
+                " after the `Op:` prefix is valid):"
             )
             # Group by driver_id for readability.
             grouped: dict[str, list[dict[str, object]]] = {}
@@ -1036,8 +1045,8 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
                 if not driver_id:
                     continue
                 grouped.setdefault(driver_id, []).append(op_info)
-            for index, (driver_id, ops) in enumerate(grouped.items(), start=1):
-                system_lines.append(f"  {index}. {driver_id}")
+            for driver_id, ops in grouped.items():
+                system_lines.append(f"  Driver: {driver_id}")
                 for op in ops:
                     op_name = str(op.get("op_name", ""))
                     required_params = op.get("required_params", [])
@@ -1054,21 +1063,23 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
                             bound_str = ", ".join(str(u) for u in bound_user_ids)
                     else:
                         bound_str = "any user"
-                    system_lines.append(f"     - {op_name}:")
+                    system_lines.append(f"    Op: {op_name}")
                     system_lines.append(
-                        f"         required_params=[{required_str}]"
+                        f"      required_params: [{required_str}]"
                     )
                     if effect_class or risk_class:
                         system_lines.append(
-                            f"         effect_class={effect_class}, risk_class={risk_class}"
+                            f"      effect_class: {effect_class}; risk_class: {risk_class}"
                         )
                     if bound_str != "any user":
-                        system_lines.append(f"         bound_user_ids=[{bound_str}]")
+                        system_lines.append(f"      bound_user_ids: [{bound_str}]")
             system_lines.append("")
             system_lines.append(
-                "You may pick any one op from this list, or pick none (the cycle closes"
-                " internal-only). When you do pick an op, fill `tool_op` with the op name"
-                " and `tool_params` with the required params."
+                "Pick exactly ONE op from the list above (the full `Op: <name>` token"
+                " is the value to put in `tool_op`), or pick none (omit `tool_op`)."
+                " DRIVER names like `cli` or `fs_sandbox` are NEVER valid `tool_op` values."
+                " The `tool_params` must contain exactly the params listed under the chosen"
+                " op's `required_params` (use the param NAMES, not the op name)."
             )
         # R95: the JSON envelope has 5 user-facing fields. The 11 R93-R94
         # behavior-suggestive fields (`reply_text`, `i_want_to_use_tool`,
@@ -1082,8 +1093,17 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
         system_lines.append("{")
         system_lines.append('  "thought": "<concise internal thought>",')
         system_lines.append('  "sufficiency": <number 0..1, how complete this cycle\'s thinking is>,')
-        system_lines.append('  "tool_op": "<op name from the Available channels list, or omit/empty for no action>",')
-        system_lines.append('  "tool_params": {<params for the chosen op, or omit/empty>},')
+        system_lines.append(
+            '  "tool_op": "<op name (the token after `Op:` in Available channels,'
+            ' e.g. \\"reply_message\\", \\"fs_read\\", \\"send_message\\")'
+            ' — NEVER a driver name like \\"cli\\" or \\"fs_sandbox\\";'
+            ' or omit/empty for no action>",'
+        )
+        system_lines.append(
+            '  "tool_params": {<object containing the required_params of the chosen op,'
+            ' e.g. \\"outbound_text\\": \\"...\\" — the KEYS must be the required_param'
+            ' NAMES, not the op name>},'
+        )
         system_lines.append('  "thinking_complete": <bool, default true; false only if you want the owner to consider continuing>,')
         system_lines.append('  "channel_request": {<optional; describe a channel/op you wish existed but doesn\'t>},')
         system_lines.append('  "hormone_response_i_predict": {<optional forecast>},')

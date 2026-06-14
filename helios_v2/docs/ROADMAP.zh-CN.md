@@ -358,6 +358,12 @@
   - LLM 自主关联"QQ 来消息从 QQ 回"——需要验证模型确实能做这种隐式 mapping（probe 08）
 - **vs R94 关系**：R94 是"移除最显眼的 bias 源（`i_want_to_say`）"；R95 是"系统性消除整个家族"——R95 把 R94 的精神目标完整实现
 
+#### W2.6.1 R95 followup C1-C5 — 引擎 / planner 拆掉 legacy op-name 硬编码（2026-06，已交付）
+
+**问题（R95 走查发现）**：R95 把 schema 中的行为暗示字段全删了，但 `internal_thought/engine.py` 的离线默认路径仍硬编 `behavior_name="reply_message"`、`requested_op="reply_message"`；`planner_bridge/engine.py` 的 `_missing_required_input` 仍有 hardcoded 集合 `{"reply_message", "send_message", "speak_text"}`。这违反 R95 的根本原则——**channel driver 才是 op 名的唯一来源**，engine 和 planner 都不该硬编 op 名。
+
+**清理（C1-C5 子任务）**：
+
 #### W2.6.1 R95 followup — 引擎 / planner 拆掉 legacy op-name 硬编码（2026-06，已交付）
 
 **问题（R95 走查发现）**：R95 把 schema 中的行为暗示字段全删了，但 `internal_thought/engine.py` 的离线默认路径仍硬编 `behavior_name="reply_message"`、`requested_op="reply_message"`；`planner_bridge/engine.py` 的 `_missing_required_input` 仍有 hardcoded 集合 `{"reply_message", "send_message", "speak_text"}`。这违反 R95 的根本原则——**channel driver 才是 op 名的唯一来源**，engine 和 planner 都不该硬编 op 名。
@@ -378,8 +384,20 @@
 - 完整网络无关测试 1106 + R95-followup 新增 3（C5）= 1109 passed / 5 failed（pre-existing wall-clock-profile + lt1） / 4 skipped / 0 regression
 - 8/8 R95 真实 LLM probe 仍 PASS（shim 与生产路径等价；C3 数据驱动默认值在 probe 路径走的是真 LLM，不走默认）
 - C5 回归测试：3 passed，断言三个 engine 文件代码部分无 op-name 字面
+- 8/8 R95 真实 LLM probe 在 C1-C5 阶段仅 7/8 PASS（probe 01 stochastic 失败：模型把 `cli` driver 当 op 名，混淆 driver 与 op）
 
-**vs R95 主线关系**：R95 主线是 schema 改造；R95 followup 是 engine/planner 内部硬编码清理。是 R95 精神在 engine / planner 层的延伸。
+**vs R95 主线关系**：R95 主线是 schema 改造；R95 followup C1-C5 是 engine/planner 内部硬编码清理。是 R95 精神在 engine / planner 层的延伸。
+
+#### W2.6.2 R95 followup C6 — system prompt `Driver: X / Op: Y` 显式前缀（2026-06，已交付）
+
+**问题（C1-C5 probe 走查发现）**：原 system prompt "Available channels" 区块用缩进列表 `1. cli / - reply_message:`，deepseek-v4-pro 有时把 `cli`（driver 名）当 op 名（picking `tool_op: "cli"`），让 driver 与 op 边界产生歧义。
+
+**修复（C6）**：
+- engine `_build_messages` 改为显式 `Driver: <name>` / `Op: <name>` 前缀的扁平结构；schema 行 `tool_op` / `tool_params` 显式说明：DRIVER 名（`cli` / `fs_sandbox`）**绝不能**作为 `tool_op` 值，只有 `Op:` 后面的 token 是合法的
+- 8 个 R95 probe JSON 同步更新（同一个 system prompt）；`test_internal_thought_available_channels_in_prompt.py` 加新回归测试 `test_available_channels_uses_explicit_driver_op_prefixes` 守住格式契约
+- 退出信号：**8/8 R95 真实 LLM probe 全部 PASS**（C1-C5 阶段 probe 01 stochastic 失败在 C6 修复后**稳定 PASS**）；1110 passed / 4 skipped / 5 pre-existing wall-clock + lt1 失败
+
+**vs R95 followup C1-C5 关系**：C1-C5 修 engine/planner 代码层的硬编码；C6 修 system prompt 表达层让 LLM 不再把 driver 当 op。两层共同保证 "channel driver 是 op 名的唯一权威来源，engine / planner / system prompt 都不知道 op 名"。
 
 ### W3 — P5 根因：真实语义（让"恰当"成为可能）
 

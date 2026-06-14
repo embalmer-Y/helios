@@ -2,7 +2,22 @@
 
 ## Summary
 
-**R95 schema contract verified end-to-end**: in the run reported in the conversation summary, 8/8 R95 probes PASS on the first attempt with one transient retry on probe 08 (deepseek/deepseek-v4-pro via shengsuanyun router). The R95 followup C1-C5 engine/planner cleanup did NOT change the LLM's behavior — the schema, system prompt, and probe contract are unchanged. The cleanup is verified by 1109 unit + 3 new regression tests passing; the probes are an additional sanity check that the LLM still produces R95-correct envelopes.
+**8/8 R95 probes PASS** on deepseek/deepseek-v4-pro via shengsuanyun router. The R95 followup C1-C5 (engine/planner hardcode cleanup) and C6 (system prompt `Driver: X` / `Op: Y` prefixes) did not change the LLM's overall behavior — the cleanup is verified by 1110 unit + 4 regression tests (3 from C5 + 1 from C6) passing. The probes are an additional sanity check that the LLM still produces R95-correct envelopes with the new schema.
+
+### Latest run (2026-06-15, with C1-C6 followup)
+
+| Probe | File | Expected `tool_op` | Status | `tool_op` chosen |
+|------|------|------------------|--------|------------------|
+| 01 | `01_basic_reply.json` | `reply_message` | ✅ PASS | `reply_message` (NEW format: no longer confuses `cli` with `reply_message`) |
+| 02 | `02_silence.json` | (empty) | ✅ PASS | `""` |
+| 03 | `03_action_choice.json` | `reply_message` | ✅ PASS | `reply_message` |
+| 04 | `04_no_action_when_unmoved.json` | (empty) | ✅ PASS | (empty) |
+| 05 | `05_received_no_reply.json` | `reply_message` | ✅ PASS | `reply_message` |
+| 06 | `06_pure_punct.json` | (empty) | ✅ PASS | `""` |
+| 07 | `07_tool_choice.json` | `fs_read` | ✅ PASS | `fs_read` |
+| 08 | `08_cross_channel_routing.json` | `send_message` (qq) | ✅ PASS | `send_message` |
+
+**Key win from C6**: the `Driver: X` / `Op: Y` prefix format eliminates the driver/op confusion that caused probe 01 to fail in the C1-C5 run (the LLM had picked `tool_op: "cli"` instead of `"reply_message"`). The new prose says: "DRIVER names like `cli` or `fs_sandbox` are NEVER valid `tool_op` values; the full `Op: <name>` token is the value to put in `tool_op`."
 
 | Probe | File | Expected `tool_op` | Status (run 1) | Notes |
 |------|------|------------------|----------------|-------|
