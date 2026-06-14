@@ -279,3 +279,388 @@ Probe (per §8.2):
    clause; the negative-control probe shows the model leaves the field null/empty
    when no operator is present.
 9. All cross-file documentation is synced in the same change set.
+
+
+---
+
+# Phase 2 (2026-06) — Action Agency and Cross-Channel Routing
+
+## 7. Phase 2 Background and Problem
+
+The 2026-06-14 real-LLM visitor-eval (38 messages, 8 visitors, 8 emotion categories)
+demonstrated that **R93 Phase 1 was necessary but insufficient**: the dialog-reply
+loop is now closed (37/38 messages reach the operator as real CLI replies, up from
+1/89 in the R91 era), but the underlying mental model was still wrong. Inspecting
+the runtime reveals the new gap:
+
+1. R93's `_emit_proposal` constructs an **implicit `reply_message` proposal by
+   default** when the model fills `i_want_to_say` and no explicit `tool_op` is set.
+   The proposal's `target_user_id` is **forced** to the composition-projected
+   `current_operator_id` (i.e. the `source_name` of the most recent external
+   stimulus). This makes reply the *default* action class and makes
+   `target_user_id` a *forced* consequence of the input channel.
+2. The model's `preferred_channels` on the proposal is documented as a
+   "non-authoritative hint"; the planner's `_select_channel` ignores it entirely
+   and picks the first connected driver that supports the op (currently always CLI).
+3. The planner never reads `op_params["target_user_id"]` for routing. The CLI
+   driver declares no notion of which user IDs it serves.
+
+The end result: **Helios has become a "confiding machine"** — it always reflexively
+replies to whoever triggered the current tick, and it always replies on the same
+channel. The brain does not behave this way. In real cognition, the response is
+not a reply-by-default but an **action choice among many effectors**:
+
+- Hearing a friend's distress → choose to comfort (reply on the operator's channel)
+- Hearing about an unfamiliar concept → choose to look it up (web_search channel;
+  this is not a reply and has no `target_user_id`)
+- Hearing a calendar reminder → choose to prepare (calendar channel; no input
+  triggered it, autonomy drove it)
+- Hearing a chat message and feeling reflective → choose to journal
+  (file_write channel; the response is to oneself, not to the message source)
+- Hearing and being unmoved → choose no_fire (no proposal at all)
+
+In a multi-channel future (CLI + QQ + Feishu + voice + web_search + calendar + ...),
+the cognitive question is not "do I reply to this person" but **"given my full
+internal state and the available effectors, what action — if any — should I take,
+on which effector, for which audience?"** The model is the decision-maker; the
+planner is the gatekeeper; composition is the projector of runtime facts.
+
+Phase 2 fixes three architectural defects:
+
+- **D1 (action-class default)**: reply is no longer the implicit default. The model
+  must explicitly choose an action class (or choose no_action).
+- **D2 (target_user_id authority)**: `target_user_id` is the model's pick, not a
+  forced projection from the input source. The planner respects it.
+- **D3 (planner routing)**: planner honors `target_user_id` → `preferred_channels` →
+  iteration-order priority, with each driver self-describing the user IDs it serves
+  so the planner can map target→driver deterministically.
+
+## 8. Phase 2 Goal
+
+Make the LLM a **deliberate action-choosing agent** rather than a reflexive
+responder, while keeping the W2 reply-closure behavior intact. Concretely:
+
+1. The envelope gains an explicit `action_intent` field (`"reply" | "tool" |
+   "no_action"`). The model uses it to declare which action class it has chosen.
+2. The implicit-reply branch becomes **opt-in** rather than default. The branch
+   fires only when (a) the model sets `action_intent="reply"` OR (b) the model
+   fills `i_want_to_say` without `action_intent` (R93 compat fallback). When the
+   model fills neither, no proposal is constructed — the cycle closes as
+   internal-only even if `proposed_action.intends_action=true` was set (the legacy
+   `intends_action` field becomes a content hint, not a proposal trigger).
+3. `target_user_id` for the reply path becomes the model's pick
+   (`evidence.target_user_id` if set, else `current_operator_id` as compat
+   default). The composition projection of `current_operator_id` stays as a
+   **context fact** for the model to see, not a forced value to copy.
+4. Each driver self-describes the user IDs it serves via a new
+   `ChannelOpSpec.bound_user_ids` field (CLI declares `frozenset()` as a wildcard;
+   a future QQ driver would declare its bound openids).
+5. The planner's `_select_channel` gains a priority strategy: target_user → driver
+   serving that user → preferred_channels hint → iteration-order fallback. The
+   legacy behavior (first available driver supporting the op) is preserved when
+   no target_user and no preferred hint are given.
+6. The system prompt is rewritten so the model understands action class is a
+   choice, reply is one of many actions, and `i_want_to_say` is a synonym for
+   `action_intent="reply" + reply_text=...` (not a hidden trap).
+
+When R93 Phase 2 is in place:
+
+- A real-LLM channel-bound dialogue produces an actual reply for every tick
+  whose envelope sets `action_intent="reply"` (R93 compat path) — backward
+  compatible with Phase 1 tests.
+- The same model may also produce `action_intent="no_action"` when it judges
+  that no action is appropriate, and no proposal is constructed (the cycle
+  closes internal-only).
+- In a multi-driver assembly, the model's `target_user_id` and `preferred_channels`
+  are honored by the planner when those drivers serve the target user; otherwise
+  the planner falls back to a connected driver offering the op.
+
+## 9. Phase 2 Functional Requirements
+
+### 9.1 Envelope: explicit `action_intent` field
+
+1. `_parse_structured_thought` reads an optional top-level
+   `action_intent: "reply" | "tool" | "no_action"` field. Accepted shapes:
+   1. The field is absent or `null` => `action_intent=None` (compat: deferred to
+      the precedence rule in §9.2).
+   2. The field is one of the three string literals => `action_intent=<value>`.
+   3. The field is any other string (or non-string) => parser raises the existing
+      `StructuredThoughtParseError` (no silent coercion).
+2. `StructuredThoughtEvidence` gains one additive optional field
+   `action_intent: str | None = None`. Default value preserves byte-for-byte the
+   R93 (Phase 1) evidence shape.
+3. The legacy `proposed_action.intends_action` field is **no longer a proposal
+   trigger**. It remains parsed (backward compat) and is now treated as a content
+   hint surfaced in the trace. A model that sets `intends_action=true` but does
+   not set `action_intent` and does not fill `i_want_to_say` produces no proposal
+   (this is a behavior change from R93 Phase 1, where the legacy `emit_action`
+   branch fired; that branch is **removed** in Phase 2).
+4. The legacy `emit_action` fallback path in `_emit_proposal` is removed. There
+   is no longer a default reply constructed from `thought.content` when
+   `evidence is None`; the deterministic offline path emits no proposal at all
+   (the R93 backward-compat fallback for the deterministic path is a no-op).
+   This is documented as an intentional Phase 2 behavior change; the
+   deterministic offline assembly is intended for tests, not for production.
+
+### 9.2 `_emit_proposal` action-class precedence
+
+1. The new precedence for emitting a proposal is:
+   1. **Explicit `tool_op` (R85)** wins when `evidence.intends_tool_use and
+      bool(evidence.tool_op)`. The proposal is a tool action; no reply is
+      constructed.
+   2. **Implicit reply (compat path)** fires when:
+      - `evidence is not None` AND
+      - no explicit `tool_op` AND
+      - `(evidence.action_intent == "reply")` OR
+        `(evidence.action_intent is None and evidence.intended_reply_text)`,
+      AND
+      - the resolved `target_user_id` (see §9.3) is non-empty.
+      The proposal is a `reply_message` tool intent with `op_params={"outbound_text",
+      "target_user_id"}`.
+   3. **Implicit tool (compat path)** fires when `evidence is not None` AND
+      `evidence.action_intent == "tool"`. The proposal is a tool action with
+      `op_params=evidence.tool_params` (R85 path).
+   4. **No action** when:
+      - `evidence is None` (deterministic offline path) — no proposal, no
+        outbound dispatch; cycle closes as internal-only.
+      - `evidence.action_intent == "no_action"` — explicit abstention; no
+        proposal.
+      - `evidence.action_intent is None` AND no `i_want_to_say` AND no
+        `i_want_to_use_tool` — cycle closes as internal-only.
+2. The `_emit_proposal` emits at most one proposal per tick (unchanged from
+   R85/R93 Phase 1).
+
+### 9.3 `target_user_id` resolution for reply
+
+1. `_emit_proposal` resolves the reply's `target_user_id` in this order:
+   1. `evidence.target_user_id` if the model explicitly set it (new envelope
+      field; see §9.4).
+   2. `request.prompt_contract_summary.get("current_operator_id", "")` as the
+      compat default (R93 Phase 1 projection; this is the input source's
+      `source_name`).
+2. If the resolved `target_user_id` is empty, the implicit-reply branch is
+   silent (no proposal), regardless of the envelope's `i_want_to_say` or
+   `action_intent`.
+3. The composition projection of `current_operator_id` from `02 sensory_ingress`
+   remains owner-neutral and is now labeled in the prompt as a **context fact**,
+   not a forced default.
+
+### 9.4 New envelope field: `target_user_id` and `reply_text`
+
+1. `_parse_structured_thought` reads an optional top-level `target_user_id` field
+   (string). Accepted shapes:
+   1. Absent or `null` => `evidence.target_user_id=None`.
+   2. A non-empty string => `evidence.target_user_id=<stripped value>`.
+   3. A non-string => `StructuredThoughtParseError`.
+2. The envelope also accepts an optional `reply_text` field as an explicit alias
+   for `i_want_to_say` (both names map to `evidence.intended_reply_text`).
+   This is documented but not promoted in the prompt (the prompt continues to
+   reference `i_want_to_say` for backward-compat with any fine-tune that already
+   learned the field name).
+
+### 9.5 Driver self-description: `bound_user_ids`
+
+1. `ChannelOpSpec` gains one additive optional field
+   `bound_user_ids: frozenset[str] = frozenset()`. The owning driver declares
+   the user IDs this op serves. `frozenset()` is a wildcard (any target user
+   can be routed to this driver).
+2. The CLI driver declares `bound_user_ids=frozenset()` (CLI is the local
+   interactive terminal; any target can be routed to it via a CLI reply).
+3. `ChannelSubsystemStateProvider.channel_descriptor_snapshot` automatically
+   threads `bound_user_ids` into the planner's descriptor snapshot (no extra
+   composition code).
+4. A future QQ / Feishu / voice driver would declare its bound user IDs
+   (openids / user_ids / phone_numbers) in this field. This slice does not
+   ship those drivers; the field is added now so a future P4 channel addition
+   can wire it without re-touching the planner or `11`.
+
+### 9.6 Planner routing priority: `target_user` → `preferred` → `iteration`
+
+1. `FirstVersionPlannerBridgePath._select_channel` (and the future
+   `LlmBackedPlannerBridgePath` when one lands) is rewritten to honor this
+   priority:
+   1. Collect candidates: drivers whose `supported_ops` include
+      `proposal.preferred_op` and whose `status.available` is True.
+   2. If the proposal's `params` carries a non-empty `target_user_id`: filter
+      candidates to those whose `bound_user_ids` either contain that user OR
+      are `frozenset()` (wildcard).
+   3. From the filtered set: if any candidate's `driver_id` is in
+      `proposal.preferred_channels`, return the first such.
+   4. Otherwise return the first candidate in the filtered set (deterministic
+      iteration order, preserved from R85).
+   5. If the target_user filter yields an empty set, **fall through to step 3**
+      with the unfiltered candidate set (the model's `target_user_id` may name
+      a user not served by any connected driver; planner degrades gracefully
+      rather than rejecting the proposal).
+2. The legacy R85 behavior (first available driver supporting the op) is
+   preserved as the final fallback when both `target_user_id` and
+   `preferred_channels` are absent.
+
+### 9.7 System prompt update
+
+1. `_build_messages` rewrites the system-prompt schema description so the model
+   understands:
+   1. Action class is a **choice**, not a default. The model must decide whether
+      to act and what class of action (`reply` / `tool` / `no_action`).
+   2. The optional envelope fields are listed: `i_want_to_say` (synonym for
+      `action_intent="reply" + reply_text=...`), `i_want_to_use_tool` +
+      `tool_op` + `tool_params` (R85), `action_intent` (explicit), `target_user_id`
+      (overrides the input-source default for replies).
+   3. The transport clause explains: when `action_intent="reply"` (or
+      `i_want_to_say` is set without `action_intent`), the runtime transports
+      the text as a `reply_message` to the resolved `target_user_id` through
+      the connected driver serving that user. The model's `target_user_id` is
+      authoritative; the planner will route accordingly.
+2. The schema still lists the v1 fields (`thought` / `sufficiency` /
+   `wants_to_continue` / `proposed_action` / `self_revision` /
+   `hormone_response_i_predict` / `i_want_to_use_tool` / `tool_op` / `tool_params`)
+   for backward compat; the new fields are additive and not mandatory.
+
+## 10. Phase 2 Non-Functional Requirements
+
+1. **Performance.** No additional LLM call. The parser adds at most two optional
+   reads (`action_intent`, `target_user_id`). The planner routing change is
+   a constant-time scan over a small candidate set (typically 1-2 drivers).
+2. **Reliability.** A model envelope with a non-string `action_intent` or
+   `target_user_id` raises `StructuredThoughtParseError`. An envelope with
+   `action_intent` set to a value outside the fixed taxonomy also raises.
+3. **Observability.** No new logging mechanism. The `21` runtime observability
+   already captures the `13 planner_bridge` decision, the `11` proposal carrier,
+   and the outbound dispatch; the new fields surface in the existing trace
+   without R93 Phase 2 adding a new log surface.
+4. **Compatibility and migration.** Phase 2 is **mostly backward-compatible** with
+   Phase 1:
+   - All R93 Phase 1 tests that exercise the R93 implicit-reply path continue
+     to pass (the compat fallback when `action_intent is None and
+     i_want_to_say is set` keeps the Phase 1 behavior).
+   - The deterministic offline path's `emit_action` fallback is removed; this
+     is a deliberate Phase 2 behavior change documented in §9.1.4. Tests
+     that exercise the deterministic offline path may need to be updated
+     (they are owner-internal test fixtures; no production code path
+     changes).
+   - The Phase 1 unit tests that assert "no implicit reply when continuation
+     requested" and "no implicit reply when current_operator_id empty"
+     continue to hold (the precedence rules in §9.2 cover both).
+   - New tests cover the new fields and the new behavior.
+
+## 11. Phase 2 Code Behavior Constraints
+
+1. **Forbidden — fabricated reply.** When the envelope leaves `i_want_to_say`
+   null/empty AND `action_intent != "reply"` AND no explicit `tool_op`, the
+   runtime must not synthesize a reply. The cycle closes as internal-only.
+2. **Forbidden — fabricated operator.** When `target_user_id` is empty AND
+   the model has not set `current_operator_id` via the prompt-contract summary,
+   no reply is constructed. The system never invents a default target.
+3. **Forbidden — `13` content authoring.** `13 planner_bridge` does not
+   construct reply content; it only validates and routes.
+4. **Forbidden — fabricated driver.** The planner never routes a proposal to
+   a driver that does not offer the op or is not available; the planner
+   never routes to a driver that does not serve the target user unless the
+   filter would yield an empty set (then it falls through, preserving the
+   "reply is better than no reply" fail-soft bias).
+5. **Boundary — driver self-description.** `bound_user_ids` is a transport
+   fact declared by the driver. Composition threads it; the planner
+   consumes it; cognition never sets it.
+6. **Boundary — composition is the projector.** Composition still projects
+   `current_operator_id` from `02 sensory_ingress` as a context fact (no
+   change in projection logic). The change is only that `current_operator_id`
+   is now labeled "context fact" rather than "forced default" in the prompt.
+
+## 12. Phase 2 Impacted Modules
+
+Modified:
+1. `src/helios_v2/internal_thought/contracts.py` — additive
+   `action_intent: str | None = None` and `target_user_id: str | None = None` on
+   `StructuredThoughtEvidence`; constants for the action_intent taxonomy.
+2. `src/helios_v2/internal_thought/engine.py` —
+   `_parse_structured_thought` reads `action_intent` and `target_user_id`;
+   `_emit_proposal` adds the new precedence (§9.2) and removes the legacy
+   `emit_action` fallback; `_build_messages` rewrites the system-prompt schema
+   description.
+3. `src/helios_v2/channel/contracts.py` — additive
+   `bound_user_ids: frozenset[str] = frozenset()` on `ChannelOpSpec`.
+4. `src/helios_v2/channel/drivers/cli.py` — CLI driver sets
+   `bound_user_ids=frozenset()` on its `reply_message` op spec.
+5. `src/helios_v2/composition/bridges.py` —
+   `ChannelSubsystemStateProvider.channel_descriptor_snapshot` threads
+   `bound_user_ids` into the snapshot (auto from the descriptor; no new code).
+6. `src/helios_v2/planner_bridge/engine.py` —
+   `FirstVersionPlannerBridgePath._select_channel` rewritten per §9.6 to
+   honor the target_user → preferred → iteration priority.
+
+New tests:
+7. `tests/test_internal_thought_parse_action_intent.py` — parsing semantics
+   for `action_intent` (absent, valid string, invalid string, non-string raises,
+   `target_user_id` parallel semantics).
+8. `tests/test_internal_thought_emit_proposal_phase2.py` — the new precedence
+   (explicit tool wins; reply compat path; `action_intent="reply"`; no proposal
+   on `action_intent="no_action"`; deterministic offline path emits no
+   proposal; `target_user_id` resolution).
+9. `tests/test_channel_op_spec_bound_user_ids.py` — `ChannelOpSpec` carries
+   the new field; CLI driver sets `frozenset()`; the provider threads it.
+10. `tests/test_planner_bridge_routing_priority.py` — `_select_channel`
+    priority: target_user → preferred → iteration; `bound_user_ids=frozenset()`
+    wildcard; empty target_user filter falls through.
+11. `tests/test_runtime_stage_chain_action_agency.py` — end-to-end:
+    `action_intent="no_action"` produces no dispatch; explicit
+    `action_intent="reply"` dispatches; `target_user_id` honored in a
+    multi-driver fixture.
+
+Real-LLM probes (per §8.2 of the requirement-authoring-standard):
+12. `scripts/r93_probes/03_action_choice.json` — positive control: the model
+    receives a present-field message, must explicitly set `action_intent="reply"`
+    and produce a real CLI dispatch (i.e. the new prompt still surfaces real
+    reply text, not just no-op).
+13. `scripts/r93_probes/04_no_action_when_unmoved.json` — negative control:
+    interoception-only / no-operator tick; the model sets
+    `action_intent="no_action"` and the cycle closes internal-only.
+
+Documentation (cross-file rule §8):
+14. `docs/requirements/index.md` — the R93 row's notes column is updated to
+    mention Phase 2 (action-agency + cross-channel routing).
+15. `docs/OWNER_GUIDE.md` / `docs/OWNER_GUIDE.zh-CN.md` — `11` and `13` next-step
+    sections updated; status header sync.
+16. `docs/PROGRESS_FLOW.en.md` / `docs/PROGRESS_FLOW.zh-CN.md` — last-synced sync.
+17. `docs/ARCHITECTURE_BOUNDARIES.md` — last-synced + a brief migration-history
+    note (Phase 1 row + Phase 2 row).
+18. `docs/BRAIN_ARCHITECTURE_COMPARISON.md` — `gap_execution_closure` row updated
+    to note that the action-agency aspect is now closed (model can choose
+    non-reply action classes; routing respects model choice).
+19. `docs/ROADMAP.zh-CN.md` — extend the W2 section to mark Phase 2; advance
+    the one-sentence ordering line; flag the embedded "next step" (real
+    multi-channel assembly) as the natural trigger for further routing work.
+
+## 13. Phase 2 Acceptance Criteria
+
+1. `_parse_structured_thought` reads `action_intent` and `target_user_id` per
+   §9.1, §9.4; the parser returns evidence whose `action_intent` and
+   `target_user_id` match the rules above.
+2. With a fake provider returning `{"thought":"...", "sufficiency":0.9,
+   "action_intent":"reply", "i_want_to_say":"hello"}` and the channel-bound
+   assembly running a CLI submission ("hi from operator"), the resulting tick
+   produces an `ActionDecision` with `op_name="reply_message"` and
+   `op_params={"outbound_text":"hello", "target_user_id":<cli source>}`,
+   dispatched to the CLI sink.
+3. With the same envelope but `action_intent="no_action"` instead, the
+   implicit reply branch is silent; the cycle closes as internal-only; no
+   CLI dispatch occurs.
+4. With an envelope setting `target_user_id="alice"` and a multi-driver
+   fixture (one CLI driver + one fake "alice-bound" driver offering
+   `reply_message`), the planner routes the reply to the alice-bound driver
+   (not the CLI driver).
+5. With an envelope setting `target_user_id="ghost"` (a user not served by
+   any connected driver), the planner falls through to a wildcard driver
+   (CLI); the proposal is not rejected.
+6. The default `assemble_runtime()` deterministic offline path emits no
+   proposal (Phase 2 behavior change; documented in §9.1.4). All existing
+   pre-R93 network-free tests that pass on the R93 assembly continue to
+   pass on the R93 Phase 2 assembly.
+7. The full network-free test suite is green: ≥ 1107 + R93 Phase 2 new
+   tests passed / 4 skipped. The composition owner-boundary guard and the
+   no-ad-hoc-logging guard remain green.
+8. The real-LLM probe `scripts/r93_probes/03_action_choice.json` shows the
+   model sets `action_intent="reply"` with operator-addressed reply text
+   after the new system-prompt clause; the negative-control probe
+   `04_no_action_when_unmoved.json` shows the model sets
+   `action_intent="no_action"` and leaves the reply field null/empty.
+9. All cross-file documentation is synced in the same change set.

@@ -261,6 +261,10 @@ class ChannelSubsystemStateProvider:
                         "user_visible": spec.user_visible,
                         "effect_class": spec.effect_class,
                         "risk_class": spec.risk_class,
+                        # R93 Phase 2: project the additive `bound_user_ids` so the planner's
+                        # user-binding filter in `_select_channel` can route to the right driver.
+                        # Empty tuple is the documented "serves any user id" wildcard.
+                        "bound_user_ids": tuple(spec.bound_user_ids),
                     }
                     for spec in descriptor.output_op_specs
                 },

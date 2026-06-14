@@ -143,6 +143,11 @@ def _cli_descriptor(config: CliDriverConfig) -> ChannelDriverDescriptor:
                 user_visible=True,
                 effect_class="external_world",
                 risk_class="unrestricted",
+                # R93 Phase 2: the CLI driver is a wildcard operator-facing channel; it
+                # serves any user id. An empty frozenset is the documented "serves everyone"
+                # sentinel; the planner treats it as a pass-through for the user-binding
+                # filter in `_select_channel`.
+                bound_user_ids=frozenset(),
             ),
         ),
     )

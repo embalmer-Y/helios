@@ -154,6 +154,8 @@ def envelope(
     i_want_to_use_tool: Any = None,
     tool_op: Any = None,
     tool_params: Any = None,
+    action_intent: Any = None,
+    target_user_id: Any = None,
 ) -> dict:
     payload = {
         "thought": thought,
@@ -171,4 +173,11 @@ def envelope(
         payload["tool_op"] = tool_op
     if tool_params is not None:
         payload["tool_params"] = tool_params
+    # R93 Phase 2: additive envelope fields. `None` is a sentinel for "omit from payload"
+    # (the caller wants to exercise the absent-field path); the literal string "null" or
+    # a string value emits the field.
+    if action_intent is not None:
+        payload["action_intent"] = action_intent
+    if target_user_id is not None:
+        payload["target_user_id"] = target_user_id
     return payload

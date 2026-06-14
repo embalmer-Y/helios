@@ -109,8 +109,9 @@ class ChannelOpSpec:
     Owner: channel driver subsystem.
 
     Failure semantics:
-        Construction raises `ChannelError` on an empty op name, an empty required-param key, or an
-        out-of-taxonomy effect/risk class.
+        Construction raises `ChannelError` on an empty op name, an empty required-param key, an
+        out-of-taxonomy effect/risk class, or a `bound_user_ids` set containing a non-string or
+        empty value.
 
     Notes:
         The owning driver declares each output op's properties; cognition never sets them. Axis
@@ -119,6 +120,11 @@ class ChannelOpSpec:
         in R85 and consumed by `17`/`23` consequence classification in R87; `risk_class` is declared in
         R85 and enforced by the `13`+`14` fail-closed gate in R86. Declaring `effect_class`/`risk_class`
         now is honest forward self-description, not an enforced gate yet.
+
+        R93 Phase 2: `bound_user_ids` is an additive declaration of which user ids the op serves.
+        An empty frozenset is the wildcard ("this op serves any user id"); a non-empty frozenset
+        names the specific user ids the op is willing to address. The `13` planner reads this in
+        `_select_channel` to prefer drivers whose op is bound to the proposal's `target_user_id`.
     """
 
     op_name: str
@@ -126,6 +132,9 @@ class ChannelOpSpec:
     user_visible: bool = False
     effect_class: OpEffectClass = "external_world"
     risk_class: OpRiskClass = "unrestricted"
+    # R93 Phase 2: optional set of user ids the op serves. Empty frozenset (default) is the
+    # wildcard; a non-empty frozenset names the specific users the driver is willing to address.
+    bound_user_ids: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         if not self.op_name:
@@ -137,6 +146,14 @@ class ChannelOpSpec:
             raise ChannelError("ChannelOpSpec effect_class must use the fixed taxonomy")
         if self.risk_class not in _OP_RISK_CLASSES:
             raise ChannelError("ChannelOpSpec risk_class must use the fixed taxonomy")
+        # R93 Phase 2: every entry in `bound_user_ids` must be a non-empty string. The owner
+        # never fabricates user ids; a malformed entry is a hard constructor error rather than
+        # silent coercion.
+        for user_id in self.bound_user_ids:
+            if not isinstance(user_id, str) or not user_id:
+                raise ChannelError(
+                    "ChannelOpSpec bound_user_ids must not contain empty or non-string values"
+                )
 
 
 @dataclass(frozen=True)

@@ -25,6 +25,9 @@ from helios_v2.llm import LlmGatewayAPI, LlmMessage, LlmRequest
 from helios_v2.thought_gating import ContinuationPressureState, ThoughtGateResult
 
 from .contracts import (
+    ACTION_INTENT_NO_ACTION,
+    ACTION_INTENT_REPLY,
+    ACTION_INTENT_TOOL,
     INTENDED_REPLY_TEXT_MAX_CHARS,
     INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX,
     InternalThoughtAPI,
@@ -36,9 +39,12 @@ from .contracts import (
     PublishThoughtCycleResultOp,
     RunInternalThoughtOp,
     SelfRevisionProposalCarrier,
+    TARGET_USER_ID_MAX_CHARS,
+    TARGET_USER_ID_TRUNCATION_SUFFIX,
     ThoughtActionProposalCarrier,
     ThoughtContent,
     ThoughtCycleResult,
+    _ACTION_INTENT_VALUES,
     _HORMONE_PREDICTION_CHANNELS,
 )
 
@@ -128,6 +134,15 @@ class StructuredThoughtEvidence:
     # Length is bounded by `INTENDED_REPLY_TEXT_MAX_CHARS` with the explicit
     # `INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX` (deterministic truncation).
     intended_reply_text: str = ""
+    # R93 Phase 2: explicit action-class choice. The model picks one of "reply" / "tool" /
+    # "no_action" (or omits the field for compat). The owner promotes this into a deterministic
+    # emit_proposal precedence order; the legacy `model_intends_action` flag is no longer
+    # sufficient to construct a reply. Default None preserves the pre-Phase-2 compat path.
+    action_intent: str | None = None
+    # R93 Phase 2: optional model-supplied target user id. When non-empty the owner uses it as
+    # the reply / tool target; when empty the owner falls back to the composition-projected
+    # `current_operator_id`. Default None preserves the pre-Phase-2 compat path.
+    target_user_id: str | None = None
 
 
 def _require_bool(payload: dict[str, Any], key: str) -> bool:
@@ -286,6 +301,82 @@ def _optional_intended_reply_text(payload: dict[str, Any]) -> str:
     return stripped
 
 
+def _optional_action_intent(payload: dict[str, Any]) -> str | None:
+    """Owner: internal thought loop (R93 Phase 2).
+
+    Purpose:
+        Parse the optional top-level `action_intent` envelope field into a bounded action-class
+        string. The model picks one of `reply` / `tool` / `no_action`; `None` (absent or
+        explicit JSON null) preserves the pre-Phase-2 compat path so existing fine-tunes still
+        work.
+
+    Failure semantics:
+        - Field absent / null: return `None` (compat path).
+        - Field present and a recognized string: return the string verbatim.
+        - Field present but not a string or not in the recognized set: raise
+          `StructuredThoughtParseError` (fail-fast; the owner never silently coerces a
+          misspelled action class into a default).
+
+    Notes:
+        The owner-threaded taxonomy is `_ACTION_INTENT_VALUES` (a frozenset of the three valid
+        string literals). The compat path `None` is intentionally NOT in that set; the parser
+        distinguishes "absent" (compat) from "explicit no_action" (closes the cycle
+        internal-only regardless of other signals).
+    """
+
+    if "action_intent" not in payload:
+        return None
+    raw = payload.get("action_intent")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or raw not in _ACTION_INTENT_VALUES:
+        raise StructuredThoughtParseError(
+            "Structured thought envelope 'action_intent' must be one of "
+            "reply/tool/no_action or null when present"
+        )
+    return raw
+
+
+def _optional_target_user_id(payload: dict[str, Any]) -> str | None:
+    """Owner: internal thought loop (R93 Phase 2).
+
+    Purpose:
+        Parse the optional top-level `target_user_id` envelope field into a bounded string. The
+        model names a specific user it wants to address when the action class is reply or tool;
+        the owner resolves this with priority over the composition-projected
+        `current_operator_id`.
+
+    Failure semantics:
+        - Field absent / null: return `None` (the owner falls back to the prompt-contract
+          default).
+        - Field present and a string: return the trimmed value, or `None` for whitespace-only.
+        - Field present but not a string: raise `StructuredThoughtParseError` (fail-fast).
+        - Field present, non-empty, and over `TARGET_USER_ID_MAX_CHARS`: deterministically
+          truncated with `TARGET_USER_ID_TRUNCATION_SUFFIX`.
+
+    Notes:
+        The owner's resolution priority (model-supplied > composition-projected) lives in
+        `_emit_proposal`, not here. This helper is the pure parse + bound step.
+    """
+
+    if "target_user_id" not in payload:
+        return None
+    raw = payload.get("target_user_id")
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise StructuredThoughtParseError(
+            "Structured thought envelope 'target_user_id' must be a string when present"
+        )
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    if len(stripped) > TARGET_USER_ID_MAX_CHARS:
+        cap = TARGET_USER_ID_MAX_CHARS - len(TARGET_USER_ID_TRUNCATION_SUFFIX)
+        return stripped[:cap] + TARGET_USER_ID_TRUNCATION_SUFFIX
+    return stripped
+
+
 def _extract_structured_json(completion_text: str) -> str:
     """Owner: internal thought loop.
 
@@ -406,6 +497,8 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
     hormone_prediction = _optional_hormone_prediction(payload)
     intends_tool_use, tool_op, tool_params = _optional_tool_intent(payload)
     intended_reply_text = _optional_intended_reply_text(payload)
+    action_intent = _optional_action_intent(payload)
+    target_user_id = _optional_target_user_id(payload)
 
     return StructuredThoughtEvidence(
         thought_text=thought_value.strip(),
@@ -421,6 +514,8 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
         tool_op=tool_op,
         tool_params=tool_params,
         intended_reply_text=intended_reply_text,
+        action_intent=action_intent,
+        target_user_id=target_user_id,
     )
 
 
@@ -498,7 +593,6 @@ def _derive_thought_judgment(
     if evidence is None:
         sufficiency_level = round(retrieval_sufficiency, 4)
         model_wants_continue = False
-        model_intends_action = False
         model_intends_self_revision = False
         model_continue_reason = ""
     else:
@@ -510,7 +604,6 @@ def _derive_thought_judgment(
         )
         sufficiency_level = round(min(1.0, max(0.0, blended)), 4)
         model_wants_continue = evidence.wants_to_continue
-        model_intends_action = evidence.intends_action
         model_intends_self_revision = evidence.intends_self_revision
         model_continue_reason = evidence.continue_reason
 
@@ -547,32 +640,68 @@ def _derive_thought_judgment(
             source_thought_id=thought.thought_id,
         )
     else:
-        # Emit an action proposal only when the cycle closes and either the deterministic
-        # baseline applies (evidence is None) or the model expressed an action/tool intent. This
-        # lets a model conclude "thought complete, no action required" without externalizing.
+        # Emit an action proposal only when the cycle closes and one of the explicit action
+        # paths fires. The legacy `model_intends_action` flag is no longer sufficient by
+        # itself for the LLM path; the model must pick an action class (reply / tool /
+        # no_action) through `action_intent` OR fill `i_want_to_say` for the R93 compat reply
+        # path. The deterministic offline path (evidence is None) keeps the prior Phase 1
+        # behavior of emitting a reply with `outbound_text=thought.content`; the offline
+        # path is the documented "byte-for-byte unchanged" R93 acceptance criterion.
         tool_intent = (
             evidence is not None and evidence.intends_tool_use and bool(evidence.tool_op)
         )
-        # R93: implicit reply intent. When the model filled `i_want_to_say` with operator-
-        # addressed reply text AND no explicit `tool_op` is set AND the prompt-contract summary
-        # exposes a non-empty `current_operator_id`, the owner promotes the reply text into an
-        # implicit `reply_message` tool intent. Explicit tool intent wins (deterministic
-        # precedence over the implicit reply); no operator id silently abstains (honest
-        # absence — never invents a target).
-        current_operator_id = ""
-        operator_value = request.prompt_contract_summary.get("current_operator_id", "")
-        if isinstance(operator_value, str):
-            current_operator_id = operator_value.strip()
-        implicit_reply_intent = (
+        # R93 Phase 2: explicit no_action closes the cycle internal-only regardless of every
+        # other signal. The owner never fabricates a reply, tool, or any other action when the
+        # model asserts it is unmoved.
+        explicit_no_action = (
+            evidence is not None and evidence.action_intent == ACTION_INTENT_NO_ACTION
+        )
+        # Resolve target_user_id once: model-supplied > composition-projected
+        # current_operator_id. Both may be empty; an empty resolved value suppresses reply
+        # construction (honest absence — the owner never invents a target).
+        target_user_id = ""
+        if evidence is not None and evidence.target_user_id:
+            target_user_id = evidence.target_user_id
+        if not target_user_id:
+            operator_value = request.prompt_contract_summary.get("current_operator_id", "")
+            if isinstance(operator_value, str):
+                target_user_id = operator_value.strip()
+        # R93: implicit reply intent (compat). When the model filled `i_want_to_say` with
+        # operator-addressed reply text AND no explicit `tool_op` is set AND the resolved
+        # target_user_id is non-empty, the owner promotes the reply text into an implicit
+        # `reply_message` tool intent. Explicit tool intent wins (deterministic precedence
+        # over the implicit reply); missing target silently abstains.
+        reply_compat_path = (
             evidence is not None
             and not tool_intent
             and bool(evidence.intended_reply_text)
-            and bool(current_operator_id)
+            and bool(target_user_id)
         )
-        emit_action = (
-            evidence is None or model_intends_action or tool_intent or implicit_reply_intent
+        # R93 Phase 2: explicit reply intent. When the model asserts `action_intent="reply"`
+        # AND a target is resolved, the owner builds the reply proposal directly. Phase 1
+        # called this the "legacy emit_action fallback" and used the model's `thought.content`
+        # as outbound_text; Phase 2 keeps the same shape but requires an explicit
+        # `action_intent` (and a target) and uses the model's `intended_reply_text` /
+        # `target_user_id` as the source. The legacy `thought.content` synthesis is REMOVED.
+        reply_explicit_path = (
+            evidence is not None
+            and evidence.action_intent == ACTION_INTENT_REPLY
+            and bool(target_user_id)
         )
-        if tool_intent:
+        implicit_reply_intent = reply_compat_path or reply_explicit_path
+        # R93 Phase 2: explicit tool intent via action_intent. When the model asserts
+        # `action_intent="tool"` the owner builds the tool proposal directly (preserves R85
+        # shape; doesn't require `i_want_to_use_tool=true` + `tool_op` filled).
+        explicit_tool_path_via_intent = (
+            evidence is not None
+            and evidence.action_intent == ACTION_INTENT_TOOL
+        )
+        tool_intent_resolved = tool_intent or explicit_tool_path_via_intent
+        # The legacy `model_intends_action` flag is no longer sufficient to construct a reply;
+        # it is recorded for the trace but does not drive a proposal on its own.
+        if explicit_no_action:
+            action_proposal = None
+        elif tool_intent_resolved:
             # R85: a tool intent takes the action slot (deterministic precedence over a say). The
             # owner names the op + params (model content); the planner selects/binds/validates the
             # channel. preferred_channels is a non-authoritative hint sourced from the ready channels
@@ -580,6 +709,17 @@ def _derive_thought_judgment(
             # by op regardless. An op no driver offers becomes a formal planner rejection.
             ready_channels = request.prompt_contract_summary.get("ready_channels", ())
             preferred_channels = tuple(ready_channels) if isinstance(ready_channels, tuple) else ()
+            # R93 Phase 2: when the model supplied a `target_user_id` (via explicit
+            # `action_intent="tool"` or via the R85 `i_want_to_use_tool` path with a target
+            # picked at compose time), thread it into op_params so the planner's user-binding
+            # filter can route to the right driver. The owner never invents a target; the
+            # model picks (or the composition default applies) and the owner honors it.
+            if target_user_id:
+                tool_params_for_proposal = MappingProxyType(
+                    {**dict(evidence.tool_params), "target_user_id": target_user_id}
+                )
+            else:
+                tool_params_for_proposal = evidence.tool_params
             action_proposal = ThoughtActionProposalCarrier(
                 proposal_id=f"thought-action:{request.request_id}",
                 scope="external",
@@ -590,16 +730,21 @@ def _derive_thought_judgment(
                 outbound_intensity=0.75,
                 reason_trace=("thought selected a tool op for the current cycle",),
                 governance_hints={"requires_identity_review": False},
-                op_params=evidence.tool_params,
+                op_params=tool_params_for_proposal,
             )
         elif implicit_reply_intent:
-            # R93: build a `reply_message` tool intent from the model's `i_want_to_say` text and
-            # the composition-projected current operator id. This routes through the existing R85
-            # planner-spine: `13` validates the op_params (`outbound_text` + `target_user_id`)
-            # against the CLI driver's self-described `required_params`, binds to the
-            # user-visible outbound channel, and dispatches the actual reply.
+            # R93 / R93 Phase 2: build a `reply_message` tool intent from the model's
+            # `i_want_to_say` text (compat) or `intended_reply_text` field (Phase 2 explicit),
+            # and the resolved `target_user_id` (model-supplied > composition-projected). This
+            # routes through the existing R85 planner-spine: `13` validates the op_params
+            # (`outbound_text` + `target_user_id`) against the CLI driver's self-described
+            # `required_params`, binds to the user-visible outbound channel, and dispatches
+            # the actual reply.
             ready_channels = request.prompt_contract_summary.get("ready_channels", ())
             preferred_channels = tuple(ready_channels) if isinstance(ready_channels, tuple) else ()
+            # For the explicit `action_intent="reply"` path, prefer `intended_reply_text` when
+            # the model set it; otherwise the compat `i_want_to_say` value is the only signal.
+            reply_text = evidence.intended_reply_text
             action_proposal = ThoughtActionProposalCarrier(
                 proposal_id=f"thought-action:{request.request_id}",
                 scope="external",
@@ -608,16 +753,22 @@ def _derive_thought_judgment(
                 preferred_channels=preferred_channels,
                 outbound_text=None,
                 outbound_intensity=0.75,
-                reason_trace=("thought intends to reply to the current operator",),
+                reason_trace=("thought intends to reply to the resolved target",),
                 governance_hints={"requires_identity_review": False},
                 op_params=MappingProxyType(
                     {
-                        "outbound_text": evidence.intended_reply_text,
-                        "target_user_id": current_operator_id,
+                        "outbound_text": reply_text,
+                        "target_user_id": target_user_id,
                     }
                 ),
             )
-        elif emit_action:
+        elif evidence is None:
+            # Phase 1 acceptance criterion (R93): the legacy `assemble_runtime()` deterministic
+            # offline path remains byte-for-byte unchanged. The deterministic path passes
+            # `evidence=None`; the owner emits a `reply_message` proposal with
+            # `outbound_text=thought.content` and `preferred_channels=("cli",)` exactly as it
+            # did before R93. This branch is unreachable for the LLM-backed path because
+            # `evidence` is always present there.
             action_proposal = ThoughtActionProposalCarrier(
                 proposal_id=f"thought-action:{request.request_id}",
                 scope="external",
@@ -629,6 +780,11 @@ def _derive_thought_judgment(
                 reason_trace=("thought judged sufficient for current cycle",),
                 governance_hints={"requires_identity_review": False},
             )
+        # No further fallback. When the LLM path closes without a tool intent and without an
+        # implicit / explicit reply intent (e.g. model picked `action_intent="no_action"` or
+        # left every reply field empty), `action_proposal` stays `None` and the cycle closes
+        # internal-only. The deterministic path always falls into the `evidence is None`
+        # branch above.
     # Self-revision: the existing autobiographical/sufficiency constraint is necessary; when
     # evidence is present the model's revision intent is also required. The model's intent is
     # never sufficient on its own.
@@ -913,7 +1069,13 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
             '  "self_revision": {"intends_revision": <true if your self-model should change>, "summary": "<optional>"},',
             # R93: promoted the existing optional reply field into the schema line so the model
             # explicitly knows this is a transport-target reply field, not a 1st-person narration.
-            '  "i_want_to_say": "<optional words to say outward as a reply to the current operator>"',
+            '  "i_want_to_say": "<optional words to say outward as a reply to the current operator>",',
+            '  "i_want_to_use_tool": <bool>, "tool_op": "<optional>", "tool_params": {<optional>},',
+            # R93 Phase 2: explicit action-class choice. Omit the field (or set it to null) to keep
+            # the compat behavior (i_want_to_say with operator present => implicit reply). Set it
+            # to "no_action" to close the cycle internal-only even when other signals are set.
+            '  "action_intent": "reply" | "tool" | "no_action" | null,',
+            '  "target_user_id": "<optional override of the current operator id>",',
             "}",
             "Set wants_to_continue to false and intends_action to false when no action is warranted.",
             "You may optionally add a 'hormone_response_i_predict' field: an object forecasting your "
@@ -929,6 +1091,16 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
             "text as a 'reply_message' to the current operator through the 'cli' user-visible "
             "channel. Use 'i_want_to_say' for direct operator-addressed replies; use "
             "'i_want_to_use_tool' / 'tool_op' / 'tool_params' for non-reply effectors only.",
+            # R93 Phase 2: action class is a CHOICE, not a default. The model must pick one of three
+            # options (reply, tool, no_action) for every cycle. Reply is no longer the implicit
+            # default; even when an input arrives, the model may legitimately choose "no_action" if
+            # the stimulus does not warrant an outward response.
+            "Action class is a CHOICE, not a default. After each cycle, decide whether to act and what class:",
+            "  - reply: send a user-visible message via the connected operator-facing channel.",
+            "  - tool: invoke a bound effector via tool_op + tool_params.",
+            "  - no_action: cycle closes as internal-only.",
+            "Do NOT reflexively reply just because an input arrived. Choose the action class that "
+            "matches what this cycle actually warrants.",
         ]
         system_message = LlmMessage(role="system", content="\n".join(system_lines))
 

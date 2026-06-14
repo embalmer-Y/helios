@@ -86,6 +86,30 @@ INTENDED_REPLY_TEXT_MAX_CHARS = 2000
 INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX = "…(truncated)"
 
 
+# R93 Phase 2: bounded length cap for the additive `target_user_id` slot on
+# `StructuredThoughtEvidence`. The model may name a specific user (e.g. an operator id present in
+# the prompt-contract summary) it wants to address; the owner resolves the value to a string with
+# the same deterministic truncation convention as `intended_reply_text`. 256 chars is well above
+# any real user-id length while still bounding the slot. The owner never invents a target; an
+# absent / null / empty / whitespace-only value is treated as "no override" and the composition-
+# projected `current_operator_id` is used as the context default.
+TARGET_USER_ID_MAX_CHARS = 256
+TARGET_USER_ID_TRUNCATION_SUFFIX = "…(truncated)"
+
+
+# R93 Phase 2: explicit action-class taxonomy. Reply, tool, and no_action are the three options the
+# model picks from on each cycle; reply is no longer the implicit default. The owner validates the
+# model's value and threads it into `_emit_proposal`. The "None" / "unset" state preserves the
+# pre-Phase-2 compat path (i_want_to_say + operator present => implicit reply); an explicit
+# "no_action" overrides every other signal and closes the cycle internal-only.
+ACTION_INTENT_REPLY = "reply"
+ACTION_INTENT_TOOL = "tool"
+ACTION_INTENT_NO_ACTION = "no_action"
+_ACTION_INTENT_VALUES = frozenset(
+    {ACTION_INTENT_REPLY, ACTION_INTENT_TOOL, ACTION_INTENT_NO_ACTION}
+)
+
+
 @dataclass(frozen=True)
 class InternalThoughtConfig:
     """Expose the confirmed initialization and learned-policy surface for internal thought."""

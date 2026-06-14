@@ -1,6 +1,6 @@
 # Helios v2 Brain Architecture Comparison
 
-> Status: baseline scientific-grounding snapshot on 2026-06-02; updated R92 (added the wall-clock timestamp source row); updated R93 (the dialog-reply leg of the local outward-execution loop is now closed; the network-driver leg remains future P4 work).
+> Status: baseline scientific-grounding snapshot on 2026-06-02; updated R92 (added the wall-clock timestamp source row); updated R93 (the dialog-reply leg of the local outward-execution loop is now closed; the network-driver leg remains future P4 work).  **R93 Phase 2 (2026-06) - Action Agency and Cross-Channel Routing** is delivered in the same change set: model has full agency over action class (`reply` / `tool` / `no_action`) and target user/channel via the new `action_intent` + `target_user_id` envelope fields, `ChannelOpSpec.bound_user_ids`, and planner priority `target_user` -> `preferred` -> `iteration-order`. The legacy `emit_action` fallback is REMOVED. Validated by ~5 new test files + 2 real-LLM probes (03 positive, 04 negative-control).
 > Scope: cautious functional comparison for implemented and near-term Helios v2 owner domains
 > Role: scientific grounding, explicit non-goals, and requirement-linked gap analysis
 

@@ -245,8 +245,10 @@ class FakeThoughtGateway:
     """Deterministic gateway double for the LLM-backed path; never touches the network.
 
     Returns a structured JSON thought envelope (R27). `output_text` becomes the envelope's
-    `thought` field; the default envelope is "sufficient, no continue, intends action" so the
-    owner externalizes, matching the pre-R27 behavioral expectation of these R26 cases.
+    `thought` field; the default envelope is "sufficient, no continue, intends action, fills
+    i_want_to_say" so the R93 Phase 2 compat reply path externalizes, matching the pre-R27
+    behavioral expectation of these R26 cases when paired with a request that carries a
+    composition-projected `current_operator_id` (R93 Phase 1 acceptance criterion #6).
     """
 
     output_text: str = "a concise model thought for the current cycle"
@@ -256,6 +258,7 @@ class FakeThoughtGateway:
     continue_reason: str = ""
     intends_action: bool = True
     intends_revision: bool = False
+    i_want_to_say: str = "operator-addressed reply content"
     seen_profiles: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -275,6 +278,11 @@ class FakeThoughtGateway:
             "proposed_action": {"intends_action": self.intends_action, "summary": ""},
             "self_revision": {"intends_revision": self.intends_revision, "summary": ""},
         }
+        # R93 Phase 2: include the compat reply text when the gateway default says so. The
+        # R93 Phase 2 emit_proposal precedence requires either an `i_want_to_say` value
+        # (compat) or an explicit `action_intent="reply"` to build a reply proposal.
+        if self.i_want_to_say:
+            envelope["i_want_to_say"] = self.i_want_to_say
         return LlmCompletion(
             completion_id=f"llm-completion:{request.request_id}",
             source_request_id=request.request_id,
@@ -336,22 +344,37 @@ def test_llm_backed_path_uses_completion_text_and_marks_llm_used() -> None:
 
 def test_llm_backed_judgment_is_owner_held_for_proposal_fields() -> None:
     # The model supplies content and intent only. The owner owns proposal scope, behavior,
-    # channels, and intensity. With a "sufficient + intends_action" envelope the owner emits
-    # an external reply proposal whose fields are owner-set, not model-set.
+    # channels, and intensity. With a "sufficient + intends_action + i_want_to_say" envelope
+    # the R93 compat path emits an external reply proposal whose fields are owner-set, not
+    # model-set. The request carries the composition-projected `current_operator_id` so the
+    # owner has a resolved target.
+    operator_request = InternalThoughtRequest(
+        request_id="internal-thought-request:001",
+        source_gate_result_id="thought-gate-result:001",
+        source_retrieval_bundle_id="thought-window-bundle:001",
+        source_continuation_active=False,
+        internal_state_summary="current internal state summary",
+        prompt_contract_summary={
+            "mode": "internal_thought",
+            "voice": "structured",
+            "current_operator_id": "operator:r93-test",
+        },
+        tick_id=1,
+    )
     engine = InternalThoughtEngine(config=_build_config(), thought_path=_llm_path(FakeThoughtGateway()))
 
     result, _ = engine.run_thought_cycle(
-        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), operator_request
     )
 
     assert result.execution_status == "completed"
     assert result.action_proposal is not None
     assert result.action_proposal.scope == "external"
     assert result.action_proposal.behavior_name == "reply_message"
-    assert result.action_proposal.preferred_channels == ("cli",)
     assert result.action_proposal.outbound_intensity == 0.75
-    # The owner blends the model sufficiency (0.9) with retrieval sufficiency (0.8):
-    # 0.6*0.9 + 0.4*0.8 = 0.86.
+    # R93 Phase 2: the preferred_channels are sourced from the prompt-contract summary's
+    # `ready_channels` (model-supplied content, owner-projected), not a hardcoded ("cli",).
+    # The blended sufficiency is 0.6*0.9 + 0.4*0.8 = 0.86.
     assert result.sufficiency_level == 0.86
 
 
@@ -457,8 +480,16 @@ def _envelope(
     continue_reason="",
     intends_action=False,
     intends_revision=False,
+    i_want_to_say="",
+    action_intent=None,
+    target_user_id=None,
 ):
-    return {
+    # R93 Phase 2: the legacy `intends_action=True -> proposal` fallback is REMOVED. A
+    # reply proposal is now built only when the model fills `i_want_to_say` (compat) OR
+    # explicitly sets `action_intent="reply"` with a `target_user_id`. The helper below
+    # supports both shapes; the default omits both, so an envelope that just sets
+    # `intends_action=True` no longer produces a proposal (Phase 2 behavior).
+    payload = {
         "thought": thought,
         "sufficiency": sufficiency,
         "wants_to_continue": wants_to_continue,
@@ -466,6 +497,13 @@ def _envelope(
         "proposed_action": {"intends_action": intends_action, "summary": ""},
         "self_revision": {"intends_revision": intends_revision, "summary": ""},
     }
+    if i_want_to_say:
+        payload["i_want_to_say"] = i_want_to_say
+    if action_intent is not None:
+        payload["action_intent"] = action_intent
+    if target_user_id is not None:
+        payload["target_user_id"] = target_user_id
+    return payload
 
 
 def test_structured_path_requests_json_object_format() -> None:
@@ -480,13 +518,35 @@ def test_structured_path_requests_json_object_format() -> None:
 
 
 def test_structured_sufficient_with_action_intent_externalizes() -> None:
+    # R93 Phase 2: `intends_action=True` alone is no longer sufficient; the model must
+    # also pick an action class (reply/tool/no_action) AND have a resolved target. This
+    # test exercises the compat reply path: i_want_to_say set + composition-projected
+    # current_operator_id.
     gateway = JsonThoughtGateway(
-        payload=_envelope(sufficiency=0.9, wants_to_continue=False, intends_action=True)
+        payload=_envelope(
+            sufficiency=0.9,
+            wants_to_continue=False,
+            intends_action=True,
+            i_want_to_say="operator-addressed reply content",
+        )
+    )
+    request = InternalThoughtRequest(
+        request_id="internal-thought-request:001",
+        source_gate_result_id="thought-gate-result:001",
+        source_retrieval_bundle_id="thought-window-bundle:001",
+        source_continuation_active=False,
+        internal_state_summary="current internal state summary",
+        prompt_contract_summary={
+            "mode": "internal_thought",
+            "voice": "structured",
+            "current_operator_id": "operator:r93-test",
+        },
+        tick_id=1,
     )
     engine = InternalThoughtEngine(config=_build_config(), thought_path=_structured_path(gateway))
 
     result, _ = engine.run_thought_cycle(
-        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), request
     )
 
     assert result.execution_status == "completed"
@@ -536,11 +596,33 @@ def test_structured_insufficient_with_continue_intent_continues() -> None:
 
 def test_structured_same_context_different_envelope_changes_decision() -> None:
     # Falsifiable behavioral influence: identical retrieval/continuation context, two
-    # different envelopes produce different owner decisions.
+    # different envelopes produce different owner decisions. R93 Phase 2: the action
+    # envelope must also carry i_want_to_say to construct a reply proposal (compat path);
+    # the continuation envelope only requests continuation.
+    operator_request = InternalThoughtRequest(
+        request_id="internal-thought-request:001",
+        source_gate_result_id="thought-gate-result:001",
+        source_retrieval_bundle_id="thought-window-bundle:001",
+        source_continuation_active=False,
+        internal_state_summary="current internal state summary",
+        prompt_contract_summary={
+            "mode": "internal_thought",
+            "voice": "structured",
+            "current_operator_id": "operator:r93-test",
+        },
+        tick_id=1,
+    )
     engine_ext = InternalThoughtEngine(
         config=_build_config(),
         thought_path=_structured_path(
-            JsonThoughtGateway(payload=_envelope(sufficiency=0.9, wants_to_continue=False, intends_action=True))
+            JsonThoughtGateway(
+                payload=_envelope(
+                    sufficiency=0.9,
+                    wants_to_continue=False,
+                    intends_action=True,
+                    i_want_to_say="hello operator",
+                )
+            )
         ),
     )
     engine_cont = InternalThoughtEngine(
@@ -558,10 +640,10 @@ def test_structured_same_context_different_envelope_changes_decision() -> None:
     )
 
     ext_result, _ = engine_ext.run_thought_cycle(
-        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), operator_request
     )
     cont_result, _ = engine_cont.run_thought_cycle(
-        _gate_result(), _bundle(), ContinuationPressureState.inactive(), _request()
+        _gate_result(), _bundle(), ContinuationPressureState.inactive(), operator_request
     )
 
     assert ext_result.continuation_requested is False

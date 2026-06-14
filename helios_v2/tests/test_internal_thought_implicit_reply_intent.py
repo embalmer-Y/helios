@@ -164,7 +164,13 @@ def test_explicit_tool_op_wins_over_implicit_reply() -> None:
     proposal = result.action_proposal
     assert proposal.behavior_name == "fs_write"
     assert proposal.requested_op == "fs_write"
-    assert dict(proposal.op_params) == {"path": "a.txt", "content": "hi"}
+    # R93 Phase 2: the planner's user-binding filter needs `target_user_id` to route
+    # the tool op, so the owner threads it into op_params when the composition-
+    # projected operator is non-empty.
+    op_params = dict(proposal.op_params)
+    assert op_params["path"] == "a.txt"
+    assert op_params["content"] == "hi"
+    assert op_params["target_user_id"] == "cli"
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R93。测试基线：≥ 1059 + R93 新增 passed / 4 skipped（离线）。
+> 状态：活文档（owner 参考）。最近同步：R93。测试基线：≥ 1059 + R93 新增 passed / 4 skipped（离线）。  **R93 Phase 2 (2026-06) - 行动自主 + 跨通道路由** 与 Phase 1 同批交付：模型对动作类（reply / tool / no_action）和目标用户/通道拥有完整自主权，通过新的 `action_intent` + `target_user_id` envelope 字段、`ChannelOpSpec.bound_user_ids`、以及 planner 的 `target_user` -> `preferred` -> `iteration-order` 优先级实现。旧 `emit_action` fallback 已删除。~5 个新测试 + 2 个真实 LLM probe（03 正控、04 负控）。
 > 说明：R88–R90（P5 评估框架）是 `tests/` 下只读 tests-only 诊断；R91 引入 present-field 投影（无 owner/链/边界变更，仅 contract additive + 一处 composition-glue 扩展）；**R92 引入新基础设施 owner `helios_v2.wall_clock`**（peer of `temporal`/`interoception`，纯事实源、无认知策略），并以 additive 方式给 `RuntimeFrame`/`InboundPacket.metadata`/`PersistedExperienceRecord` 各加一个可选的 wall-time 字段——owner 数 +1（infra）；**R93 修复 W2 对话回复闭环**（仅 contract additive + 一处 composition-glue 扩展 + 一处 `11` `_emit_proposal` 新分支 + system-prompt 新条款；无新 owner / 无链/边界/owner 色变化）。认知主链阶段顺序、owner 边界、既有 owner 成熟度均无变化。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：

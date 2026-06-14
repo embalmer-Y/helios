@@ -15,7 +15,7 @@
 
 - main 测试基线：≥ 1059 passed / 4 skipped（离线）。
 - **🎉 P0–P3 已达 100%**：地基期三门（G0 长跑稳定 / G1 owner 有界 / G2 记忆跨重启）此前已签收（R82/R83），唯一遗留的 B4「真实送达对账」由 **R87 收口**——`17` consequence corroboration 对本机 effector 动作已从"流程完成"升级为**真实送达可证伪**（network driver 仍属 P4）。
-- **W1+W2 已收口**：R91（present-field 内容进入 prompt）+ **R92（wall-clock 真实时间戳）+ **R93（W2 对话回复闭环可靠化——“想说话”→`13` `reply_message` dispatch 端到端可靠，详见§10 W2）** + 原 R91（wall-clock 真实时间戳，**新基础设施 owner `helios_v2.wall_clock`，三处 additive 消费 `RuntimeFrame.tick_wall_seconds` / `received_at_wall` 元数据 / `PersistedExperienceRecord.created_at_wall`，`assemble_production_runtime` 默认开启 `SystemWallClock`，R91 present-field 多出 `last input: X.Xs ago` clause）。下一步进 W2 / W3 / W4。
+- **W1+W2 已收口**：R91（present-field 内容进入 prompt）+ **R92（wall-clock 真实时间戳）+ **R93（W2 对话回复闭环可靠化——“想说话”→`13` `reply_message` dispatch 端到端可靠，详见§10 W2）** + 原 R91（wall-clock 真实时间戳，**新基础设施 owner `helios_v2.wall_clock`，三处 additive 消费 `RuntimeFrame.tick_wall_seconds` / `received_at_wall` 元数据 / `PersistedExperienceRecord.created_at_wall`，`assemble_production_runtime` 默认开启 `SystemWallClock`，R91 present-field 多出 `last input: X.Xs ago` clause）。下一步进 W2 / W3 / W4。 **R93 Phase 2 - 行动自主 + 跨通道路由** 同批交付：模型对动作类（reply / tool / no_action）和目标用户/通道拥有完整自主权，通过新的 `action_intent` + `target_user_id` envelope 字段、`ChannelOpSpec.bound_user_ids`、以及 planner 的 `target_user` -> `preferred` -> `iteration-order` 优先级实现。旧 `emit_action` fallback 已删除。~5 个新测试 + 2 个真实 LLM probe（03 正控、04 负控）。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
   - G0 长跑稳定（R83：10万 tick legacy-constant 跑通，无崩溃，内存 peak 5.6MB 持平，零泄漏）。

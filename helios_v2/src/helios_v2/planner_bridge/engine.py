@@ -93,7 +93,7 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
         if not proposal.preferred_op:
             return self._policy_rejected(request, "missing_requested_op"), None
 
-        selected_channel_id = self._select_channel(request, proposal.preferred_op)
+        selected_channel_id = self._select_channel(request, proposal.preferred_op, proposal)
         if selected_channel_id is None:
             return self._policy_rejected(request, "no_channel_available"), None
 
@@ -386,20 +386,108 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
             return value if isinstance(value, bool) else None
         return None
 
-    def _select_channel(self, request: PlannerBridgeRequest, requested_op: str) -> str | None:
+    def _select_channel(
+        self,
+        request: PlannerBridgeRequest,
+        requested_op: str,
+        proposal,
+    ) -> str | None:
+        """Owner: planner-bridge (R93 Phase 2 priority rewrite).
+
+        Select the channel for an accepted proposal, honoring a target_user -> preferred ->
+        iteration-order priority. This is the same eligible-set test the R85 iteration-order
+        path used, plus the new `bound_user_ids` user-binding filter (read off the
+        composition-projected descriptor snapshot; the driver declares its `bound_user_ids`
+        on its `ChannelOpSpec` and composition threads it through `op_specs[op]`).
+
+        Priority:
+            1. Filter to candidates whose `supported_ops` includes the requested op and whose
+               status is `available`.
+            2. If the proposal params carries a non-empty `target_user_id`:
+               a. Filter to candidates whose `op_specs[op].bound_user_ids` either contains
+                  that user OR is the wildcard (empty tuple).
+               b. If the user-serving filter is non-empty: prefer candidates also in
+                  `proposal.preferred_channels` (intersection); if any, return the first.
+                  Otherwise return the first candidate in iteration order.
+               c. If the user-serving filter is empty: fall through to step 3 (do not
+                  reject the proposal; a wildcard driver may still be the right target).
+            3. From the unfiltered candidate set: prefer candidates also in
+               `proposal.preferred_channels`. If any, return the first. Otherwise return the
+               first in iteration order.
+
+        Notes:
+            Preserves the R85 iteration-order fallback for the case where neither
+            `target_user_id` nor `preferred_channels` are set. The legacy entry point at the
+            top of `evaluate` still calls this through the same `requested_op` argument, so
+            callers outside this path are unchanged.
+        """
+
         descriptors = request.channel_descriptor_snapshot
         statuses = request.channel_status_snapshot
-        for channel_id, descriptor in descriptors.items():
+
+        def _is_candidate(channel_id: str) -> bool:
+            descriptor = descriptors.get(channel_id)
             if not isinstance(descriptor, dict):
-                continue
+                return False
             supported_ops = descriptor.get("supported_ops", ())
             if requested_op not in supported_ops:
-                continue
+                return False
             status = statuses.get(channel_id)
             if not isinstance(status, dict) or not status.get("available", False):
-                continue
-            return channel_id
-        return None
+                return False
+            return True
+
+        candidates: list[str] = [cid for cid in descriptors if _is_candidate(cid)]
+        if not candidates:
+            return None
+
+        # Pull target_user_id and preferred_channels once. Both are optional signals; the
+        # priority chain treats them as non-authoritative hints layered on top of the
+        # eligible-set filter. The proposal is passed in by the caller (it lives on the
+        # upstream `externalization_result`, not on the request snapshot).
+        target_user = ""
+        preferred: tuple[str, ...] = ()
+        if proposal is not None:
+            if isinstance(getattr(proposal, "params", None), Mapping):
+                raw_target = proposal.params.get("target_user_id", "")
+                if isinstance(raw_target, str):
+                    target_user = raw_target.strip()
+            raw_preferred = getattr(proposal, "preferred_channels", ())
+            if isinstance(raw_preferred, (tuple, list)):
+                preferred = tuple(raw_preferred)
+
+        def _serves_user(channel_id: str) -> bool:
+            if not target_user:
+                return True
+            descriptor = descriptors.get(channel_id, {})
+            op_specs = descriptor.get("op_specs", {})
+            spec = op_specs.get(requested_op) if isinstance(op_specs, dict) else None
+            if not isinstance(spec, dict):
+                # An op with no declared spec is treated as a wildcard (it predates the R85
+                # spec contract and the R93 Phase 2 user-binding filter is best-effort).
+                return True
+            bound = spec.get("bound_user_ids", ())
+            if not bound:
+                return True  # wildcard
+            return target_user in bound
+
+        # Step 2: target_user filter (fail-soft: empty filter falls through).
+        if target_user:
+            user_serving = [cid for cid in candidates if _serves_user(cid)]
+            if user_serving:
+                if preferred:
+                    intersection = [cid for cid in user_serving if cid in preferred]
+                    if intersection:
+                        return intersection[0]
+                return user_serving[0]
+
+        # Step 3: preferred_channels hint (from the unfiltered candidate set).
+        if preferred:
+            intersection = [cid for cid in candidates if cid in preferred]
+            if intersection:
+                return intersection[0]
+
+        return candidates[0]
 
     def _normalize_intensity(self, intensity: float, config: PlannerBridgeConfig) -> float:
         return max(config.legal_min_intensity, min(config.legal_max_intensity, intensity))
