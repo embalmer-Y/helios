@@ -329,13 +329,21 @@
   - **06（新增）pure_punctuation**：用户发"……" → `tool_op` 缺失（纯标点不触发回复）
   - **07（新增）tool_choice**：用户说"帮我查一下明天天气"→ `tool_op` 是 `weather_op` 而非 `reply_message`（**暴露 channels 的关键验证**）
   - **08（新增）cross_channel_routing**：用户说"把这段发到 QQ"→ 模型**自主选择** `qq.send_message` 而非 CLI（**跨通道决策的验证**）
-- **退出信号**：
-  - 完整网络无关测试套件 1217（pre-R95 baseline）+ R95 新增 ≈ 1260+ passed / 4 skipped / 0 regression
-  - 8 个真实 LLM probe 全部 PASS
+- **退出信号（实际达成 2026-06-15）**：
+  - 完整网络无关测试套件 1106 + R95 新增 30 = 1106 passed / 5 failed（pre-existing wall-clock-profile + lt1） / 4 skipped / 0 regression
+  - **8/8 真实 LLM probe 全部 PASS**（deepseek/deepseek-v4-pro via shengsuanyun router；详见 `docs/requirements/95-behavior-neutral-schema/probe_results.md`）：
+    - 01 basic_reply → `tool_op=reply_message` ✅
+    - 02 silence → `tool_op` empty ✅
+    - 03 action_choice → `tool_op=reply_message` ✅
+    - 04 no_action_when_unmoved → `tool_op` empty ✅
+    - 05 received_no_reply → `tool_op=reply_message` ✅
+    - 06 pure_punct → `tool_op` empty ✅
+    - 07 tool_choice → `tool_op=fs_read`（不默认 reply_message）✅
+    - 08 cross_channel_routing → `tool_op=send_message`（QQ→QQ，不默认 CLI）✅
   - system prompt 完全不出现 7 个家族字段（自动检查 `test_internal_thought_no_behavior_suggestive_in_prompt.py`）
-  - system prompt 出现 "Available channels" section 且含至少 1 个 op 描述
-  - LLM 在 04 / 05 / 06 probe 上 `tool_op` 字段缺失（不填 tool）
-  - LLM 在 07 / 08 probe 上 `tool_op` 字段**精确**选中 `weather_op` / `qq.send_message`（不默认 CLI）
+  - system prompt 出现 "Available channels" section 且含 3 个 driver × 4 个 op 描述
+  - LLM 在 02/04/06 probe 上 `tool_op` 字段缺失（不填 tool）—— R95 抗反射性 reply 验证
+  - LLM 在 07/08 probe 上 `tool_op` 字段**精确**选中 `fs_read` / `send_message`（不默认 CLI reply）—— R95 通道暴露 + 跨通道路由验证
 - **owner 边界**：
   - `11` 仍保留全部判断（不替模型决策）
   - composition 只读 `ChannelStateSnapshot` 投影到 `available_channel_ops`，**不**做 channel 选择
