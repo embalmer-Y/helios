@@ -167,3 +167,65 @@
   2. **记忆召回浮现的是自指的"无动作"记录**（"A thinking cycle concluded without outward action"），不是对话内容；且 hash embedding 使召回语义无意义。
   3. **prompt 里无任何时间字段**（实证确认 Q4）。
 - **修正优先级（衍生 backlog，建议作为下一个 requirement，高优先）**：把**真实当前刺激内容（present-field）**投影进 `11` 思考 prompt（与 16 already-有的 `present_field` 层对齐，或在请求里带 stimulus_summary 供 `11` 渲染）；时间字段（Q4）可并入同一 requirement（"present-field：当前刺激内容 + elapsed 时间进入思考"）。语义 embedding 根因仍排 P5。
+
+## 10. 测试驱动的近期开发计划（2026-06 真实 LLM 情感测试实证后）
+
+> 本节是 §9 实证发现直接推导出的**权威近期计划**，优先级**高于** §4/§5 的早期推测队列。
+> §4/§5 中的 internal_monologue（原建议 R91/R92）与双轨记忆（原建议 R93–R98）顺移到本节之后，
+> 编号在创建时按实际顺序重新落定（建议号会随之顺移）。排序原则：**先让 Helios 真正"读到当下"，
+> 再谈记得、回应、进化**——因为实证显示当前认知链存在"感知→认知内容断层"：真实输入被 appraise 成
+> 数字，却从未作为文字进入思考。
+
+### W1 — 让 Helios 真正读到当下（present-field 进入认知）｜最高优先、最便宜、解锁面最大
+
+**R91 — 当下意识内容进入思考 prompt（present-field-to-thought）**
+- 问题（实证）：`11._build_messages` 只渲染 `internal_state_summary`（salience 数字）+ 记忆召回 + 延续压力；**操作者消息内容从未进入思考 prompt**。Helios 会评估消息却从不阅读它。
+- 做什么：`InternalThoughtRequest` 增 `present_field_summary`（owner-neutral 投影**`08` 可报告意识内容**——它本就源自真实 percept：`02→06`(R60 内容)`→07→08`），`11` 在 user message 里渲染；与 `16` 既有 `present_field` 层对齐用同一真实内容。
+- owner 边界：`11` 仍是判断 owner；内容投影是 composition forwarding 真实 `08` 内容、绝不编造；走 `08` 而非 raw stimulus，尊重全局工作空间链（不旁路 `08`）。
+- 退出信号：抓取的 `11` prompt 含真实当下内容；评估层可重建"思考引用了当下刺激"；情感测试中思考不再恒为"没有具体的人"。
+- 依赖：无（建在现有链上）。
+
+**R92 — 时间/elapsed 进入认知（Q4 收口）**
+- 问题（实证）：prompt 无任何时间字段；runtime 无真实 wall-clock，tick 抽象无时刻；"随机时间间隔"只改 tick 数且未告知 LLM。
+- 做什么：(a) 把 `helios_v2.temporal` 已有的 `ticks_since_last_fire`/rest-pacing 作为认知内容投影进 `11`/`16` prompt；(b) 可选给 runtime 一个真实时间戳（每 tick/每刺激打 wall-clock），让"距上次多久"被 grounded。
+- owner 边界：temporal owner 拥有事实；composition forwarding；prompt 渲染。可与 R91 合并为一刀"present-field（当下内容 + elapsed 时间）"。
+- 退出信号：prompt 含 elapsed/时间事实；思考能就"沉默多久/是否秒回"推理。
+- 依赖：R91（同一 present-field 通道）。
+
+### W2 — 把"想回应"变成真的回应（对话外化闭环）
+
+**R93 — 对话回复闭环可靠化**
+- 问题（实证）：89 条仅 1 条真正回复用户；v3 `i_want_to_say` 很少转成 CLI `reply_message` dispatch。
+- 做什么：在 Helios 能读到消息（R91）后，确保"想说话"→`12` 归一化→`13` 绑定 `reply_message`→CLI dispatch 端到端可靠；排查 v3 reply-intent 到 R85 工具路径的转换缺口。
+- owner 边界：认知产生 reply 意图，`13` 绑定/dispatch；不回灌 `11`。
+- 退出信号：一条对话输入可靠产生可端到端重建的外化回复。
+- 依赖：R91（先能读，才谈回应）。
+
+### W3 — P5 根因：真实语义（让"恰当"成为可能）
+
+**R94 — 真实语义 embedding 接入（替换 hash，B2 收口）**
+- 问题（实证）：`03` 跑离线 hash embedding（无语义）→ 无法读懂中文情绪 → 生化响应与情绪无关、正负情绪分离≈0；记忆召回 hash 选取、语义无意义、且浮现自指"无动作"记录。
+- 做什么：接真实语义 embedding（本地小模型优先，支持自训练/离线再训练），使 `03` novelty/threat/reward、`06`/`10` 检索由真实语义驱动。
+- owner 边界：embedding 是能力 owner（`34`），`03`/`06`/`10` 消费；不改 owner 判断权。
+- 退出信号：相似情绪输入产生可区分且方向恰当的生化签名；记忆召回浮现相关对话内容。
+- 依赖：R91（先让内容进认知，embedding 才有完整价值）。
+
+**R95 — 去英文中心 / 可学习的 appraisal grounding**
+- 问题（实证）：R40 threat/reward 原型是英文，中文输入下失效。
+- 做什么：支持中文语义的 appraisal 锚点（多语原型或学习式），系数 P5 可学。
+- 依赖：R94。
+
+### W4 — 用情感测试作为可证伪验收
+
+**R96 — 情感响应测试正式化为验收探针**
+- 做什么：把 `scripts/emotion_test_run.py`（访客故事集 + 原始 LLM I/O 日志）+ `analyze_emotion_test.py` 接入 R88 漂移 / R89 图灵 harness / R90 记忆探针，形成可重复的"情感恰当性"可证伪验收；W1–W3 每完成一步重跑对照。
+- 退出信号：正负情绪生化分离显著、思考引用真实内容、记忆召回相关、回复闭环成立——全部可只读重建。
+- 依赖：R91–R95。
+
+### 之后（顺移的原 P5 计划）
+- 内心独白二阶刺激（原 R91/R92 内容）：建在 R91 present-field 通道上更自然（上一 tick LLM 输出回流为 present-field 的一种来源）。
+- 双轨记忆（原 R93–R98 内容）：schema/分层/重要性/衰减/记忆工具/forget 治理，建在 R94 真实 embedding 之上。
+- 受治理自我修订 / 代码自修改（P6/P7）。
+
+### 一句话排序
+**R91 读到当下 → R92 感知时间 → R93 学会回应 → R94/R95 真实语义（恰当）→ R96 验收 → 内心独白/双轨记忆/自进化。**
