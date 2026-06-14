@@ -15,7 +15,7 @@
 
 - main 测试基线：≥ 1059 passed / 4 skipped（离线）。
 - **🎉 P0–P3 已达 100%**：地基期三门（G0 长跑稳定 / G1 owner 有界 / G2 记忆跨重启）此前已签收（R82/R83），唯一遗留的 B4「真实送达对账」由 **R87 收口**——`17` consequence corroboration 对本机 effector 动作已从"流程完成"升级为**真实送达可证伪**（network driver 仍属 P4）。
-- **W1 已收口**：R91（present-field 内容进入 prompt）+ **R92（wall-clock 真实时间戳，**新基础设施 owner `helios_v2.wall_clock`，三处 additive 消费 `RuntimeFrame.tick_wall_seconds` / `received_at_wall` 元数据 / `PersistedExperienceRecord.created_at_wall`，`assemble_production_runtime` 默认开启 `SystemWallClock`，R91 present-field 多出 `last input: X.Xs ago` clause）。下一步进 W2 / W3 / W4。
+- **W1+W2 已收口**：R91（present-field 内容进入 prompt）+ **R92（wall-clock 真实时间戳）+ **R93（W2 对话回复闭环可靠化——“想说话”→`13` `reply_message` dispatch 端到端可靠，详见§10 W2）** + 原 R91（wall-clock 真实时间戳，**新基础设施 owner `helios_v2.wall_clock`，三处 additive 消费 `RuntimeFrame.tick_wall_seconds` / `received_at_wall` 元数据 / `PersistedExperienceRecord.created_at_wall`，`assemble_production_runtime` 默认开启 `SystemWallClock`，R91 present-field 多出 `last input: X.Xs ago` clause）。下一步进 W2 / W3 / W4。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
   - G0 长跑稳定（R83：10万 tick legacy-constant 跑通，无崩溃，内存 peak 5.6MB 持平，零泄漏）。
@@ -199,12 +199,12 @@
 
 ### W2 — 把"想回应"变成真的回应（对话外化闭环）
 
-**R93 — 对话回复闭环可靠化**
-- 问题（实证）：89 条仅 1 条真正回复用户；v3 `i_want_to_say` 很少转成 CLI `reply_message` dispatch。
-- 做什么：在 Helios 能读到消息（R91）后，确保"想说话"→`12` 归一化→`13` 绑定 `reply_message`→CLI dispatch 端到端可靠；排查 v3 reply-intent 到 R85 工具路径的转换缺口。
-- owner 边界：认知产生 reply 意图，`13` 绑定/dispatch；不回灌 `11`。
-- 退出信号：一条对话输入可靠产生可端到端重建的外化回复。
-- 依赖：R91（先能读，才谈回应）。
+**R93 — 对话回复闭环可靠化 ✅ 已交付（2026-06）
+- 问题（实证）：89 条仅 1 条真正回复用户；v3 `i_want_to_say` 很少转成 CLI `reply_message` dispatch。两处断点：(1) `_parse_structured_thought` 从未读顶层 `i_want_to_say` 字段，所以 reply 文本从未进 `StructuredThoughtEvidence`；(2) legacy `emit_action` fallback 构造 `ThoughtActionProposalCarrier(outbound_text=thought.content, preferred_channels=("cli",), no op_params)`，R85 `13` `required_params` 校验因缺 `outbound_text`+`target_user_id` 拒掉，写回 `world_blocked`。
+- 实现（已交付）：(a) `_parse_structured_thought` 读可选顶层 `i_want_to_say` 进新增 additive `StructuredThoughtEvidence.intended_reply_text: str = ""`（2000 字符上限 + deterministic `…(truncated)`；非字符串 parse-error）。(b) `11._emit_proposal` 加隐式 reply 分支——条件：`intended_reply_text` 非空 ∧ 无显式 `tool_op` ∧ prompt-contract 摘要 `current_operator_id` 非空；构造 `reply_message` tool intent，`op_params={"outbound_text": <reply>, "target_user_id": <operator>}`，走 R85 既有 planner-spine；显式 tool 优先；无 operator 静默不构造（绝不虚构目标）；`evidence is None`（deterministic offline 路径）字节级不变。(c) composition 加 owner-neutral `_current_operator_id(frame)` helper（最早外部刺激 `source_name`，同 R91/R92 的 `_INTERNAL_MODALITIES` 过滤；honest `""` 当无外部刺激），两个 internal-thought request bridge 都把 `current_operator_id` 加进 `prompt_contract_summary`。(d) `_build_messages` 把 `i_want_to_say` 加入 schema 行并附一句"模型：填此字段时 runtime 会通过 cli 作为 `reply_message` 发给当前操作者"的 transport clause。
+- owner 边界：`11` 仍保留全部判断；composition 只读已发布 `02` 并正向投影 `current_operator_id`（不动 `06`/`10`/`13`）；`13` 仍按 driver 自描述的 `required_params` 校验 `op_params`（defense in depth——R85 不变）；不回灌 `11`。
+- 测试：5 个 evidence 契约 + 12 个 parser + 6 个 composition projection + 7 个 implicit-reply intent precedence + 4 个 build-messages transport clause + 6 个端到端 channel-bound CLI dispatch；2 个真实 LLM probe（`scripts/r93_probes/01_basic_reply.json` 正控、`02_silence_negative_control.json` 负控）。基线 ≥ 1059 + R93 新增 passed / 4 skipped（离线）。
+- 退出信号达成：模型填 `i_want_to_say` 时可靠产生可端到端重建的 CLI 回复；不填则诚实 internal-only。
 
 ### W3 — P5 根因：真实语义（让"恰当"成为可能）
 
@@ -233,7 +233,7 @@
 - 受治理自我修订 / 代码自修改（P6/P7）。
 
 ### 一句话排序
-**R91 读到当下 → R92 感知时间 → R93 学会回应 → R94/R95 真实语义（恰当）→ R96 验收 → 内心独白/双轨记忆/自进化。**
+**R91 读到当下 → R92 感知时间 → R93 学会回应 ✓ → R94/R95 真实语义（恰当）→ R96 验收 → 内心独白/双轨记忆/自进化。**
 
 ## 11. 工程纪律：prompt 变更必须先用真实 LLM probe 验证
 

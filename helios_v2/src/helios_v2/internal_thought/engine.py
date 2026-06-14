@@ -25,6 +25,8 @@ from helios_v2.llm import LlmGatewayAPI, LlmMessage, LlmRequest
 from helios_v2.thought_gating import ContinuationPressureState, ThoughtGateResult
 
 from .contracts import (
+    INTENDED_REPLY_TEXT_MAX_CHARS,
+    INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX,
     InternalThoughtAPI,
     InternalThoughtConfig,
     InternalThoughtError,
@@ -118,6 +120,14 @@ class StructuredThoughtEvidence:
     intends_tool_use: bool = False
     tool_op: str = ""
     tool_params: Mapping[str, object] = MappingProxyType({})
+    # R93: optional model-supplied direct reply text. The model fills `i_want_to_say` with
+    # operator-addressed reply content; this owner promotes it into an implicit `reply_message`
+    # tool intent in `_emit_proposal` (when no explicit `tool_op` is set and a current operator
+    # is present in the prompt-contract summary). Default empty string preserves byte-for-byte
+    # the pre-R93 evidence shape; an absent / null / empty / whitespace-only field becomes "".
+    # Length is bounded by `INTENDED_REPLY_TEXT_MAX_CHARS` with the explicit
+    # `INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX` (deterministic truncation).
+    intended_reply_text: str = ""
 
 
 def _require_bool(payload: dict[str, Any], key: str) -> bool:
@@ -231,6 +241,49 @@ def _optional_tool_intent(payload: dict[str, Any]) -> tuple[bool, str, Mapping[s
     elif raw_params is not None:
         return False, "", MappingProxyType({})
     return True, op.strip(), MappingProxyType(params)
+
+
+def _optional_intended_reply_text(payload: dict[str, Any]) -> str:
+    """Owner: internal thought loop (R93).
+
+    Purpose:
+        Parse the optional top-level `i_want_to_say` envelope field into a bounded reply-text
+        string. The model fills this field with operator-addressed reply content; this owner
+        promotes it into an implicit `reply_message` tool intent in `_emit_proposal` (when no
+        explicit `tool_op` is set and a current operator is present in the prompt-contract
+        summary).
+
+    Failure semantics:
+        - Field absent / null / empty / whitespace-only: return `""` (no implicit reply this
+          cycle; honest absence, never a fabricated reply).
+        - Field present but non-string: raise `StructuredThoughtParseError` (fail-fast, the
+          owner never silently coerces a wrongly-typed reply field into a string).
+        - Field present and non-empty: return the trimmed value, deterministically truncated
+          with `INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX` when over the
+          `INTENDED_REPLY_TEXT_MAX_CHARS` cap.
+
+    Notes:
+        The returned string is the model's content offering. The owner's judgment on whether
+        to actually emit a reply (operator presence, tool-intent precedence, continuation
+        precedence) is performed by `_emit_proposal`, not here.
+    """
+
+    if "i_want_to_say" not in payload:
+        return ""
+    raw = payload.get("i_want_to_say")
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        raise StructuredThoughtParseError(
+            "Structured thought envelope 'i_want_to_say' must be a string when present"
+        )
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    if len(stripped) > INTENDED_REPLY_TEXT_MAX_CHARS:
+        cap = INTENDED_REPLY_TEXT_MAX_CHARS - len(INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX)
+        return stripped[:cap] + INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX
+    return stripped
 
 
 def _extract_structured_json(completion_text: str) -> str:
@@ -352,6 +405,7 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
 
     hormone_prediction = _optional_hormone_prediction(payload)
     intends_tool_use, tool_op, tool_params = _optional_tool_intent(payload)
+    intended_reply_text = _optional_intended_reply_text(payload)
 
     return StructuredThoughtEvidence(
         thought_text=thought_value.strip(),
@@ -366,6 +420,7 @@ def _parse_structured_thought(completion_text: str) -> StructuredThoughtEvidence
         intends_tool_use=intends_tool_use,
         tool_op=tool_op,
         tool_params=tool_params,
+        intended_reply_text=intended_reply_text,
     )
 
 
@@ -498,7 +553,25 @@ def _derive_thought_judgment(
         tool_intent = (
             evidence is not None and evidence.intends_tool_use and bool(evidence.tool_op)
         )
-        emit_action = evidence is None or model_intends_action or tool_intent
+        # R93: implicit reply intent. When the model filled `i_want_to_say` with operator-
+        # addressed reply text AND no explicit `tool_op` is set AND the prompt-contract summary
+        # exposes a non-empty `current_operator_id`, the owner promotes the reply text into an
+        # implicit `reply_message` tool intent. Explicit tool intent wins (deterministic
+        # precedence over the implicit reply); no operator id silently abstains (honest
+        # absence — never invents a target).
+        current_operator_id = ""
+        operator_value = request.prompt_contract_summary.get("current_operator_id", "")
+        if isinstance(operator_value, str):
+            current_operator_id = operator_value.strip()
+        implicit_reply_intent = (
+            evidence is not None
+            and not tool_intent
+            and bool(evidence.intended_reply_text)
+            and bool(current_operator_id)
+        )
+        emit_action = (
+            evidence is None or model_intends_action or tool_intent or implicit_reply_intent
+        )
         if tool_intent:
             # R85: a tool intent takes the action slot (deterministic precedence over a say). The
             # owner names the op + params (model content); the planner selects/binds/validates the
@@ -518,6 +591,31 @@ def _derive_thought_judgment(
                 reason_trace=("thought selected a tool op for the current cycle",),
                 governance_hints={"requires_identity_review": False},
                 op_params=evidence.tool_params,
+            )
+        elif implicit_reply_intent:
+            # R93: build a `reply_message` tool intent from the model's `i_want_to_say` text and
+            # the composition-projected current operator id. This routes through the existing R85
+            # planner-spine: `13` validates the op_params (`outbound_text` + `target_user_id`)
+            # against the CLI driver's self-described `required_params`, binds to the
+            # user-visible outbound channel, and dispatches the actual reply.
+            ready_channels = request.prompt_contract_summary.get("ready_channels", ())
+            preferred_channels = tuple(ready_channels) if isinstance(ready_channels, tuple) else ()
+            action_proposal = ThoughtActionProposalCarrier(
+                proposal_id=f"thought-action:{request.request_id}",
+                scope="external",
+                behavior_name="reply_message",
+                requested_op="reply_message",
+                preferred_channels=preferred_channels,
+                outbound_text=None,
+                outbound_intensity=0.75,
+                reason_trace=("thought intends to reply to the current operator",),
+                governance_hints={"requires_identity_review": False},
+                op_params=MappingProxyType(
+                    {
+                        "outbound_text": evidence.intended_reply_text,
+                        "target_user_id": current_operator_id,
+                    }
+                ),
             )
         elif emit_action:
             action_proposal = ThoughtActionProposalCarrier(
@@ -812,13 +910,25 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
             '  "wants_to_continue": <true if more thinking is needed this line of thought>,',
             '  "continue_reason": "<why you want to continue, required if wants_to_continue is true>",',
             '  "proposed_action": {"intends_action": <true if an outward action is warranted>, "summary": "<optional>"},',
-            '  "self_revision": {"intends_revision": <true if your self-model should change>, "summary": "<optional>"}',
+            '  "self_revision": {"intends_revision": <true if your self-model should change>, "summary": "<optional>"},',
+            # R93: promoted the existing optional reply field into the schema line so the model
+            # explicitly knows this is a transport-target reply field, not a 1st-person narration.
+            '  "i_want_to_say": "<optional words to say outward as a reply to the current operator>"',
             "}",
             "Set wants_to_continue to false and intends_action to false when no action is warranted.",
             "You may optionally add a 'hormone_response_i_predict' field: an object forecasting your "
             "own neuromodulator response, with any of these keys set to a number 0..1 - "
             "dopamine, norepinephrine, serotonin, acetylcholine, cortisol, oxytocin, opioid_tone, "
             "excitation, inhibition. Omit it or set it to null if you have no such sense.",
+            # R93: tell the model that filling `i_want_to_say` will actually transport that text as a
+            # `reply_message` to the current operator through the user-visible channel. Use the
+            # reply field for direct operator-addressed replies; reserve `i_want_to_use_tool` /
+            # `tool_op` for non-reply effectors only. This is one bounded declarative paragraph; the
+            # schema itself is unchanged otherwise.
+            "When you set 'i_want_to_say' to a non-empty string, the runtime will transport that "
+            "text as a 'reply_message' to the current operator through the 'cli' user-visible "
+            "channel. Use 'i_want_to_say' for direct operator-addressed replies; use "
+            "'i_want_to_use_tool' / 'tool_op' / 'tool_params' for non-reply effectors only.",
         ]
         system_message = LlmMessage(role="system", content="\n".join(system_lines))
 

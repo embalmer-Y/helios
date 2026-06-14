@@ -76,6 +76,16 @@ PRESENT_FIELD_SUMMARY_MAX_CHARS = 600
 PRESENT_FIELD_SUMMARY_TRUNCATION_SUFFIX = "…(truncated)"
 
 
+# R93: bounded length cap and explicit truncation suffix for the additive `intended_reply_text` slot
+# on `StructuredThoughtEvidence`. The model fills `i_want_to_say` with operator-addressed reply text
+# (e.g. one to a few short paragraphs); 2000 chars is well below any transport driver's outbound
+# buffer while still allowing richer reply paragraphs than the much-shorter present-field cap.
+# Truncation is deterministic and carries the same explicit suffix so over-cap input is honestly
+# visible rather than silently clipped.
+INTENDED_REPLY_TEXT_MAX_CHARS = 2000
+INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX = "…(truncated)"
+
+
 @dataclass(frozen=True)
 class InternalThoughtConfig:
     """Expose the confirmed initialization and learned-policy surface for internal thought."""

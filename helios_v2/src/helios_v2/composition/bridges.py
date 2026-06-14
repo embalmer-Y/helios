@@ -1946,6 +1946,42 @@ def _present_field_elapsed_clause(frame) -> str | None:
     return f"last input: {elapsed:.1f}s ago"
 
 
+def _current_operator_id(frame) -> str:
+    """Owner: composition (R93). Project the same-frame `02 sensory_ingress` earliest external
+    stimulus's `source_name` as the current operator id for an implicit reply target.
+
+    Reads `frame.stage_results["sensory_ingress"]` `SensoryIngressStageResult` and walks the
+    same external-stimulus subset `_present_field_stimuli_clause` (R91) and
+    `_present_field_elapsed_clause` (R92) already filter — the existing `_INTERNAL_MODALITIES`
+    set keeps interoceptive/body/background signals from being treated as "speakers". Returns
+    the FIRST external stimulus's `source_name` (matching the R91/R92 earliest-wins rule), or
+    `""` when no external stimulus is present this tick (honest absence; never invents a
+    target). When `source_name` is empty/falsy on the first external candidate, that candidate
+    is skipped and the next is considered, until a non-empty value is found or the list is
+    exhausted.
+
+    Owner-neutral: reads only published `02` stage-result fields (`modality`, `content`,
+    `source_name`); never imports `06`/`10`/`13` owners; computes no salience/selection
+    policy. The downstream `11 internal_thought` consumer treats the value as a flat string
+    and never imports `02`.
+    """
+
+    from helios_v2.runtime.stages import SensoryIngressStageResult
+
+    stage_results = frame.stage_results or {}
+    sensory = stage_results.get("sensory_ingress")
+    if not isinstance(sensory, SensoryIngressStageResult):
+        return ""
+    for stimulus in sensory.batch.stimuli:
+        if stimulus.modality in _INTERNAL_MODALITIES:
+            continue
+        if not stimulus.content:
+            continue
+        if stimulus.source_name:
+            return stimulus.source_name
+    return ""
+
+
 def _present_field_summary_text(frame, temporal_source) -> str | None:
     """Owner: composition (R91; R92 elapsed-seconds clause). Project same-frame real input +
     `08` commitment + real elapsed seconds + temporal pacing.
@@ -2218,6 +2254,11 @@ class FirstVersionInternalThoughtRequestBridge:
                 "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
                 "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
                 "ready_channels": tuple(thought_contract.capability_snapshot.get("ready_channels", ())),
+                # R93: same-frame `02 sensory_ingress` earliest external stimulus's `source_name`,
+                # honest `""` when no operator is present this tick. The `11` `_emit_proposal`
+                # consumer uses this as the implicit-reply target_user_id; an empty value silently
+                # abstains from the implicit reply (never invents a target).
+                "current_operator_id": _current_operator_id(frame),
             },
             tick_id=tick_id,
         )
@@ -2722,6 +2763,11 @@ class SemanticInternalThoughtRequestBridge:
                 "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
                 "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
                 "ready_channels": tuple(thought_contract.capability_snapshot.get("ready_channels", ())),
+                # R93: same-frame `02 sensory_ingress` earliest external stimulus's `source_name`,
+                # honest `""` when no operator is present this tick. The `11` `_emit_proposal`
+                # consumer uses this as the implicit-reply target_user_id; an empty value silently
+                # abstains from the implicit reply (never invents a target).
+                "current_operator_id": _current_operator_id(frame),
             },
             tick_id=tick_id,
             present_field_summary=_present_field_summary_text(frame, self.temporal_source),
