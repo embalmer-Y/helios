@@ -34,10 +34,6 @@ class _DeferringThoughtProvider:
         envelope = {
             "thought": "resolved, nothing to do",
             "sufficiency": 0.95,
-            "wants_to_continue": False,
-            "continue_reason": "",
-            "proposed_action": {"intends_action": False, "summary": ""},
-            "self_revision": {"intends_revision": False, "summary": ""},
         }
         return ProviderCompletion(output_text=json.dumps(envelope), finish_reason="stop")
 

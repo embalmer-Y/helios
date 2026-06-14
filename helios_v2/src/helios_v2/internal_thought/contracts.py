@@ -87,34 +87,27 @@ PRESENT_FIELD_SUMMARY_TRUNCATION_SUFFIX = "…(truncated)"
 # R94 evolution: R93 Phase 1 introduced `INTENDED_REPLY_TEXT_*` constants paired with the
 # `i_want_to_say` envelope field. R93 Phase 2 de-emphasized the field name in favor of
 # `action_intent` (reply / tool / no_action) but kept the constants. R94 retires the
-# `i_want_to_say` field entirely; the reply text now lives on `reply_text` and is read
-# only when `action_intent == "reply"`. The constants are renamed to match.
-REPLY_TEXT_MAX_CHARS = 2000
-REPLY_TEXT_TRUNCATION_SUFFIX = "…(truncated)"
-
-
-# R93 Phase 2: bounded length cap for the additive `target_user_id` slot on
-# `StructuredThoughtEvidence`. The model may name a specific user (e.g. an operator id present in
-# the prompt-contract summary) it wants to address; the owner resolves the value to a string with
-# the same deterministic truncation convention as `intended_reply_text`. 256 chars is well above
-# any real user-id length while still bounding the slot. The owner never invents a target; an
-# absent / null / empty / whitespace-only value is treated as "no override" and the composition-
-# projected `current_operator_id` is used as the context default.
-TARGET_USER_ID_MAX_CHARS = 256
-TARGET_USER_ID_TRUNCATION_SUFFIX = "…(truncated)"
-
-
-# R93 Phase 2: explicit action-class taxonomy. Reply, tool, and no_action are the three options the
-# model picks from on each cycle; reply is no longer the implicit default. The owner validates the
-# model's value and threads it into `_emit_proposal`. The "None" / "unset" state preserves the
-# pre-Phase-2 compat path (i_want_to_say + operator present => implicit reply); an explicit
-# "no_action" overrides every other signal and closes the cycle internal-only.
-ACTION_INTENT_REPLY = "reply"
-ACTION_INTENT_TOOL = "tool"
-ACTION_INTENT_NO_ACTION = "no_action"
-_ACTION_INTENT_VALUES = frozenset(
-    {ACTION_INTENT_REPLY, ACTION_INTENT_TOOL, ACTION_INTENT_NO_ACTION}
-)
+# R95: W2.6 Behavior-neutral schema. The 11 R93-R94 behavior-suggestive
+# envelope fields (`reply_text`, `i_want_to_use_tool`, `wants_to_continue`,
+# `continue_reason`, `proposed_action`, `self_revision`, `action_intent`,
+# `target_user_id`, plus the 3 companion sub-fields) are all REMOVED.
+# `tool_op` is the single primary action-class field: empty ⇒ no action;
+# non-empty ⇒ the model picked this op. The LLM may include
+# `target_user_id` inside `tool_params` (as content, not as authentication);
+# the engine does NOT auto-inject it from any source. Composition does NOT
+# project any identity field. Channels do NOT mark `source_user_id` (it
+# is not a feature, and many channels — including `cli` — have no
+# ability to mark it).
+#
+# The constants `REPLY_TEXT_MAX_CHARS`, `REPLY_TEXT_TRUNCATION_SUFFIX`,
+# `TARGET_USER_ID_MAX_CHARS`, `TARGET_USER_ID_TRUNCATION_SUFFIX`,
+# `ACTION_INTENT_*`, `_ACTION_INTENT_VALUES` are intentionally REMOVED.
+# The R95 envelope has 5 user-facing fields: `thought`, `sufficiency`,
+# `tool_op`, `tool_params`, `thinking_complete` (plus the unchanged
+# R81 `hormone_response_i_predict` and the new R95 `channel_request`).
+#
+# See `docs/requirements/95-behavior-neutral-schema/{requirement,design,task}.md`
+# for the full design rationale.
 
 
 @dataclass(frozen=True)

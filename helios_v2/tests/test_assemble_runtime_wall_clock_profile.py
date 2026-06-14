@@ -51,10 +51,6 @@ class _FakeThoughtProvider:
         envelope = {
             "thought": "a production thought for the current cycle",
             "sufficiency": 0.9,
-            "wants_to_continue": False,
-            "continue_reason": "",
-            "proposed_action": {"intends_action": True, "summary": ""},
-            "self_revision": {"intends_revision": False, "summary": ""},
         }
         return ProviderCompletion(output_text=json.dumps(envelope), finish_reason="stop")
 

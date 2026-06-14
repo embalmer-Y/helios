@@ -1950,40 +1950,92 @@ def _present_field_elapsed_clause(frame) -> str | None:
     return f"last input: {elapsed:.1f}s ago"
 
 
-def _current_operator_id(frame) -> str:
-    """Owner: composition (R93). Project the same-frame `02 sensory_ingress` earliest external
-    stimulus's `source_name` as the current operator id for an implicit reply target.
+def _available_channel_ops(frame) -> tuple[dict[str, object], ...]:
+    """Owner: composition (R95).
 
-    Reads `frame.stage_results["sensory_ingress"]` `SensoryIngressStageResult` and walks the
-    same external-stimulus subset `_present_field_stimuli_clause` (R91) and
-    `_present_field_elapsed_clause` (R92) already filter — the existing `_INTERNAL_MODALITIES`
-    set keeps interoceptive/body/background signals from being treated as "speakers". Returns
-    the FIRST external stimulus's `source_name` (matching the R91/R92 earliest-wins rule), or
-    `""` when no external stimulus is present this tick (honest absence; never invents a
-    target). When `source_name` is empty/falsy on the first external candidate, that candidate
-    is skipped and the next is considered, until a non-empty value is found or the list is
-    exhausted.
+    Purpose:
+        Project the runtime's ready channels × ops as an ordered tuple of
+        owner-neutral dicts. The downstream `11 internal_thought._build_messages`
+        consumer reads this projection and renders the "Available channels"
+        section in the system prompt. The composition makes no identity-
+        related projections here; channels do not (and may not be able to)
+        mark `source_user_id`, and the engine does not auto-inject
+        `target_user_id` from any source.
 
-    Owner-neutral: reads only published `02` stage-result fields (`modality`, `content`,
-    `source_name`); never imports `06`/`10`/`13` owners; computes no salience/selection
-    policy. The downstream `11 internal_thought` consumer treats the value as a flat string
-    and never imports `02`.
+    Returns:
+        A `tuple` of dicts, one per ready channel × op, each containing
+        `driver_id`, `op_name`, `required_params`, `effect_class`,
+        `risk_class`, `bound_user_ids`. Returns `()` when no channel state
+        is available on the frame (the runtime injects channel state at
+        composition time; tests can construct the request directly).
+
+    Notes:
+        Defensive read: the helper looks for `frame.channel_state` first
+        (R95 production shape), then `frame.stage_results["channel_state"]`
+        (fallback for early integration), and finally returns `()` when
+        neither is present. The helper is owner-neutral: it reads only
+        published channel-driver-subsystem state and never imports `11`,
+        `13`, or any other cognitive owner.
     """
 
-    from helios_v2.runtime.stages import SensoryIngressStageResult
-
-    stage_results = frame.stage_results or {}
-    sensory = stage_results.get("sensory_ingress")
-    if not isinstance(sensory, SensoryIngressStageResult):
-        return ""
-    for stimulus in sensory.batch.stimuli:
-        if stimulus.modality in _INTERNAL_MODALITIES:
+    # R95: read channel state from the frame. The channel subsystem is the
+    # canonical source of channel × op metadata; the runtime injects a
+    # `ChannelStateSnapshot` onto the frame during tick composition. When
+    # the frame is constructed by tests (no real channel subsystem), the
+    # field may be absent — in which case the prompt simply omits the
+    # "Available channels" section.
+    channel_state = getattr(frame, "channel_state", None)
+    if channel_state is None:
+        stage_results = getattr(frame, "stage_results", None) or {}
+        channel_state = stage_results.get("channel_state")
+    if channel_state is None:
+        return ()
+    descriptors = getattr(channel_state, "descriptors", ()) or ()
+    statuses = getattr(channel_state, "statuses", ()) or ()
+    # Map driver_id -> connected status (only connected drivers are ready).
+    connected: set[str] = set()
+    for status in statuses:
+        driver_id = getattr(status, "driver_id", None)
+        connected_attr = getattr(status, "connected", None)
+        if isinstance(driver_id, str) and connected_attr is True:
+            connected.add(driver_id)
+    ops: list[dict[str, object]] = []
+    for descriptor in descriptors:
+        driver_id = getattr(descriptor, "driver_id", "")
+        if not isinstance(driver_id, str) or not driver_id:
             continue
-        if not stimulus.content:
-            continue
-        if stimulus.source_name:
-            return stimulus.source_name
-    return ""
+        # Include the op regardless of connected state; the prompt explains
+        # "you may pick any one" and the planner validates connectivity at
+        # dispatch time. Skipping unconnected drivers would hide available
+        # ops from the LLM and bias the schema toward a single connected
+        # driver.
+        op_specs = getattr(descriptor, "output_op_specs", ()) or ()
+        for spec in op_specs:
+            op_name = getattr(spec, "op_name", "")
+            if not isinstance(op_name, str) or not op_name:
+                continue
+            required_params = getattr(spec, "required_params", ()) or ()
+            bound_user_ids = getattr(spec, "bound_user_ids", None)
+            if isinstance(bound_user_ids, frozenset):
+                if not bound_user_ids:
+                    bound_user_ids_serialized: tuple[str, ...] = ("*",)
+                else:
+                    bound_user_ids_serialized = tuple(sorted(bound_user_ids))
+            elif isinstance(bound_user_ids, (tuple, list)):
+                bound_user_ids_serialized = tuple(str(u) for u in bound_user_ids) or ("*",)
+            else:
+                bound_user_ids_serialized = ("*",)
+            ops.append(
+                {
+                    "driver_id": driver_id,
+                    "op_name": op_name,
+                    "required_params": [str(p) for p in required_params],
+                    "effect_class": str(getattr(spec, "effect_class", "")),
+                    "risk_class": str(getattr(spec, "risk_class", "")),
+                    "bound_user_ids": bound_user_ids_serialized,
+                }
+            )
+    return tuple(ops)
 
 
 def _present_field_summary_text(frame, temporal_source) -> str | None:
@@ -2258,11 +2310,14 @@ class FirstVersionInternalThoughtRequestBridge:
                 "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
                 "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
                 "ready_channels": tuple(thought_contract.capability_snapshot.get("ready_channels", ())),
-                # R93: same-frame `02 sensory_ingress` earliest external stimulus's `source_name`,
-                # honest `""` when no operator is present this tick. The `11` `_emit_proposal`
-                # consumer uses this as the implicit-reply target_user_id; an empty value silently
-                # abstains from the implicit reply (never invents a target).
-                "current_operator_id": _current_operator_id(frame),
+                # R95: project ready channels × ops so the LLM sees the full
+                # channel surface in the system prompt. NO identity-related
+                # projection — the R93 P2 `current_operator_id` field is
+                # REMOVED in R95. The engine does not auto-inject any
+                # `target_user_id`; the LLM is the only source of identity
+                # (in `tool_params.target_user_id`), and the planner validates
+                # against the op's `required_params`.
+                "available_channel_ops": _available_channel_ops(frame),
             },
             tick_id=tick_id,
         )
@@ -2767,11 +2822,14 @@ class SemanticInternalThoughtRequestBridge:
                 "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
                 "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
                 "ready_channels": tuple(thought_contract.capability_snapshot.get("ready_channels", ())),
-                # R93: same-frame `02 sensory_ingress` earliest external stimulus's `source_name`,
-                # honest `""` when no operator is present this tick. The `11` `_emit_proposal`
-                # consumer uses this as the implicit-reply target_user_id; an empty value silently
-                # abstains from the implicit reply (never invents a target).
-                "current_operator_id": _current_operator_id(frame),
+                # R95: project ready channels × ops so the LLM sees the full
+                # channel surface in the system prompt. NO identity-related
+                # projection — the R93 P2 `current_operator_id` field is
+                # REMOVED in R95. The engine does not auto-inject any
+                # `target_user_id`; the LLM is the only source of identity
+                # (in `tool_params.target_user_id`), and the planner validates
+                # against the op's `required_params`.
+                "available_channel_ops": _available_channel_ops(frame),
             },
             tick_id=tick_id,
             present_field_summary=_present_field_summary_text(frame, self.temporal_source),

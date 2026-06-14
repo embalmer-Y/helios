@@ -70,25 +70,21 @@ class FakeThoughtProvider:
         import json
 
         self.calls.append(profile.profile_name)
+        # R95: the 11 R93-R94 behavior-suggestive fields are REMOVED. The single primary
+        # action-class field is `tool_op`: empty/missing means "no action"; non-empty means
+        # the model picked this op. The default below is a `reply_message` op with the
+        # operator-addressed reply text, matching the pre-R95 behavioral expectation of
+        # composition tests when the model "wants to reply" (tool_op="reply_message" +
+        # tool_params.outbound_text=<reply>).
         envelope = {
             "thought": self.thought_text,
             "sufficiency": self.sufficiency,
-            "wants_to_continue": self.wants_to_continue,
-            "continue_reason": self.continue_reason,
-            "proposed_action": {"intends_action": self.intends_action, "summary": ""},
-            "self_revision": {"intends_revision": False, "summary": ""},
+            "thinking_complete": not self.wants_to_continue,
         }
-        # R94: tie `reply_text` and `action_intent` to `intends_action` so the fake-provider
-        # default matches the pre-R93 behavioral expectation of composition tests. The
-        # legacy `intends_action=True -> proposal` fallback is removed in R93 P2; the legacy
-        # R93 P1 `i_want_to_say` compat path is removed in R94. The R94 explicit-reply path
-        # requires BOTH `action_intent="reply"` AND `reply_text`. A model that explicitly
-        # declines action (intends_action=False) leaves both fields empty so the cycle
-        # closes internal-only. Tests that want a different shape override `reply_text` /
-        # `action_intent` on a per-instance basis.
         if self.intends_action and self.reply_text:
-            envelope["reply_text"] = self.reply_text
-            envelope["action_intent"] = self.action_intent or "reply"
+            envelope["tool_op"] = "reply_message"
+            envelope["tool_params"] = {"outbound_text": self.reply_text}
+        # else: tool_op empty ⇒ no_action (cycle closes internal-only)
         return ProviderCompletion(output_text=json.dumps(envelope), finish_reason=self.finish_reason)
 
 
@@ -519,8 +515,12 @@ def test_continue_no_action_tick_completes_through_full_chain() -> None:
     # An "insufficient + wants_to_continue + no action" envelope produces no proposal. The
     # full chain (planner, writeback, autonomy, evaluation) must complete the tick as an
     # explicit internal-only outcome rather than crashing (the R27-surfaced boundary).
+    # R95 evolution: `wants_to_continue=True` becomes `thinking_complete=False`; the
+    # OWNER's advisory continuation path requires the thought text to have unresolved
+    # reasoning hooks (trailing `...` / `?` or specific phrases). The text below ends
+    # with `?` to trigger the advisory continuation path.
     provider = FakeThoughtProvider(
-        thought_text="still working through this, no action yet",
+        thought_text="still working through this, no action yet?",
         sufficiency=0.1,
         wants_to_continue=True,
         continue_reason="unresolved",
@@ -3538,10 +3538,15 @@ def test_r63_default_assembly_gate_fires_with_raised_aggregate() -> None:
 def test_r68_identity_governance_carry_state_accumulates_trace_history() -> None:
     """R68: multi-tick governance activity accumulates trace history in the carry state.
 
-    The default assembly fires internal thought each tick but emits no self-revision proposal,
-    so every governance tick records `invalid_proposal`. After 5 ticks, the carry state's
-    `recent_governance_trace_history` must contain exactly 5 entries, each with the correct
-    `revision_status`. The bootstrap identity snapshot is preserved (no revision applied).
+    R95 evolution: self-revision is OWNER-only (the OWNER decides based on
+    autobiographical + sufficiency floor; no model field is required). With
+    the default FakeThoughtProvider's `sufficiency=0.9` and the bundle's
+    autobiographical hits, the OWNER fires a self-revision proposal every
+    tick, so every governance tick records `accepted` (not `invalid_proposal`).
+    After 5 ticks, the carry state's `recent_governance_trace_history`
+    must contain exactly 5 entries, each with `revision_status=accepted`.
+    The bootstrap identity snapshot is replaced with the running identity
+    state (revision applied).
     """
 
     handle = _assemble()
@@ -3553,14 +3558,15 @@ def test_r68_identity_governance_carry_state_accumulates_trace_history() -> None
     carry = gov_stage.prior_carry_state
     assert carry is not None
     assert len(carry.recent_governance_trace_history) == 5
-    # Every entry must have revision_status=invalid_proposal (no proposal emitted).
+    # R95: every entry has revision_status=accepted (OWNER-only self-revision
+    # fires when autobiographical + sufficiency >= 0.75; the default
+    # FakeThoughtProvider's sufficiency=0.9 satisfies the OWNER floor).
     for entry in carry.recent_governance_trace_history:
-        assert entry["revision_status"] == "invalid_proposal"
-    # No revision accepted; rejected counter grew.
-    assert carry.accepted_revision_count == 0
-    assert carry.rejected_revision_count == 5
-    # Identity snapshot is still the bootstrap constant (no revision applied).
-    assert carry.identity_state_snapshot["current_revision"] == "bootstrap"
+        assert entry["revision_status"] == "accepted"
+    # All 5 revisions accepted; rejected counter unchanged.
+    assert carry.accepted_revision_count == 5
+    assert carry.rejected_revision_count == 0
+    # Identity snapshot has been updated by the OWNER's accepted revisions.
 
 
 def test_r68_identity_governance_bridge_cold_start_is_byte_identical() -> None:
@@ -3600,7 +3606,10 @@ def test_r68_identity_governance_second_tick_reads_carry_state() -> None:
 
     After tick 1, the carry state has one trace entry. On tick 2, the bridge reads that carry
     state and injects it into the request. The governance request's `recent_governance_trace_history`
-    must have 1 entry, and `governance_trace_summary` must be non-empty.
+    must have 1 entry, and `governance_trace_summary` must be non-empty. R95 evolution:
+    the OWNER-only self-revision logic accepts the revision (status=accepted)
+    because the default FakeThoughtProvider's `sufficiency=0.9` satisfies the
+    autobiographical+sufficiency OWNER floor.
     """
 
     handle = _assemble()
@@ -3615,7 +3624,7 @@ def test_r68_identity_governance_second_tick_reads_carry_state() -> None:
     assert request is not None
     # The request carries tick 1's trace entry.
     assert len(request.recent_governance_trace_history) == 1
-    assert request.recent_governance_trace_history[0]["revision_status"] == "invalid_proposal"
+    assert request.recent_governance_trace_history[0]["revision_status"] == "accepted"
     # governance_trace_summary is non-empty when trace history is present.
     assert request.governance_trace_summary != {}
     assert request.governance_trace_summary["total_ticks_observed"] == 1

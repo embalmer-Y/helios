@@ -49,18 +49,14 @@ class _FakeThoughtProvider:
     thought_text: str = "deterministic thought for feedback verification"
     finish_reason: str = "stop"
     sufficiency: float = 0.9
-    wants_to_continue: bool = False
-    intends_action: bool = True
+    thinking_complete: bool = True
+    thinking_complete: bool = True
 
     def complete(self, profile, request, api_key) -> ProviderCompletion:
         import json
         envelope = {
             "thought": self.thought_text,
             "sufficiency": self.sufficiency,
-            "wants_to_continue": self.wants_to_continue,
-            "continue_reason": "",
-            "proposed_action": {"intends_action": self.intends_action, "summary": ""},
-            "self_revision": {"intends_revision": False, "summary": ""},
         }
         return ProviderCompletion(
             output_text=json.dumps(envelope),

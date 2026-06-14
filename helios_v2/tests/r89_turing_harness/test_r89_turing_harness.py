@@ -68,10 +68,6 @@ class _DeterministicThoughtProvider:
         envelope = {
             "thought": "a steady internal thought for the turing harness run",
             "sufficiency": 0.9,
-            "wants_to_continue": False,
-            "continue_reason": "",
-            "proposed_action": {"intends_action": True, "summary": ""},
-            "self_revision": {"intends_revision": False, "summary": ""},
             "hormone_response_i_predict": {"dopamine": 0.7, "serotonin": 0.6},
         }
         return ProviderCompletion(output_text=json.dumps(envelope), finish_reason="stop")

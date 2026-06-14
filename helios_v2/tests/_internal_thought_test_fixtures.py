@@ -1,14 +1,18 @@
-"""Shared fixture helpers reused by the R93 / R94 reply-path tests.
+"""Shared fixture helpers reused by the R95 tests.
 
-Mirrors the proven helpers in `test_internal_thought_engine.py` so the R93 / R94 tests do not
+Mirrors the proven helpers in `test_internal_thought_engine.py` so the R95 tests do not
 duplicate non-trivial gate-result / retrieval-bundle / config / structured-path construction.
 This module name does NOT start with `test_`, so pytest does not collect it as a test module.
 
-R94 evolution: the `envelope()` helper's `i_want_to_say` parameter is replaced with `reply_text`
-to match the R94 schema (the R93 P1 reply field is retired; reply text now lives on
-`reply_text` and is read only when `action_intent="reply"`). Call sites that previously drove
-the R93 compat path (filling `i_want_to_say` without `action_intent`) are updated to fill
-`action_intent="reply"` together with `reply_text` (the R94 explicit-reply path).
+R95 evolution: the `envelope()` helper is reduced to the 5 R95 envelope fields
+(`thought`, `sufficiency`, `tool_op`, `tool_params`, `thinking_complete`, plus the
+R81 `hormone_response_i_predict` and the new R95 `channel_request`). The 11
+R93-R94 behavior-suggestive fields (`reply_text`, `i_want_to_use_tool`,
+`wants_to_continue`, `continue_reason`, `proposed_action`, `self_revision`,
+`action_intent`, `target_user_id`, plus 3 companion sub-fields) are REMOVED.
+Call sites that previously drove the R93 compat path / R94 explicit-reply
+path are updated to use the R95 `tool_op` + `tool_params` single-point
+decision.
 """
 
 from __future__ import annotations
@@ -152,41 +156,36 @@ def envelope(
     *,
     thought: str = "model thought",
     sufficiency: float = 0.9,
-    wants_to_continue: bool = False,
-    continue_reason: str = "",
-    intends_action: bool = False,
-    intends_revision: bool = False,
-    reply_text: Any = None,
-    i_want_to_use_tool: Any = None,
     tool_op: Any = None,
     tool_params: Any = None,
-    action_intent: Any = None,
-    target_user_id: Any = None,
+    thinking_complete: bool = True,
+    channel_request: Any = None,
+    hormone_response_i_predict: Any = None,
 ) -> dict:
-    payload = {
+    """Build a R95 structured thought envelope.
+
+    The R95 envelope has 5 user-facing fields: `thought`, `sufficiency`,
+    `tool_op`, `tool_params`, `thinking_complete`, plus the R81
+    `hormone_response_i_predict` and the new R95 `channel_request`.
+
+    `None` is a sentinel for "omit from payload" (the caller wants to
+    exercise the absent-field path); a string value emits the field.
+    The R95 `tool_op` is the single primary action-class field: empty
+    / missing means "no action"; non-empty means "the model picked this
+    op" and the LLM is free to include `target_user_id` (or anything
+    else) inside `tool_params`.
+    """
+    payload: dict[str, Any] = {
         "thought": thought,
         "sufficiency": sufficiency,
-        "wants_to_continue": wants_to_continue,
-        "continue_reason": continue_reason,
-        "proposed_action": {"intends_action": intends_action, "summary": ""},
-        "self_revision": {"intends_revision": intends_revision, "summary": ""},
+        "thinking_complete": thinking_complete,
     }
-    if reply_text is not None:
-        payload["reply_text"] = reply_text
-    if i_want_to_use_tool is not None:
-        payload["i_want_to_use_tool"] = i_want_to_use_tool
     if tool_op is not None:
         payload["tool_op"] = tool_op
     if tool_params is not None:
         payload["tool_params"] = tool_params
-    # R93 Phase 2 / R94: additive envelope fields. `None` is a sentinel for "omit from
-    # payload" (the caller wants to exercise the absent-field path); a string value emits
-    # the field. R94 removes the legacy `i_want_to_say` field; the reply text now lives
-    # on `reply_text` and is read only when `action_intent="reply"`. The fixture is
-    # explicit: callers must pass `action_intent="reply"` together with `reply_text`
-    # to drive the R94 explicit-reply path.
-    if action_intent is not None:
-        payload["action_intent"] = action_intent
-    if target_user_id is not None:
-        payload["target_user_id"] = target_user_id
+    if channel_request is not None:
+        payload["channel_request"] = channel_request
+    if hormone_response_i_predict is not None:
+        payload["hormone_response_i_predict"] = hormone_response_i_predict
     return payload

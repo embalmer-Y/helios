@@ -61,7 +61,7 @@
 - 已把 `17` 对 effector 动作的对账从"流程完成"升级为"真实送达可证伪"，收口 B4 → **P0–P3 达 100%**。
 - 剩余（独立项）：`23` 侧的跨 tick 送达延迟/重试长程诊断，可在需要时建在此 verdict 之上。
 
-> 下一步方向（W1+W2+W2.5 已收口；R93 Phase 2 同步交付；**R94 已交付 2026-06**）：**W3 R95** 真实语义 embedding（替换 hash，B2 收口，是 FG-2/记忆保真总闸）；**W3 R96** 去英文中心 / 中文 appraisal grounding；**W4 R97** 把情感测试正式化为验收探针；**或** P4 网络通道生态（QQ/飞书/语音，达 P4 退出门）。P5 评估框架三件套（R88 漂移基线 + R89 图灵 harness + R90 记忆保真探针）已全部立起，准备好为后续 W3/W4 收口验证。
+> 下一步方向（W1+W2+W2.5+W2.6 已收口；R93 Phase 2 同步交付；**R94 已交付 2026-06**；**R95 已交付 2026-06**：behavior-neutral schema 完成；1106 + R95 新增 passed / 4 skipped；详见 §10 W2.6）：**W3 R98** 真实语义 embedding（替换 hash，B2 收口，是 FG-2/记忆保真总闸，原 R95 顺移）；**W3 R99** 去英文中心 / 中文 appraisal grounding（原 R96 顺移）；**W4 R100** 把情感测试正式化为验收探针（原 R97 顺移）；**或** P4 网络通道生态（QQ/飞书/语音，达 P4 退出门）。P5 评估框架三件套（R88 漂移基线 + R89 图灵 harness + R90 记忆保真探针）已全部立起，准备好为后续 W3/W4 收口验证。
 
 ## 4. 中期队列：P5 评估框架 + 内心独白
 
@@ -87,26 +87,26 @@
 
 ## 5. P5 重头：双轨记忆（建在真实长跑反馈上）
 
-### R98+（双轨记忆：原 §5 计划，编号在创建时落定）
-原 §5 的 R93–R98（schema/分层/重要性/衰减/检索规模化/工具/治理）已被 §10 W2.5 R94 / R95 / R96 / R97 推后。
-建在真实 embedding（R95）之上，**建议编号 R98 起**，但 R98 之前的实际编号顺移将在创建时落定。
-本节具体切片描述保留作 backlog：
+### R101+（双轨记忆：原 §5 计划，编号在创建时落定）
+原 §5 的 R93–R98（schema/分层/重要性/衰减/检索规模化/工具/治理）已被 §10 W2.5 R94 / **W2.6 R95** / W3 R98 / W3 R99 / W4 R100 推后。
+建在真实 embedding（R98，原 R95）之上，**建议编号 R101 起**，但 R101 之前的实际编号顺移将在创建时落定。
+本节具体切片描述保留作 backlog（编号已顺移到 R101-R106）：
 
-#### R98（建议）— MemoryRecord schema + 4 层时间分层
+#### R101（建议）— MemoryRecord schema + 4 层时间分层
 - L2/L3/L4/L5 分层，迁移 `PersistedExperienceRecord`。
 
-#### R99（建议）— 6 维 objective_importance + 双重确认写入
+#### R102（建议）— 6 维 objective_importance + 双重确认写入
 - 重要性独立于 LLM 判断的客观维度 + 双重确认写入规则。
 
-#### R100（建议）— Ebbinghaus 衰减 + recall 重固化 + 自动晋升层级
+#### R103（建议）— Ebbinghaus 衰减 + recall 重固化 + 自动晋升层级
 
-#### R101（建议）— bounded-window / ANN 语义检索
+#### R104（建议）— bounded-window / ANN 语义检索
 - 〔R83 修正后的 finding〕**非当前阻塞，是 P5 真实规模问题**：真实高维 embedding + 大 store 下朴素全库余弦才显著，届时换 bounded-window/ANN。建在双轨记忆检索层里最自然。
 
-#### R102（建议）— memory_tool_channel
+#### R105（建议）— memory_tool_channel
 - `30` 框架下 LLM 记忆工具（recall/forget/consolidate 必做，link/reflect 推迟）；所有 keyword 匹配改 embedding 余弦；解决 owner 命名冲突（新 owner 名，不与 R31 CLI 冲突）。
 
-#### R103（建议）— forget 治理 fail-closed
+#### R106（建议）— forget 治理 fail-closed
 - `14` 在 forget 上的 fail-closed 门 + 永久审计轨迹 + soft-delete + GC。
 
 ## 6. 并行轨：P4 其余 channel driver（与 A/B/C 解耦，任意插入）
@@ -126,9 +126,10 @@
 | W1 感知层（已收口） | 当下内容进入认知 + Wall-clock 真实时间戳 | R91（done）, R92（done） |
 | W2 对话外化闭环 | "想说话"→`13` `reply_message` dispatch 端到端可靠 | R93 |
 | W2.5 移除 `i_want_to_say` | LLM 完整行动 + 通道自主权（彻底删字段名，让 LLM 真正决定动作 + 通道） | R94（已交付 2026-06） |
-| W3 真实语义（FG-2 总闸） | 替换 hash embedding 为真实语义 + 中文 grounding | R95, R96 |
-| W4 情感测试验收 | 把情感测试接入 R88/R89/R90 形成可证伪验收 | R97 |
-| 之后 | 内心独白二阶刺激（建在 R91 上）/ 双轨记忆（建在 R95 上，受 R83 修正）/ 受治理自我进化 | 顺位编号待定（原 §5 R98+） |
+| W2.6 Behavior-neutral schema | 彻底消除 schema 中的"行为暗示"字段；reply 不再特殊化；channel 自描述能力；LLM 自行关联；新增 `channel_request` 让 LLM 表达缺失能力 | R95（已交付 2026-06：1106 + R95 新增 passed / 4 skipped；8 个 R95 probe 写完待 API key 轮换后跑） |
+| W3 真实语义（FG-2 总闸） | 替换 hash embedding 为真实语义 + 中文 grounding | R98（原 R95）, R99（原 R96） |
+| W4 情感测试验收 | 把情感测试接入 R88/R89/R90 形成可证伪验收 | R100（原 R97） |
+| 之后 | 内心独白二阶刺激（建在 R91 上）/ 双轨记忆（建在 R98 真实 embedding 上，受 R83 修正）/ 受治理自我进化 | 顺位编号待定（原 §5 R101+，原 R98+） |
 | P4 通道生态（并行轨） | OS（R84/R86）+ QQ/飞书/语音/WeChat | R84/R86, 并行轨 |
 | P6 / P7 | 受治理自我修订 / 受治理代码自修改 | 待 P5 框架立起后细化 |
 
@@ -268,34 +269,114 @@
 - **测试基线预期**：1107（pre-R93）+ R93 Phase 1（~40）+ R93 Phase 2（~47）+ 移除/重命名适配 + 2 个新探针测试 ≈ 1195+ passed。
 - **requirement 路径**：`docs/requirements/94-drop-i-want-to-say-llm-agency/{requirement.md,design.md,task.md}`。
 
+### W2.6 — Behavior-neutral schema（LLM 真正决定动作 + 通道；reply 不再特殊化）
+
+**R95 — Drop the "behavior-suggestive" family; channel self-describes; LLM has full agency（2026-06，**已交付**）**
+- **问题（R94 评估 + 你的洞察）**：R94 移除了 `i_want_to_say`（带"say"动词），但同家族字段全部残留：
+  - `reply_text`（"reply" 动词，行为暗示）—— R94 引入但保留了动词
+  - `i_want_to_use_tool`（"I want to" + "use"，第一称 + 行为暗示）—— R85 时代引入，R94 漏网
+  - `wants_to_continue`（"wants" 动词，行为暗示）—— R81 引入，R94 漏网
+  - `intends_action` / `intends_revision`（"intends" 动词，行为暗示）—— R81 引入，R94 漏网
+  - `action_intent`（reply/tool/no_action 三分类，结构预设）—— R93 P2 引入
+  - `target_user_id` 顶层（让 LLM 显式身份验证是错的——身份是 LLM 自己的内容决策；不是 channel 的 feature、不是 engine 的 projection）—— R93 P2 引入
+  - 顶层 schema 中"reply"作为特殊 op 的预设（"我说什么你发什么"——也是行为暗示）
+- **设计决策（你的回答 Q1-Q7）**：
+  - Q1=B：完全合并 `action_intent` 为 `tool_op`；reply 是 `tool_op` 的特殊取值；no_action = `tool_op` 缺失/空
+  - Q2=B：保留 `thinking_complete: bool` 中性信号替代 `wants_to_continue`；OWNER 选择性采纳（仍以 OWNER 的 continuation 决策为权威）
+  - Q3=A：直接删除 `proposed_action` / `self_revision` 整对象；OWNER 不再读 `intends_action` / `intends_revision`
+  - Q4=A：暴露**所有** ready channels × ops 给 LLM（含 op_name, required_params, effect_class, risk_class, bound_user_ids）
+  - Q5=完全移除 reply 类提示：不在 system prompt 中特殊化 `reply_message`；让 channel 自己描述能力；LLM 自行关联"QQ 来消息从 QQ 回"（"模型能力越来越强"——不需要硬编码映射）；**新增 `channel_request` 字段让 LLM 表达"想要的 channel 能力"（当目标 channel 不存在时）**
+  - Q6=A：8 个探针（4 旧重写 + 4 新增：confirm-only / pure-punct / tool-choice / cross-channel-routing）
+  - Q7=A：probe 04 改为检查 `tool_op` 字段缺失（`must_contain="thought"`, `must_not_contain="tool_op"`）
+  - Q8-Q10=：移除顶层 `target_user_id`；**不**让 channel 标记 source_user_id（这不是 feature；CLI 等 channel 根本没能力标记）；engine **不**自动注入 `target_user_id`；composition **不**投影 `current_operator_id`；身份完全是 LLM 自己的内容决策（如果 LLM 想填就填在 `tool_params.target_user_id`，planner 校验）—— 身份是 LLM 内容的一部分，不归 system 层处理（"channel 标记 `source_user_id` 这一点要很小心"）
+- **契约层（11 字段删除 + 2 字段新增）**：
+  - **删除**：`reply_text`, `i_want_to_use_tool`, `wants_to_continue`, `continue_reason`, `intends_action`, `action_summary`, `intends_revision`, `self_revision_summary`, `proposed_action` (整对象), `self_revision` (整对象), `action_intent`, `target_user_id` (顶层)
+  - **保留 + 提升为主决策**：`thought`, `sufficiency`, `tool_op`, `tool_params`
+  - **保留**：`hormone_response_i_predict`
+  - **新增**：`thinking_complete: bool`（替代 wants_to_continue；OWNER 选择性采纳）
+  - **新增**：`channel_request: dict | None`（LLM 表达"我想要 X 能力但 channel 没实现"）
+- **引擎层**：
+  - `_emit_proposal` 新优先级：单点判断 `evidence.tool_op` 非空 → 构造 proposal；`tool_op` 空 → no_action
+  - 移除 `reply_explicit_path` / `explicit_tool_path_via_intent` / `explicit_no_action` 三分支
+  - 移除 `model_intends_self_revision` 决策（OWNER 仅按 `self_revision_allowed_by_owner` 决定）
+  - `_derive_thought_judgment` 的 `continuation_requested` 决策改为：(runtime_forces_continue ∨ low_context_forces_continue ∨ (model_thinking_complete is False AND model still has reasoning hooks))，OWNER 仍权威
+  - `_build_messages` system prompt：
+    - 删 `reply_text` / `i_want_to_use_tool` / `wants_to_continue` / `continue_reason` / `proposed_action` / `self_revision` / `action_intent` / `target_user_id` 8 个 schema 行
+    - 加 `thinking_complete: bool`（替代 wants_to_continue）
+    - 加 `channel_request: dict | None`（可选，让 LLM 表达"想要的 channel 能力"）
+    - **新增 "Available channels" section**：从 `composition/bridges.py` 投影 `ChannelStateSnapshot`，列出每个 ready channel × 每个 op 的 `op_name` + `required_params` + `effect_class` + `risk_class` + `bound_user_ids`
+    - **删除** 任何 "reply / tool / no_action" 三分类的提示（统一为 "tool_op"）
+    - **删除** 任何"特殊 op"的提示（如 `reply_message`）——让 LLM 看 channel 自描述
+- **composition 层**：
+  - `bridges.py` 投影 channel state 到 prompt contract summary（新增 `available_channel_ops: tuple[dict, ...]`）
+  - 移除 `current_operator_id` 投影（target_user_id 取消，channel 自行标记 source）
+  - `InternalThoughtRequest.prompt_contract_summary["available_channel_ops"]` = `[(driver_id, op_name, required_params, risk_class, bound_user_ids), ...]`
+- **测试夹具更新**（约 12-15 个文件）：
+  - `_internal_thought_test_fixtures.py` `envelope()` 加 `thinking_complete` + `channel_request`，删 8 个旧字段
+  - `test_runtime_composition.py` `FakeThoughtProvider` 同步
+  - `test_internal_thought_engine.py` `FakeThoughtGateway` / `JsonThoughtGateway` 同步
+  - 7 个改名/更新测试 + 2 个新增测试：
+    - 新增 `test_internal_thought_no_behavior_suggestive_in_prompt.py`（断言 system prompt 完全没有 `reply_text` / `i_want_to_use_tool` / `wants_to_continue` / `intends_action` / `intends_revision` / `action_intent` / `target_user_id` 7 个家族字段）
+    - 新增 `test_internal_thought_channel_request_field.py`（测试 `channel_request` 字段的解析 + 透传）
+    - 新增 `test_internal_thought_available_channels_in_prompt.py`（断言 system prompt 含 Available channels section + 至少 1 个 op 描述）
+    - 新增 `test_internal_thought_thinking_complete_field.py`（测试 `thinking_complete` 替代 wants_to_continue 后 OWNER 仍权威）
+- **真实 LLM probe**（8 个 JSON，4 重写 + 4 新增）：
+  - 01_basic_reply：模型 `tool_op="reply_message" + tool_params.outbound_text=...`（reply 仍存在但作为 tool，不特殊化）
+  - 02_silence_negative_control：模型 `tool_op` 缺失/空
+  - 03_action_choice：模型 `tool_op` 非空（reply 或其他）
+  - 04_no_action_when_unmoved：**R95 核心验证**——低显著度"ok"输入 → `tool_op` 缺失/空
+  - **05（新增）received_no_reply**：用户说"我看到了你之前的回复"→ `tool_op` 缺失（确认型消息不触发新回复）
+  - **06（新增）pure_punctuation**：用户发"……" → `tool_op` 缺失（纯标点不触发回复）
+  - **07（新增）tool_choice**：用户说"帮我查一下明天天气"→ `tool_op` 是 `weather_op` 而非 `reply_message`（**暴露 channels 的关键验证**）
+  - **08（新增）cross_channel_routing**：用户说"把这段发到 QQ"→ 模型**自主选择** `qq.send_message` 而非 CLI（**跨通道决策的验证**）
+- **退出信号**：
+  - 完整网络无关测试套件 1217（pre-R95 baseline）+ R95 新增 ≈ 1260+ passed / 4 skipped / 0 regression
+  - 8 个真实 LLM probe 全部 PASS
+  - system prompt 完全不出现 7 个家族字段（自动检查 `test_internal_thought_no_behavior_suggestive_in_prompt.py`）
+  - system prompt 出现 "Available channels" section 且含至少 1 个 op 描述
+  - LLM 在 04 / 05 / 06 probe 上 `tool_op` 字段缺失（不填 tool）
+  - LLM 在 07 / 08 probe 上 `tool_op` 字段**精确**选中 `weather_op` / `qq.send_message`（不默认 CLI）
+- **owner 边界**：
+  - `11` 仍保留全部判断（不替模型决策）
+  - composition 只读 `ChannelStateSnapshot` 投影到 `available_channel_ops`，**不**做 channel 选择
+  - `13` planner 仍按 driver 自描述的 `required_params` 校验 `op_params`（defense in depth）
+  - 不回灌 `11`、无新日志机制
+  - **身份是 LLM 自己的内容决策，不归 system 层处理**：target_user_id 取消，channel **不**标记 source_user_id（不是 feature，CLI 等 channel 根本没能力），composition **不**投影 `current_operator_id`，engine **不**自动注入；LLM 想填就填在 `tool_params.target_user_id`（planner 校验）—— 身份完全在 LLM 手里，system 不做身份处理
+- **依赖**：R94（已交付）作为基础；R91 present-field 通道已立
+- **风险**：
+  - 模型需要重新适配新 schema（无 `reply_text` / `action_intent`），需要 1-2 周 fine-tune
+  - `channel_request` 是新概念，模型可能过度使用或不用；需要观察
+  - LLM 自主关联"QQ 来消息从 QQ 回"——需要验证模型确实能做这种隐式 mapping（probe 08）
+- **vs R94 关系**：R94 是"移除最显眼的 bias 源（`i_want_to_say`）"；R95 是"系统性消除整个家族"——R95 把 R94 的精神目标完整实现
+
 ### W3 — P5 根因：真实语义（让"恰当"成为可能）
 
-**R95 — 真实语义 embedding 接入（替换 hash，B2 收口）**
+**R98 — 真实语义 embedding 接入（替换 hash，B2 收口）**（原 R95 顺移）
 - 问题（实证）：`03` 跑离线 hash embedding（无语义）→ 无法读懂中文情绪 → 生化响应与情绪无关、正负情绪分离≈0；记忆召回 hash 选取、语义无意义、且浮现自指"无动作"记录。
 - 做什么：接真实语义 embedding（本地小模型优先，支持自训练/离线再训练），使 `03` novelty/threat/reward、`06`/`10` 检索由真实语义驱动。
 - owner 边界：embedding 是能力 owner（`34`），`03`/`06`/`10` 消费；不改 owner 判断权。
 - 退出信号：相似情绪输入产生可区分且方向恰当的生化签名；记忆召回浮现相关对话内容。
-- 依赖：R91（先让内容进认知，embedding 才有完整价值）+ W2.5 R94（先让 LLM 真正决定动作，语义评估的输出才有意义）。
+- 依赖：R91（先让内容进认知，embedding 才有完整价值）+ W2.5 R94（先让 LLM 真正决定动作，语义评估的输出才有意义）+ W2.6 R95（先把 schema 行为暗示清除，语义评估的输出才有意义）。
 
-**R96 — 去英文中心 / 可学习的 appraisal grounding**
+**R99 — 去英文中心 / 可学习的 appraisal grounding**（原 R96 顺移）
 - 问题（实证）：R40 threat/reward 原型是英文，中文输入下失效。
 - 做什么：支持中文语义的 appraisal 锚点（多语原型或学习式），系数 P5 可学。
-- 依赖：R95。
+- 依赖：R98。
 
 ### W4 — 用情感测试作为可证伪验收
 
-**R97 — 情感响应测试正式化为验收探针**
+**R100 — 情感响应测试正式化为验收探针**（原 R97 顺移）
 - 做什么：把 `scripts/emotion_test_run.py`（访客故事集 + 原始 LLM I/O 日志）+ `analyze_emotion_test.py` 接入 R88 漂移 / R89 图灵 harness / R90 记忆探针，形成可重复的"情感恰当性"可证伪验收；W1–W3 每完成一步重跑对照。
 - 退出信号：正负情绪生化分离显著、思考引用真实内容、记忆召回相关、回复闭环成立——全部可只读重建。
-- 依赖：R91–R96 + W2.5 R94。
+- 依赖：R91–R99 + W2.5 R94 + W2.6 R95。
 
 ### 之后（顺移的原 P5 计划）
 - 内心独白二阶刺激（原 R91/R92 内容）：建在 R91 present-field 通道上更自然（上一 tick LLM 输出回流为 present-field 的一种来源）。
-- 双轨记忆（原 R93–R98 内容）：schema/分层/重要性/衰减/记忆工具/forget 治理，建在 R94 真实 embedding 之上。
+- 双轨记忆（原 R93–R98 内容 → 现 R101+）：schema/分层/重要性/衰减/记忆工具/forget 治理，建在 R98 真实 embedding 之上。
 - 受治理自我修订 / 代码自修改（P6/P7）。
 
 ### 一句话排序（更新）
-**R91 读到当下 ✓ → R92 感知时间 ✓ → R93 学会回应 ✓ → R93 P2 完整行动 + 通道自主 ✓ → R94 移除 `i_want_to_say` ✓（W2.5，**已交付 2026-06**）→ R95 真实语义（恰当）→ R96 中文 appraisal grounding → R97 情感验收 → 内心独白/双轨记忆（R98+）/自进化。**
+**R91 读到当下 ✓ → R92 感知时间 ✓ → R93 学会回应 ✓ → R93 P2 完整行动 + 通道自主 ✓ → R94 移除 `i_want_to_say` ✓（W2.5，**已交付 2026-06**）→ R95 行为暗示清零 + channel 自描述（**W2.6，进行中**）→ R98 真实语义（恰当，原 R95）→ R99 中文 appraisal grounding（原 R96）→ R100 情感验收（原 R97）→ 内心独白/双轨记忆（R101+，原 R98+）/自进化。**
 
 ## 11. 工程纪律：prompt 变更必须先用真实 LLM probe 验证
 
