@@ -1728,7 +1728,7 @@ def assemble_runtime(
         InternalThoughtRuntimeStage(
             internal_thought_layer=internal_thought,
             request_provider=(
-                SemanticInternalThoughtRequestBridge()
+                SemanticInternalThoughtRequestBridge(temporal_source=temporal_source)
                 if semantic_memory_enabled
                 else FirstVersionInternalThoughtRequestBridge()
             ),

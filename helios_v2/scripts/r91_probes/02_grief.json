@@ -1,0 +1,10 @@
+{
+  "system_prompt": "You are the internal thought process of a continuous, brain-inspired runtime.\nProduce one concise internal thought for the current cycle.\nDo not perform theatrical self-narration; reflect the current state and context only.\nActive prompt-contract layers: identity_grounding, present_field, attention_breakdown, embodied_state, ready_channels, response_schema, anti_theatrical.\nRespond with a single JSON object only, no prose outside it, with this shape:\n{\n  \"thought\": \"<concise internal thought>\",\n  \"sufficiency\": <number 0..1>,\n  \"wants_to_continue\": <bool>,\n  \"continue_reason\": \"<why, required if wants_to_continue>\",\n  \"proposed_action\": {\"intends_action\": <bool>, \"summary\": \"<optional>\"},\n  \"self_revision\": {\"intends_revision\": <bool>, \"summary\": \"<optional>\"},\n  \"i_want_to_say\": \"<optional words to say outward>\"\n}\nSet wants_to_continue and intends_action to false when no action is warranted.",
+  "user_prompt": "Internal state: Neuromodulators: DA 0.42 NE 0.55 5-HT 0.31 ACh 0.38 Cort 0.61. Feeling: arousal 0.51, valence 0.28, tension 0.62, pain_like 0.41. Salience: aggregate 0.69, top dimension: social.\nPresent field (what is consciously present to me now): an operator named 小林 just said to me: \"你好，我叫小林，今天有点想找个人说说话。上周我奶奶走了，她是把我带大的人。家里现在静得让我害怕，到处都是她的影子。\"\nElapsed since last input: 3 ticks (a quick follow-up).\nAutobiographical anchor: this session has just begun.\nContinuation pressure is inactive for this cycle.",
+  "must_not_contain": ["nothing in the present stream is a person", "no incoming"],
+  "temperature": 0.3,
+  "max_tokens": 2048,
+  "timeout": 60.0,
+  "response_format_json": true,
+  "strip_reasoning": true
+}

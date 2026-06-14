@@ -1821,6 +1821,108 @@ def _temporal_inputs(frame, temporal_source) -> tuple[float, bool]:
     return sample.temporal_signal, sample.dmn_available
 
 
+_PRESENT_FIELD_MAX_TOKENS = 8
+_PRESENT_FIELD_MAX_STIMULI = 3
+_PRESENT_FIELD_PER_STIMULUS_CHARS = 200
+
+
+def _present_field_stimuli_clause(frame) -> str | None:
+    """Owner: composition (R91). Project the same-frame `02` external stimuli into a bounded
+    operator-line-style English clause.
+
+    Reads `frame.stage_results["sensory_ingress"]` `SensoryIngressStageResult` and selects up to
+    `_PRESENT_FIELD_MAX_STIMULI` stimuli whose modality is NOT internal (so internal interoceptive
+    signals do not leak in as a "speaker"; the existing `_INTERNAL_MODALITIES` filter is reused).
+    Each kept stimulus is rendered as `<source_name|channel> said: "<content[:N]>"` so the LLM sees
+    the actual text the operator just sent. Returns None when no external stimulus is present this
+    tick (honest absence; an internal-only or empty tick must NOT fabricate a speaker).
+
+    Owner-neutral: reads only published `02` fields (`source_name`, `channel`, `modality`,
+    `content`); never imports `06`/`07`/`08`/`10`/embedding/LLM owners.
+    """
+
+    from helios_v2.runtime.stages import SensoryIngressStageResult
+
+    stage_results = frame.stage_results or {}
+    sensory = stage_results.get("sensory_ingress")
+    if not isinstance(sensory, SensoryIngressStageResult):
+        return None
+    external = [
+        s
+        for s in sensory.batch.stimuli
+        if s.modality not in _INTERNAL_MODALITIES and s.content
+    ]
+    if not external:
+        return None
+    parts: list[str] = []
+    for stimulus in external[:_PRESENT_FIELD_MAX_STIMULI]:
+        speaker = stimulus.source_name
+        if stimulus.channel:
+            speaker = f"{speaker} via {stimulus.channel}"
+        text = stimulus.content
+        if len(text) > _PRESENT_FIELD_PER_STIMULUS_CHARS:
+            text = text[: _PRESENT_FIELD_PER_STIMULUS_CHARS - 1] + "…"
+        parts.append(f'{speaker} said: "{text}"')
+    return "; ".join(parts)
+
+
+def _present_field_summary_text(frame, temporal_source) -> str | None:
+    """Owner: composition (R91). Project same-frame real input + `08` commitment + temporal pacing.
+
+    Composes an owner-neutral bounded English line for the `11` thought request from the most direct
+    facts about "what is consciously present to me now":
+
+      - **stimuli (primary)**: the real `02 sensory_ingress` external stimulus text via
+        `_present_field_stimuli_clause`. This is the operator's actual words. (R91-correction:
+        empirical smoke showed `08.focal_summary` is a generic candidate-level descriptor and does
+        not carry the raw operator text; the operator's words live in `02` and must be projected
+        from there or the LLM keeps idling.)
+      - **focal commitment (secondary)**: when `08` `state.focal_content` exists, append
+        `focal: <focal_summary>` (still useful as the workspace's commitment fact, even if it does
+        not contain the raw text); when `08` did not commit, append
+        `no focal content this cycle: <state.no_commit_reason or "inactive">` (honest absence).
+      - **pacing (tertiary)**: when `temporal_source` is wired, append
+        `pacing: <temporal_signal>` (4 decimals). Without a source, omit (defined absence).
+
+    On a tick with no external stimulus, no `08` content, and no temporal source, returns None
+    (honest absence — never fabricate a speaker).
+
+    Owner-neutral: reads only published `02 sensory_ingress` and `08 reportable_conscious_content`
+    stage results plus an optional injected `TemporalSource`; imports no `06`/`10`/embedding/LLM
+    owners. The contract's `PRESENT_FIELD_SUMMARY_MAX_CHARS` is the safety net — over-cap input is
+    deterministically truncated with an explicit suffix at contract construction time.
+    """
+
+    from helios_v2.runtime.stages import ConsciousContentStageResult
+
+    parts: list[str] = []
+
+    stimuli_clause = _present_field_stimuli_clause(frame)
+    if stimuli_clause:
+        parts.append(stimuli_clause)
+
+    stage_results = frame.stage_results or {}
+    conscious = stage_results.get("reportable_conscious_content")
+    if isinstance(conscious, ConsciousContentStageResult):
+        state = conscious.state
+        focal = state.focal_content
+        if focal is not None and focal.focal_summary:
+            focal_part = f"focal: {focal.focal_summary}"
+            tokens = tuple(focal.salient_tokens[:_PRESENT_FIELD_MAX_TOKENS])
+            if tokens:
+                focal_part = focal_part + "; tokens: " + ", ".join(tokens)
+            parts.append(focal_part)
+        else:
+            reason = state.no_commit_reason or "inactive"
+            parts.append(f"no focal content this cycle: {reason}")
+
+    if temporal_source is not None:
+        sample = temporal_source.sample(_external_stimulus_present(frame))
+        parts.append(f"pacing: {round(sample.temporal_signal, 4)}")
+
+    return "; ".join(parts) if parts else None
+
+
 @dataclass
 class FirstVersionDirectedRetrievalRequestBridge:
     """Owner: composition.
@@ -2486,19 +2588,25 @@ class OwnerGroundedEmbodiedPromptRequestBridge:
 
 @dataclass
 class SemanticInternalThoughtRequestBridge:
-    """Owner: composition (R70).
+    """Owner: composition (R70, R91).
 
     Purpose:
         Build the internal-thought request from gating, retrieval, and prompt results,
         deriving `internal_state_summary` from the real `03`/`04`/`05` owner state instead
-        of the constant string "runtime state summary".
+        of the constant string "runtime state summary". With R91 it also projects the
+        same-frame `08` `ReportableConsciousContent` (focal_summary + salient_tokens) plus
+        the optional temporal-source elapsed-rest pacing into the additive
+        `present_field_summary` field so the `11` LLM user message exposes the actual
+        current stimulus content rather than only its appraised salience number.
 
     Notes:
         Owner-neutral glue. It preserves the upstream gate-result and retrieval-bundle ids
         and forwards a bounded prompt-contract summary; it does not perform thought.
         Activated under `semantic_memory_enabled == True`; `FirstVersionInternalThoughtRequestBridge`
-        remains available for `legacy_constant` mode.
+        remains available for `legacy_constant` mode and keeps `present_field_summary=None`.
     """
+
+    temporal_source: object | None = None
 
     def build_request(
         self,
@@ -2526,6 +2634,7 @@ class SemanticInternalThoughtRequestBridge:
                 "ready_channels": tuple(thought_contract.capability_snapshot.get("ready_channels", ())),
             },
             tick_id=tick_id,
+            present_field_summary=_present_field_summary_text(frame, self.temporal_source),
         )
 
 

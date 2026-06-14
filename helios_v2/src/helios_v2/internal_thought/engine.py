@@ -680,7 +680,12 @@ class FirstVersionInternalThoughtPath(InternalThoughtPath):
         return result, trace
 
     def _render_content(self, request: InternalThoughtRequest, retrieval_bundle: ThoughtWindowBundle) -> str:
-        fragments = [request.internal_state_summary]
+        fragments: list[str] = []
+        # R91: when the additive `present_field_summary` is supplied, render it as the first
+        # fragment so the deterministic-fallback content also exposes the current stimulus.
+        if request.present_field_summary:
+            fragments.append(f"Present field: {request.present_field_summary}")
+        fragments.append(request.internal_state_summary)
         if retrieval_bundle.short_term_context:
             fragments.append(f"Current context: {retrieval_bundle.short_term_context[0].summary}")
         if retrieval_bundle.mid_term_hits:
@@ -817,7 +822,13 @@ class LlmBackedInternalThoughtPath(InternalThoughtPath):
         ]
         system_message = LlmMessage(role="system", content="\n".join(system_lines))
 
-        user_lines = [f"Internal state: {request.internal_state_summary}"]
+        user_lines: list[str] = []
+        # R91: prepend the present-field line when the additive request field carries it (the
+        # bridge projects same-frame `08` focal content + optional temporal pacing). When the
+        # field is None this keeps the user message byte-for-byte identical to the pre-R91 form.
+        if request.present_field_summary:
+            user_lines.append(f"Present field: {request.present_field_summary}")
+        user_lines.append(f"Internal state: {request.internal_state_summary}")
         if retrieval_bundle.short_term_context:
             user_lines.append(f"Current context: {retrieval_bundle.short_term_context[0].summary}")
         if retrieval_bundle.mid_term_hits:

@@ -1,6 +1,6 @@
 # Helios v2 开发路线图（活文档）
 
-> 状态：活文档（前向开发规划）。最近同步：R90。
+> 状态：活文档（前向开发规划）。最近同步：R91。
 > 角色：记录"下一步做什么、大概是哪些 requirement、每个做什么"，避免反复重新推导。
 > 配套：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定验收标准、P0→P7 阶段路线图（上位约束）。
@@ -13,7 +13,7 @@
 
 ## 1. 当前状态（截至最近同步）
 
-- main 测试基线：996 passed / 4 skipped（离线）。
+- main 测试基线：1019 passed / 4 skipped（离线）。
 - **🎉 P0–P3 已达 100%**：地基期三门（G0 长跑稳定 / G1 owner 有界 / G2 记忆跨重启）此前已签收（R82/R83），唯一遗留的 B4「真实送达对账」由 **R87 收口**——`17` consequence corroboration 对本机 effector 动作已从"流程完成"升级为**真实送达可证伪**（network driver 仍属 P4）。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
@@ -178,19 +178,16 @@
 
 ### W1 — 让 Helios 真正读到当下（present-field 进入认知）｜最高优先、最便宜、解锁面最大
 
-**R91 — 当下意识内容进入思考 prompt（present-field-to-thought）**
-- 问题（实证）：`11._build_messages` 只渲染 `internal_state_summary`（salience 数字）+ 记忆召回 + 延续压力；**操作者消息内容从未进入思考 prompt**。Helios 会评估消息却从不阅读它。
-- 做什么：`InternalThoughtRequest` 增 `present_field_summary`（owner-neutral 投影**`08` 可报告意识内容**——它本就源自真实 percept：`02→06`(R60 内容)`→07→08`），`11` 在 user message 里渲染；与 `16` 既有 `present_field` 层对齐用同一真实内容。
-- owner 边界：`11` 仍是判断 owner；内容投影是 composition forwarding 真实 `08` 内容、绝不编造；走 `08` 而非 raw stimulus，尊重全局工作空间链（不旁路 `08`）。
-- 退出信号：抓取的 `11` prompt 含真实当下内容；评估层可重建"思考引用了当下刺激"；情感测试中思考不再恒为"没有具体的人"。
-- 依赖：无（建在现有链上）。
+**R91 — 当下意识内容进入思考 prompt（present-field-to-thought）✅ 已交付（2026-06）**
+- 实现：`InternalThoughtRequest` 加 additive `present_field_summary`（默认 None 字节级不变；非空规则+600 字符上限+确定性 `…(truncated)` 后缀）。`SemanticInternalThoughtRequestBridge` 通过新 owner-neutral helper `_present_field_summary_text` 项目**真实 `02 sensory_ingress` 外部刺激内容**（`<source> said: "<content>"`，最多 3 条 ×200 字符，按既有 `_INTERNAL_MODALITIES` 过滤 interoceptive）+ `08` focal commitment + 可选 `TemporalSource` pacing；`11._build_messages` / `_render_content` 在字段非空时 prepend `Present field:` 行。`FirstVersionInternalThoughtRequestBridge` 保持 None。
+- 实施期实证修正（§11.2）：初版假设 `08.focal_summary` 装操作者文本；smoke 抓 prompt 证伪——它是 `08` 的候选级通用描述符。修正为优先从 `02` 取真实文本，`08` 作次要附加。
+- 实证：smoke 的真实 prompt 现含 `Present field: cli via cli said: "家里现在静得让我害怕..."; focal: ...`，LLM 立即产出真正中文共情思考（"用户正在经历丧亲之痛...是把自己带大的奶奶..."）并经 CLI 真实回复。
+- owner 边界：`11` 仍保留全部判断；composition 只读已发布 `02`/`08` stage 结果 + 注入 `TemporalSource`；bridge 不 import `06`/`10`/embedding/LLM；无 system-prompt 改动、无新日志、无 owner 色/链/边界改动。
+- 测试：7 个真实 LLM probe（`scripts/r91_probes/01..07`：焦虑/哀伤/喜悦/愤怒/沉默/连续性 + 复刻失败模式的 pre-R91 负控）+ 23 个新网络无关测试（contract/engine/bridge）。基线 996→1019 测试绿。
 
-**R92 — 时间/elapsed 进入认知（Q4 收口）**
-- 问题（实证）：prompt 无任何时间字段；runtime 无真实 wall-clock，tick 抽象无时刻；"随机时间间隔"只改 tick 数且未告知 LLM。
-- 做什么：(a) 把 `helios_v2.temporal` 已有的 `ticks_since_last_fire`/rest-pacing 作为认知内容投影进 `11`/`16` prompt；(b) 可选给 runtime 一个真实时间戳（每 tick/每刺激打 wall-clock），让"距上次多久"被 grounded。
-- owner 边界：temporal owner 拥有事实；composition forwarding；prompt 渲染。可与 R91 合并为一刀"present-field（当下内容 + elapsed 时间）"。
-- 退出信号：prompt 含 elapsed/时间事实；思考能就"沉默多久/是否秒回"推理。
-- 依赖：R91（同一 present-field 通道）。
+**R92 — 时间/elapsed 进入认知（Q4 收口）✅ 部分已交付（含在 R91 中）**
+- temporal pacing 已经 `_present_field_summary_text` 投影进 prompt（`pacing: <signal>`）。
+- 仍待（独立将来 requirement）：runtime wall-clock 时间戳（每 tick/每刺激打真实时间），让"距上次多久"在秒级被 grounded 而不仅是 tick-pacing。
 
 ### W2 — 把"想回应"变成真的回应（对话外化闭环）
 
@@ -242,3 +239,21 @@
 （MiniMax-M3）须加 `--strip-reasoning`（镜像 `11` 的 `<think>`/围栏剥离）+ 足够 `--max-tokens`（≥2048）。
 probe 结果（PASS + 关键观察）写进 requirement 的 `design.md` 验证策略。probe 只做设计验证，不替代
 网络无关的 owner/契约测试。
+
+## 11.2 R91 实施期实证修正：present-field 必须从 `02` 取，不是 `08`（2026-06）
+
+R91 实现 T1–T4 后第一次真实 LLM smoke 抓取的 user prompt 暴露了一个设计假设错误，需要记录：
+
+- 期望（设计假设）：`08 ReportableConsciousContent.focal_summary` 是操作者实际消息文本的归宿。
+- 实情：`08.focal_summary` 是 `08` 的候选级**通用描述符**，例如：
+  ```
+  Present field: focal: Current focal content from perceived-stimulus-summary: perceived-stimulus-summary: current-cycle memory context
+  ```
+  操作者真实文本（"你好，我叫小林..."）**不在** `08.focal_summary` 中——它在 `02 sensory_ingress.batch.stimuli[*].content`。
+- 修正：`_present_field_summary_text` 改为**优先**项目 `02` 的真实 external stimuli（按既有 `_INTERNAL_MODALITIES` 过滤，避免把 interoceptive 当成"说话者"），格式 `<source> said: "<content>"`；`08` focal commitment 作为次要附加；temporal pacing 仍可选。修正后真实 prompt：
+  ```
+  Present field: cli via cli said: "家里现在静得让我害怕，到处都是她的影子。"; focal: ...; (pacing: ...)
+  ```
+  LLM 立即开始真正的中文共情对话（"用户正在经历丧亲之痛...是把自己带大的奶奶...这种失去带有双重分量"）并通过 CLI 真实回复，端到端实证 R91 假设成立。
+- 经验教训（写进 §11 工作流）：probe 工具用**手写理想 prompt**验证模型对内容的**消费**能力，但不保证**composition 真的能产出该内容**。两层验证都需要：probe 验证模型一端，**实施期 smoke 验证 composition 一端**。R91 因为有 smoke + LLM 原始日志，30 分钟内发现并修复；否则单测会通过但运行时仍是 holding pattern。
+- 该实证修正写进 design.md §1/§3.2；`scripts/r91_probes/` 的 cases 仍代表"应当看到的 prompt 形状"——经修正后的代码就产出这个形状。

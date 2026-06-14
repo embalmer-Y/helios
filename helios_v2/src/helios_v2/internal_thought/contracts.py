@@ -68,6 +68,14 @@ _HORMONE_PREDICTION_CHANNELS = (
 )
 
 
+# R91: bounded length cap and explicit truncation suffix for the additive `present_field_summary`.
+# Empirical R91 probe runs (`scripts/r91_probes/`) show the model engages content well within ~600
+# chars of present-field text plus the existing internal-state line; truncation is deterministic and
+# carries an explicit suffix so any over-cap input is honestly visible rather than silently clipped.
+PRESENT_FIELD_SUMMARY_MAX_CHARS = 600
+PRESENT_FIELD_SUMMARY_TRUNCATION_SUFFIX = "…(truncated)"
+
+
 @dataclass(frozen=True)
 class InternalThoughtConfig:
     """Expose the confirmed initialization and learned-policy surface for internal thought."""
@@ -106,6 +114,11 @@ class InternalThoughtRequest:
     internal_state_summary: str
     prompt_contract_summary: Mapping[str, object]
     tick_id: int | None
+    # R91: additive optional present-field text projected from the same-frame `08`
+    # `ReportableConsciousContent` (focal_summary + salient_tokens) plus the optional temporal
+    # source's elapsed-rest pacing. When None the request is byte-for-byte the pre-R91 shape;
+    # `11._build_messages` only renders the `Present field:` line when this is non-None.
+    present_field_summary: str | None = None
 
     def __post_init__(self) -> None:
         if not self.request_id:
@@ -127,6 +140,19 @@ class InternalThoughtRequest:
                     "InternalThoughtRequest prompt_contract_summary must not contain empty keys"
                 )
         object.__setattr__(self, "prompt_contract_summary", summary)
+        # R91: validate + bound the additive present-field text. None preserves prior behavior;
+        # a non-None value must be non-blank, and is deterministically truncated with an explicit
+        # suffix when over the owner-defined character cap. Truncation is honest (never silent).
+        if self.present_field_summary is not None:
+            value = self.present_field_summary
+            if not value or not value.strip():
+                raise InternalThoughtError(
+                    "InternalThoughtRequest.present_field_summary must not be blank when set"
+                )
+            if len(value) > PRESENT_FIELD_SUMMARY_MAX_CHARS:
+                cap = PRESENT_FIELD_SUMMARY_MAX_CHARS - len(PRESENT_FIELD_SUMMARY_TRUNCATION_SUFFIX)
+                truncated = value[:cap] + PRESENT_FIELD_SUMMARY_TRUNCATION_SUFFIX
+                object.__setattr__(self, "present_field_summary", truncated)
 
 
 @dataclass(frozen=True)
