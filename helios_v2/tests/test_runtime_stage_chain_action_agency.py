@@ -108,7 +108,7 @@ def test_action_intent_reply_dispatches_cli_sink() -> None:
                 "continue_reason": "",
                 "proposed_action": {"intends_action": True, "summary": ""},
                 "self_revision": {"intends_revision": False, "summary": ""},
-                "i_want_to_say": "R93-P2-DISPATCH-MARKER",
+                "reply_text": "R93-P2-DISPATCH-MARKER",
                 "action_intent": "reply",
             }
             return ProviderCompletion(output_text=json.dumps(envelope), finish_reason="stop")
@@ -159,7 +159,7 @@ def test_target_user_id_honored_in_multi_driver_fixture() -> None:
                 "continue_reason": "",
                 "proposed_action": {"intends_action": True, "summary": ""},
                 "self_revision": {"intends_revision": False, "summary": ""},
-                "i_want_to_say": "R93-P2-TARGETED-MARKER",
+                "reply_text": "R93-P2-TARGETED-MARKER",
                 "action_intent": "reply",
                 "target_user_id": "user:specific",
             }

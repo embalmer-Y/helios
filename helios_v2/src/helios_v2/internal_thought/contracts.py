@@ -76,14 +76,21 @@ PRESENT_FIELD_SUMMARY_MAX_CHARS = 600
 PRESENT_FIELD_SUMMARY_TRUNCATION_SUFFIX = "…(truncated)"
 
 
-# R93: bounded length cap and explicit truncation suffix for the additive `intended_reply_text` slot
-# on `StructuredThoughtEvidence`. The model fills `i_want_to_say` with operator-addressed reply text
-# (e.g. one to a few short paragraphs); 2000 chars is well below any transport driver's outbound
-# buffer while still allowing richer reply paragraphs than the much-shorter present-field cap.
-# Truncation is deterministic and carries the same explicit suffix so over-cap input is honestly
-# visible rather than silently clipped.
-INTENDED_REPLY_TEXT_MAX_CHARS = 2000
-INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX = "…(truncated)"
+# R94: bounded length cap and explicit truncation suffix for the `reply_text` slot on
+# `StructuredThoughtEvidence`. The model declares reply content as a sub-detail of
+# `action_intent="reply"` (the action class is the primary choice; `reply_text` is the
+# reply-specific content). 2000 chars is well below any transport driver's outbound buffer
+# while still allowing richer reply paragraphs than the much-shorter present-field cap.
+# Truncation is deterministic and carries the same explicit suffix so over-cap input is
+# honestly visible rather than silently clipped.
+#
+# R94 evolution: R93 Phase 1 introduced `INTENDED_REPLY_TEXT_*` constants paired with the
+# `i_want_to_say` envelope field. R93 Phase 2 de-emphasized the field name in favor of
+# `action_intent` (reply / tool / no_action) but kept the constants. R94 retires the
+# `i_want_to_say` field entirely; the reply text now lives on `reply_text` and is read
+# only when `action_intent == "reply"`. The constants are renamed to match.
+REPLY_TEXT_MAX_CHARS = 2000
+REPLY_TEXT_TRUNCATION_SUFFIX = "…(truncated)"
 
 
 # R93 Phase 2: bounded length cap for the additive `target_user_id` slot on

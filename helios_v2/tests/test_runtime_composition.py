@@ -52,7 +52,7 @@ class FakeThoughtProvider:
 
     Returns a structured JSON thought envelope (R27): `thought_text` becomes the envelope's
     `thought`; the default envelope is "sufficient + intends_action + i_want_to_say" so the
-    R93 Phase 2 compat reply path externalizes, matching the pre-R93 behavioral expectation
+    R94 explicit-reply path externalizes, matching the pre-R93 behavioral expectation
     of these composition tests when the request carries a `current_operator_id`.
     """
 
@@ -62,7 +62,8 @@ class FakeThoughtProvider:
     wants_to_continue: bool = False
     continue_reason: str = ""
     intends_action: bool = True
-    i_want_to_say: str = "operator-addressed reply content"
+    reply_text: str = "operator-addressed reply content"
+    action_intent: str | None = "reply"  # R94: explicit action class choice
     calls: list[str] = field(default_factory=list)
 
     def complete(self, profile, request, api_key) -> ProviderCompletion:
@@ -77,15 +78,17 @@ class FakeThoughtProvider:
             "proposed_action": {"intends_action": self.intends_action, "summary": ""},
             "self_revision": {"intends_revision": False, "summary": ""},
         }
-        # R93 Phase 2: tie `i_want_to_say` to `intends_action` so the fake-provider default
-        # matches the pre-R93 behavioral expectation of composition tests. The legacy
-        # `intends_action=True -> proposal` fallback is removed in Phase 2, but a model that
-        # "intends action" with the compat reply field filled still externalizes; a model
-        # that explicitly declines action (intends_action=False) leaves `i_want_to_say` empty
-        # so the compat reply path is silent. Tests that want a different shape override
-        # `i_want_to_say` on a per-instance basis.
-        if self.intends_action and self.i_want_to_say:
-            envelope["i_want_to_say"] = self.i_want_to_say
+        # R94: tie `reply_text` and `action_intent` to `intends_action` so the fake-provider
+        # default matches the pre-R93 behavioral expectation of composition tests. The
+        # legacy `intends_action=True -> proposal` fallback is removed in R93 P2; the legacy
+        # R93 P1 `i_want_to_say` compat path is removed in R94. The R94 explicit-reply path
+        # requires BOTH `action_intent="reply"` AND `reply_text`. A model that explicitly
+        # declines action (intends_action=False) leaves both fields empty so the cycle
+        # closes internal-only. Tests that want a different shape override `reply_text` /
+        # `action_intent` on a per-instance basis.
+        if self.intends_action and self.reply_text:
+            envelope["reply_text"] = self.reply_text
+            envelope["action_intent"] = self.action_intent or "reply"
         return ProviderCompletion(output_text=json.dumps(envelope), finish_reason=self.finish_reason)
 
 

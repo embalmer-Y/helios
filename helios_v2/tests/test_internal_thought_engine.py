@@ -258,7 +258,7 @@ class FakeThoughtGateway:
     continue_reason: str = ""
     intends_action: bool = True
     intends_revision: bool = False
-    i_want_to_say: str = "operator-addressed reply content"
+    reply_text: str = "operator-addressed reply content"
     seen_profiles: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -278,11 +278,12 @@ class FakeThoughtGateway:
             "proposed_action": {"intends_action": self.intends_action, "summary": ""},
             "self_revision": {"intends_revision": self.intends_revision, "summary": ""},
         }
-        # R93 Phase 2: include the compat reply text when the gateway default says so. The
-        # R93 Phase 2 emit_proposal precedence requires either an `i_want_to_say` value
-        # (compat) or an explicit `action_intent="reply"` to build a reply proposal.
-        if self.i_want_to_say:
-            envelope["i_want_to_say"] = self.i_want_to_say
+        # R94: include the reply text when the gateway default says so. The R94
+        # explicit-reply path requires BOTH `action_intent="reply"` AND `reply_text` to
+        # build a reply proposal. (R93 P2's compat path is REMOVED in R94.)
+        if self.reply_text:
+            envelope["reply_text"] = self.reply_text
+            envelope["action_intent"] = "reply"
         return LlmCompletion(
             completion_id=f"llm-completion:{request.request_id}",
             source_request_id=request.request_id,
@@ -480,15 +481,16 @@ def _envelope(
     continue_reason="",
     intends_action=False,
     intends_revision=False,
-    i_want_to_say="",
+    reply_text="",
     action_intent=None,
     target_user_id=None,
 ):
-    # R93 Phase 2: the legacy `intends_action=True -> proposal` fallback is REMOVED. A
-    # reply proposal is now built only when the model fills `i_want_to_say` (compat) OR
-    # explicitly sets `action_intent="reply"` with a `target_user_id`. The helper below
-    # supports both shapes; the default omits both, so an envelope that just sets
-    # `intends_action=True` no longer produces a proposal (Phase 2 behavior).
+    # R94: the legacy `intends_action=True -> proposal` fallback is REMOVED (R93 P2).
+    # The legacy R93 P1 `i_want_to_say` compat path is ALSO REMOVED in R94. A reply
+    # proposal is now built only when the model supplies BOTH
+    # `action_intent="reply"` AND `reply_text` (a sub-detail of the reply action class)
+    # AND has a resolved target. The helper below wires the two together so callers
+    # only need to set `reply_text` (or both explicitly).
     payload = {
         "thought": thought,
         "sufficiency": sufficiency,
@@ -497,9 +499,16 @@ def _envelope(
         "proposed_action": {"intends_action": intends_action, "summary": ""},
         "self_revision": {"intends_revision": intends_revision, "summary": ""},
     }
-    if i_want_to_say:
-        payload["i_want_to_say"] = i_want_to_say
-    if action_intent is not None:
+    if reply_text:
+        payload["reply_text"] = reply_text
+        # R94: when reply_text is set, default action_intent to "reply" so the R94
+        # explicit-reply path is taken. Callers can override by passing both
+        # `reply_text` and `action_intent` explicitly.
+        if action_intent is None:
+            payload["action_intent"] = "reply"
+        else:
+            payload["action_intent"] = action_intent
+    elif action_intent is not None:
         payload["action_intent"] = action_intent
     if target_user_id is not None:
         payload["target_user_id"] = target_user_id
@@ -527,7 +536,7 @@ def test_structured_sufficient_with_action_intent_externalizes() -> None:
             sufficiency=0.9,
             wants_to_continue=False,
             intends_action=True,
-            i_want_to_say="operator-addressed reply content",
+            reply_text="operator-addressed reply content",
         )
     )
     request = InternalThoughtRequest(
@@ -620,7 +629,7 @@ def test_structured_same_context_different_envelope_changes_decision() -> None:
                     sufficiency=0.9,
                     wants_to_continue=False,
                     intends_action=True,
-                    i_want_to_say="hello operator",
+                    reply_text="hello operator",
                 )
             )
         ),

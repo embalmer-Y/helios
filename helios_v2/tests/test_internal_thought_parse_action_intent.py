@@ -160,14 +160,14 @@ def test_parse_full_envelope_threads_both_fields() -> None:
         "wants_to_continue": False,
         "proposed_action": {"intends_action": False, "summary": ""},
         "self_revision": {"intends_revision": False, "summary": ""},
-        "i_want_to_say": "operator-addressed reply",
+        "reply_text": "operator-addressed reply",
         "action_intent": "reply",
         "target_user_id": "user:001",
     }
     evidence = _parse_structured_thought(json.dumps(envelope))
     assert evidence.action_intent == "reply"
     assert evidence.target_user_id == "user:001"
-    assert evidence.intended_reply_text == "operator-addressed reply"
+    assert evidence.reply_text == "operator-addressed reply"
 
 
 def test_parse_minimal_envelope_has_none_values() -> None:

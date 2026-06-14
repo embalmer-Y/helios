@@ -39,8 +39,8 @@ class _ReplyThoughtProvider:
     but leaves `proposed_action.intends_action=False` (it considers the reply the action).
     """
 
-    reply_text: str = "hello operator"
-    i_want_to_say: str | None = "hello operator"
+    reply_text: str | None = "hello operator"
+    action_intent: str | None = "reply"
     i_want_to_use_tool: bool | None = None
     tool_op: str | None = None
     tool_params: dict | None = None
@@ -59,8 +59,12 @@ class _ReplyThoughtProvider:
             "proposed_action": {"intends_action": False, "summary": ""},
             "self_revision": {"intends_revision": False, "summary": ""},
         }
-        if self.i_want_to_say is not None:
-            envelope["i_want_to_say"] = self.i_want_to_say
+        if self.reply_text is not None:
+            envelope["reply_text"] = self.reply_text
+            # R94: the reply proposal requires explicit `action_intent="reply"`. When
+            # the provider supplies reply_text, also set the action_intent so the
+            # R94 explicit-reply path is taken.
+            envelope["action_intent"] = self.action_intent or "reply"
         if self.i_want_to_use_tool is not None:
             envelope["i_want_to_use_tool"] = self.i_want_to_use_tool
             if self.tool_op is not None:
@@ -95,11 +99,11 @@ def _assemble_channel_bound(provider, sink: list[str]):
 # ---------------------------------------------------------------------------
 
 
-def test_implicit_reply_reaches_cli_sink_end_to_end() -> None:
+def test_explicit_reply_reaches_cli_sink_end_to_end() -> None:
     """The chain the R91 emotion long-run found broken: model fills `i_want_to_say`,
     `11` builds an implicit `reply_message` tool intent, R85 planner binds it to the CLI
     driver, the dispatcher routes it to the sink."""
-    provider = _ReplyThoughtProvider(reply_text="hello back", i_want_to_say="hello back")
+    provider = _ReplyThoughtProvider(reply_text="hello back")
     sink: list[str] = []
     handle = _assemble_channel_bound(provider, sink)
     handle.startup()
@@ -130,7 +134,7 @@ def test_implicit_reply_reaches_cli_sink_end_to_end() -> None:
     assert "hello back" in sink[0]
 
 
-def test_implicit_reply_projects_current_operator_id_into_request_summary() -> None:
+def test_explicit_reply_projects_current_operator_id_into_request_summary() -> None:
     """Proves the R93 composition `_current_operator_id` projection is wired end-to-end:
     when a CLI operator line is the only external stimulus, the request summary fed to `11`
     carries `current_operator_id="cli"` so the implicit-reply branch has a non-empty target.
@@ -139,7 +143,7 @@ def test_implicit_reply_projects_current_operator_id_into_request_summary() -> N
     appears in the rendered user/system content that the LLM sees. (The downstream
     action externalization may overlay a binding-context `target_user_id`, but the R93
     projection itself is the contract we verify here.)"""
-    provider = _ReplyThoughtProvider(reply_text="ok", i_want_to_say="ok")
+    provider = _ReplyThoughtProvider(reply_text="ok")
     sink: list[str] = []
     handle = _assemble_channel_bound(provider, sink)
     handle.startup()
@@ -161,7 +165,7 @@ def test_no_operator_no_reply_silently_absent() -> None:
     """A tick with no external stimulus and `i_want_to_say` set must close as internal-only
     with no CLI dispatch. The composition projection yields `current_operator_id=""`, the
     implicit-reply branch in `11` abstains, no proposal is emitted."""
-    provider = _ReplyThoughtProvider(reply_text="hello operator", i_want_to_say="hello operator")
+    provider = _ReplyThoughtProvider(reply_text="hello operator")
     sink: list[str] = []
     handle = _assemble_channel_bound(provider, sink)
     handle.startup()
@@ -182,12 +186,12 @@ def test_no_operator_no_reply_silently_absent() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_tool_op_wins_over_implicit_reply_end_to_end() -> None:
+def test_explicit_tool_op_wins_over_explicit_reply_end_to_end() -> None:
     """When the model fills both `i_want_to_use_tool=true` and `i_want_to_say`, the
     R85 explicit-tool path wins and the reply is not constructed."""
     # No cli_output_sink to keep focus on the planner decision.
     provider = _ReplyThoughtProvider(
-        i_want_to_say="hello operator",
+        reply_text="hello operator",
         i_want_to_use_tool=True,
         tool_op="fs_read",
         tool_params={"path": "a.txt"},
@@ -214,10 +218,10 @@ def test_explicit_tool_op_wins_over_implicit_reply_end_to_end() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_no_i_want_to_say_no_reply() -> None:
-    """When the model leaves `i_want_to_say` absent (the pre-R93 shape), no reply is
+def test_no_reply_text_no_reply() -> None:
+    """When the model leaves `reply_text` absent (the pre-R93 shape), no reply is
     constructed. The cycle closes as internal-only."""
-    provider = _ReplyThoughtProvider(i_want_to_say=None)
+    provider = _ReplyThoughtProvider(reply_text=None)
     sink: list[str] = []
     handle = _assemble_channel_bound(provider, sink)
     handle.startup()
@@ -240,7 +244,6 @@ def test_model_filling_i_want_to_say_with_chinese_reply_text() -> None:
     Chinese operator-addressed reply content, and the dispatcher's sink renders it."""
     provider = _ReplyThoughtProvider(
         reply_text="小林，听到这些，心里一下子沉了一下。",
-        i_want_to_say="小林，听到这些，心里一下子沉了一下。",
     )
     sink: list[str] = []
     handle = _assemble_channel_bound(provider, sink)

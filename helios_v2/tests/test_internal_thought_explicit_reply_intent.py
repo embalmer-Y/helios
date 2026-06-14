@@ -57,8 +57,10 @@ def _request_with_operator(current_operator_id: str = "cli") -> InternalThoughtR
 # ---------------------------------------------------------------------------
 
 
-def test_implicit_reply_built_when_i_want_to_say_and_operator_present() -> None:
-    gateway = JsonReplyGateway(payload=envelope(i_want_to_say="hello operator"))
+def test_explicit_reply_built_when_i_want_to_say_and_operator_present() -> None:
+    gateway = JsonReplyGateway(
+        payload=envelope(reply_text="hello operator", action_intent="reply")
+    )
     engine = InternalThoughtEngine(config=build_test_config(), thought_path=structured_path(gateway))
 
     result, _ = engine.run_thought_cycle(
@@ -81,8 +83,8 @@ def test_implicit_reply_built_when_i_want_to_say_and_operator_present() -> None:
     assert "intends to reply" in " ".join(proposal.reason_trace).lower()
 
 
-def test_implicit_reply_uses_ready_channels_as_preferred() -> None:
-    gateway = JsonReplyGateway(payload=envelope(i_want_to_say="hi"))
+def test_explicit_reply_uses_ready_channels_as_preferred() -> None:
+    gateway = JsonReplyGateway(payload=envelope(reply_text="hi", action_intent="reply"))
     engine = InternalThoughtEngine(config=build_test_config(), thought_path=structured_path(gateway))
     request = InternalThoughtRequest(
         request_id="internal-thought-request:r93",
@@ -110,8 +112,10 @@ def test_implicit_reply_uses_ready_channels_as_preferred() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_implicit_reply_absent_when_no_current_operator() -> None:
-    gateway = JsonReplyGateway(payload=envelope(i_want_to_say="hello operator"))
+def test_explicit_reply_absent_when_no_current_operator() -> None:
+    gateway = JsonReplyGateway(
+        payload=envelope(reply_text="hello operator", action_intent="reply")
+    )
     engine = InternalThoughtEngine(config=build_test_config(), thought_path=structured_path(gateway))
 
     result, _ = engine.run_thought_cycle(
@@ -124,8 +128,8 @@ def test_implicit_reply_absent_when_no_current_operator() -> None:
     assert result.action_proposal is None
 
 
-def test_implicit_reply_absent_when_i_want_to_say_empty() -> None:
-    gateway = JsonReplyGateway(payload=envelope(i_want_to_say=""))
+def test_explicit_reply_absent_when_i_want_to_say_empty() -> None:
+    gateway = JsonReplyGateway(payload=envelope(reply_text=""))
     engine = InternalThoughtEngine(config=build_test_config(), thought_path=structured_path(gateway))
 
     result, _ = engine.run_thought_cycle(
@@ -142,10 +146,11 @@ def test_implicit_reply_absent_when_i_want_to_say_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_tool_op_wins_over_implicit_reply() -> None:
+def test_explicit_tool_op_wins_over_explicit_reply() -> None:
     gateway = JsonReplyGateway(
         payload=envelope(
-            i_want_to_say="hello operator",
+            reply_text="hello operator",
+            action_intent="reply",
             i_want_to_use_tool=True,
             tool_op="fs_write",
             tool_params={"path": "a.txt", "content": "hi"},
@@ -202,10 +207,9 @@ def test_deterministic_offline_path_unchanged_when_evidence_is_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_continuation_requested_takes_precedence_over_implicit_reply() -> None:
+def test_continuation_requested_takes_precedence_over_explicit_reply() -> None:
     gateway = JsonReplyGateway(
-        payload=envelope(
-            i_want_to_say="hello operator",
+        payload=envelope(reply_text="hello operator",
             wants_to_continue=True,
             continue_reason="need to think more before replying",
         )
@@ -228,13 +232,15 @@ def test_continuation_requested_takes_precedence_over_implicit_reply() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_intends_action_with_i_want_to_say_uses_implicit_reply_path() -> None:
-    """When the model fills both `intends_action=true` and `i_want_to_say="..."`, the
-    implicit-reply path is preferred (it produces a complete proposal with op_params),
-    avoiding the legacy emit_action branch that would build an incomplete proposal that
-    R85 planner rejects with `missing_op_inputs`."""
+def test_intends_action_with_i_want_to_say_uses_explicit_reply_path() -> None:
+    """R94: When the model fills `intends_action=true + action_intent="reply" + reply_text="..."`,
+    the explicit-reply path is taken (it produces a complete proposal with op_params)."""
     gateway = JsonReplyGateway(
-        payload=envelope(intends_action=True, i_want_to_say="hello operator")
+        payload=envelope(
+            intends_action=True,
+            reply_text="hello operator",
+            action_intent="reply",
+        )
     )
     engine = InternalThoughtEngine(config=build_test_config(), thought_path=structured_path(gateway))
 

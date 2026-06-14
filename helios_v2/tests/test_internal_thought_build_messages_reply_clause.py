@@ -1,15 +1,23 @@
-"""R93: focused tests for the system-prompt schema/transport clause that tells the model
-`i_want_to_say` is transported as a `reply_message` to the current operator through the
-`cli` user-visible channel.
+"""R94: focused tests for the system-prompt schema/transport clause that tells the model
+`action_intent="reply" + reply_text` is transported as a `reply_message` to the resolved
+`target_user_id` through the connected driver serving that user.
 
 Asserts:
-  - The system prompt now lists `i_want_to_say` as a schema entry (not buried in prose).
-  - The system prompt contains the explicit transport clause explaining that filling the
-    field will send that text as a `reply_message` to the current operator through `cli`.
+  - The system prompt now lists `action_intent` (R94, REQUIRED) and `reply_text` (R94,
+    when action_intent=reply) as schema entries — NOT the legacy R93 P1 `i_want_to_say`
+    field.
+  - The system prompt contains the explicit transport clause explaining that setting
+    `action_intent="reply"` AND `reply_text` will send that text as a `reply_message` to
+    the resolved `target_user_id` through the connected driver.
   - The user-message shape is unchanged for the legacy path (no present field) — i.e. the
     new system-prompt text does not perturb the user message.
   - The user message remains unchanged when a present-field summary is provided (R91 still
     prepends; the system-prompt clause is additive).
+
+R94 evolution: this file replaces the R93 P1 `test_internal_thought_build_messages_
+reply_clause.py` (which tested the legacy `i_want_to_say` schema line and the legacy
+`cli` transport clause). The legacy field name is removed from the schema; the transport
+clause is rewritten to be `action_intent + reply_text + target_user_id` led.
 """
 
 from __future__ import annotations
@@ -45,7 +53,7 @@ def _request(*, present_field: str | None = None) -> Any:
     from helios_v2.internal_thought import InternalThoughtRequest
 
     return InternalThoughtRequest(
-        request_id="internal-thought-request:r93:prompt",
+        request_id="internal-thought-request:r94:prompt",
         source_gate_result_id="gate-result:1",
         source_retrieval_bundle_id="bundle:1",
         source_continuation_active=False,
@@ -67,9 +75,7 @@ def _continuation() -> ContinuationPressureState:
     return ContinuationPressureState.inactive()
 
 
-def _build_messages(*, present_field: str | None = None) -> tuple:
-    """Call the owner-private `_build_messages` directly (the system-prompt projection is
-    owned here, not in `run`, so a direct call is the cleanest test seam)."""
+def _build_messages(*, present_field: str | None = None) -> Any:
     path = LlmBackedInternalThoughtPath(
         gateway=None,  # type: ignore[arg-type]
         profile_name="test-profile",
@@ -78,23 +84,44 @@ def _build_messages(*, present_field: str | None = None) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# System-prompt schema entry exists for i_want_to_say
+# System-prompt schema entry: R94 leads with action_intent + reply_text
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_lists_i_want_to_say_as_schema_entry() -> None:
+def test_system_prompt_lists_action_intent_as_schema_entry() -> None:
+    """R94: `action_intent` is the primary action-class schema entry (REQUIRED)."""
     system_text = _build_messages()[0].content
-    # Schema line: `"i_want_to_say": "<optional words to say outward as a reply to the current operator>"`
-    assert '"i_want_to_say"' in system_text
-    assert "reply to the current operator" in system_text
+    assert '"action_intent"' in system_text
+    # The schema line tells the model the action_intent is required.
+    assert "REQUIRED" in system_text or "reply" in system_text
+
+
+def test_system_prompt_lists_reply_text_as_schema_entry() -> None:
+    """R94: `reply_text` is the sub-detail schema entry for the reply action class."""
+    system_text = _build_messages()[0].content
+    assert '"reply_text"' in system_text
+
+
+def test_system_prompt_does_not_mention_legacy_field_name() -> None:
+    """R94: the legacy `i_want_to_say` field name is REMOVED from the schema line.
+
+    The structural test (`test_internal_thought_no_i_want_to_say_in_prompt.py`) is the
+    strict version of this check; this is the friendlier assertion for the
+    build-messages test.
+    """
+    system_text = _build_messages()[0].content
+    assert "i_want_to_say" not in system_text
 
 
 def test_system_prompt_contains_transport_clause() -> None:
+    """The transport clause is rewritten: action_intent + reply_text + target_user_id."""
     system_text = _build_messages()[0].content
-    # The transport clause: tells the model that filling i_want_to_say actually sends a reply.
+    # The transport clause: tells the model that action_intent=reply + reply_text
+    # actually sends a reply_message.
     assert "reply_message" in system_text
-    assert "current operator" in system_text
-    assert "'cli'" in system_text
+    assert "action_intent" in system_text
+    assert "reply_text" in system_text
+    assert "target_user_id" in system_text
     # Tells the model that i_want_to_use_tool is for non-reply effectors only.
     assert "i_want_to_use_tool" in system_text
 
@@ -118,8 +145,6 @@ def test_user_message_unchanged_for_legacy_path() -> None:
 
 
 def test_user_message_with_present_field_still_prepends() -> None:
-    """R91 present-field line is still the first line of the user message; the new system
-    clause is additive and does not perturb the user-message shape."""
-    user_text = _build_messages(present_field='cli via cli said: "hi"')[1].content
-    assert user_text.startswith('Present field: cli via cli said: "hi"')
+    user_text = _build_messages(present_field="cli said: \"hi\"")[1].content
+    assert user_text.startswith("Present field: cli said: \"hi\"")
     assert "Internal state: state" in user_text

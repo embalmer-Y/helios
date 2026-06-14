@@ -1,5 +1,5 @@
 """R93: focused tests for `_parse_structured_thought` reading the top-level
-`i_want_to_say` field into `StructuredThoughtEvidence.intended_reply_text`.
+`i_want_to_say` field into `StructuredThoughtEvidence.reply_text`.
 
 Asserts: absent / null / empty / whitespace-only -> `""`; non-empty trimmed string preserved;
 non-string raises `StructuredThoughtParseError`; over-cap input deterministically truncated with
@@ -13,8 +13,8 @@ import json
 import pytest
 
 from helios_v2.internal_thought.contracts import (
-    INTENDED_REPLY_TEXT_MAX_CHARS,
-    INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX,
+    REPLY_TEXT_MAX_CHARS,
+    REPLY_TEXT_TRUNCATION_SUFFIX,
 )
 from helios_v2.internal_thought.engine import (
     StructuredThoughtParseError,
@@ -41,24 +41,24 @@ def _envelope(**overrides) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_field_absent_yields_empty_intended_reply_text() -> None:
+def test_field_absent_yields_empty_reply_text() -> None:
     ev = _parse_structured_thought(_envelope())
-    assert ev.intended_reply_text == ""
+    assert ev.reply_text is None
 
 
-def test_field_null_yields_empty_intended_reply_text() -> None:
-    ev = _parse_structured_thought(_envelope(i_want_to_say=None))
-    assert ev.intended_reply_text == ""
+def test_field_null_yields_empty_reply_text() -> None:
+    ev = _parse_structured_thought(_envelope(reply_text=None))
+    assert ev.reply_text is None
 
 
-def test_field_empty_string_yields_empty_intended_reply_text() -> None:
-    ev = _parse_structured_thought(_envelope(i_want_to_say=""))
-    assert ev.intended_reply_text == ""
+def test_field_empty_string_yields_empty_reply_text() -> None:
+    ev = _parse_structured_thought(_envelope(reply_text=""))
+    assert ev.reply_text is None
 
 
-def test_field_whitespace_only_yields_empty_intended_reply_text() -> None:
-    ev = _parse_structured_thought(_envelope(i_want_to_say="   \t  \n  "))
-    assert ev.intended_reply_text == ""
+def test_field_whitespace_only_yields_empty_reply_text() -> None:
+    ev = _parse_structured_thought(_envelope(reply_text="   \t  \n  "))
+    assert ev.reply_text is None
 
 
 # ---------------------------------------------------------------------------
@@ -68,15 +68,15 @@ def test_field_whitespace_only_yields_empty_intended_reply_text() -> None:
 
 def test_field_non_empty_string_preserved_after_strip() -> None:
     ev = _parse_structured_thought(
-        _envelope(i_want_to_say="  小林，听到这些，心里一下子沉了一下。  ")
+        _envelope(reply_text="  小林，听到这些，心里一下子沉了一下。  ")
     )
-    assert ev.intended_reply_text == "小林，听到这些，心里一下子沉了一下。"
+    assert ev.reply_text == "小林，听到这些，心里一下子沉了一下。"
 
 
 def test_field_short_chinese_paragraph_preserved_verbatim() -> None:
     text = "苏蕊，谢谢你愿意来找我聊聊。后天就要答辩了。"
-    ev = _parse_structured_thought(_envelope(i_want_to_say=text))
-    assert ev.intended_reply_text == text
+    ev = _parse_structured_thought(_envelope(reply_text=text))
+    assert ev.reply_text == text
 
 
 # ---------------------------------------------------------------------------
@@ -85,20 +85,20 @@ def test_field_short_chinese_paragraph_preserved_verbatim() -> None:
 
 
 def test_field_over_cap_is_deterministically_truncated() -> None:
-    big = "a" * (INTENDED_REPLY_TEXT_MAX_CHARS + 200)
-    ev = _parse_structured_thought(_envelope(i_want_to_say=big))
-    assert len(ev.intended_reply_text) == INTENDED_REPLY_TEXT_MAX_CHARS
-    assert ev.intended_reply_text.endswith(INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX)
+    big = "a" * (REPLY_TEXT_MAX_CHARS + 200)
+    ev = _parse_structured_thought(_envelope(reply_text=big))
+    assert len(ev.reply_text) == REPLY_TEXT_MAX_CHARS
+    assert ev.reply_text.endswith(REPLY_TEXT_TRUNCATION_SUFFIX)
     # Deterministic: same input -> same output.
-    ev2 = _parse_structured_thought(_envelope(i_want_to_say=big))
-    assert ev2.intended_reply_text == ev.intended_reply_text
+    ev2 = _parse_structured_thought(_envelope(reply_text=big))
+    assert ev2.reply_text == ev.reply_text
 
 
 def test_field_at_exact_cap_is_preserved_unchanged() -> None:
-    exact = "x" * INTENDED_REPLY_TEXT_MAX_CHARS
-    ev = _parse_structured_thought(_envelope(i_want_to_say=exact))
-    assert ev.intended_reply_text == exact
-    assert INTENDED_REPLY_TEXT_TRUNCATION_SUFFIX not in ev.intended_reply_text
+    exact = "x" * REPLY_TEXT_MAX_CHARS
+    ev = _parse_structured_thought(_envelope(reply_text=exact))
+    assert ev.reply_text == exact
+    assert REPLY_TEXT_TRUNCATION_SUFFIX not in ev.reply_text
 
 
 # ---------------------------------------------------------------------------
@@ -108,22 +108,22 @@ def test_field_at_exact_cap_is_preserved_unchanged() -> None:
 
 def test_field_as_number_raises() -> None:
     with pytest.raises(StructuredThoughtParseError):
-        _parse_structured_thought(_envelope(i_want_to_say=42))
+        _parse_structured_thought(_envelope(reply_text=42))
 
 
 def test_field_as_object_raises() -> None:
     with pytest.raises(StructuredThoughtParseError):
-        _parse_structured_thought(_envelope(i_want_to_say={"text": "hi"}))
+        _parse_structured_thought(_envelope(reply_text={"text": "hi"}))
 
 
 def test_field_as_list_raises() -> None:
     with pytest.raises(StructuredThoughtParseError):
-        _parse_structured_thought(_envelope(i_want_to_say=["hi", "there"]))
+        _parse_structured_thought(_envelope(reply_text=["hi", "there"]))
 
 
 def test_field_as_bool_raises() -> None:
     with pytest.raises(StructuredThoughtParseError):
-        _parse_structured_thought(_envelope(i_want_to_say=True))
+        _parse_structured_thought(_envelope(reply_text=True))
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ def test_field_as_bool_raises() -> None:
 
 def test_legacy_envelope_without_i_want_to_say_still_parses() -> None:
     """A pre-R93 envelope (just the legacy fields) must continue to parse and produce an
-    evidence whose `intended_reply_text` defaults to '' — so existing R85/R91 tests pass."""
+    evidence whose `reply_text` defaults to '' — so existing R85/R91 tests pass."""
     legacy = json.dumps(
         {
             "thought": "legacy narration",
@@ -147,4 +147,4 @@ def test_legacy_envelope_without_i_want_to_say_still_parses() -> None:
     ev = _parse_structured_thought(legacy)
     assert ev.thought_text == "legacy narration"
     assert ev.intends_action is True
-    assert ev.intended_reply_text == ""
+    assert ev.reply_text is None

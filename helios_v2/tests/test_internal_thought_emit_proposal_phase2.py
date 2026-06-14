@@ -90,8 +90,7 @@ def test_action_intent_no_action_with_otherwise_implicit_content_yields_none() -
     Phase 2 fix to the "confiding machine" pattern.
     """
 
-    payload = envelope(
-        i_want_to_say="would normally trigger compat reply",
+    payload = envelope(reply_text="would normally trigger compat reply",
         action_intent="no_action",
     )
     result, _ = _run(payload)
@@ -99,16 +98,17 @@ def test_action_intent_no_action_with_otherwise_implicit_content_yields_none() -
     assert result.action_proposal is None
 
 
-def test_action_intent_reply_with_resolved_target_builds_implicit_reply() -> None:
-    """action_intent="reply" with operator present builds a reply proposal.
+def test_action_intent_reply_with_resolved_target_builds_explicit_reply() -> None:
+    """action_intent="reply" + reply_text + target builds a reply proposal.
 
-    Unlike Phase 1, the model no longer needs `i_want_to_say` to be filled; an
-    explicit `action_intent="reply"` is a sufficient signal (the reply text may
-    come from either `intended_reply_text` or `i_want_to_say`).
+    R94: the model must supply BOTH `action_intent="reply"` AND `reply_text`
+    for a reply proposal to be constructed. R93 P2's compat path
+    (`reply_text` set without `action_intent`) is REMOVED in R94.
     """
 
     payload = envelope(
         action_intent="reply",
+        reply_text="hello operator",
         target_user_id="user:target",
     )
     result, _ = _run(payload)
@@ -117,6 +117,7 @@ def test_action_intent_reply_with_resolved_target_builds_implicit_reply() -> Non
     assert result.action_proposal.requested_op == "reply_message"
     op_params = dict(result.action_proposal.op_params)
     assert op_params["target_user_id"] == "user:target"
+    assert op_params["outbound_text"] == "hello operator"
 
 
 def test_action_intent_reply_with_missing_target_yields_none() -> None:
@@ -174,6 +175,71 @@ def test_action_intent_tool_with_target_threads_target_into_op_params() -> None:
     assert op_params["path"] == "/tmp/y"
 
 
+# ---------------------------------------------------------------------------
+# R94: action_intent="reply" without reply_text yields None (no fabrication)
+# ---------------------------------------------------------------------------
+
+
+def test_action_intent_reply_without_reply_text_yields_none() -> None:
+    """R94: explicit `action_intent="reply"` requires non-None `reply_text`.
+
+    R93 P2 would have used `thought.content` as the reply text when
+    `action_intent="reply"` was set without `intended_reply_text`. R94 does
+    NOT fabricate; the model must supply both: the action class choice AND
+    the text to send.
+    """
+
+    payload = envelope(
+        action_intent="reply",
+        # no reply_text
+    )
+    result, _ = _run(payload)
+    assert result.action_proposal is None
+
+
+# ---------------------------------------------------------------------------
+# R94: reply_text without action_intent yields None (R93 P2 compat REMOVED)
+# ---------------------------------------------------------------------------
+
+
+def test_reply_text_without_action_intent_yields_none() -> None:
+    """R94: R93 P2 compat path REMOVED. `reply_text` set without `action_intent`
+    is silent (no proposal). The model MUST pick `action_intent` explicitly.
+    """
+
+    payload = envelope(
+        reply_text="would normally trigger compat reply",
+        # no action_intent
+    )
+    result, _ = _run(payload)
+    assert result.action_proposal is None
+
+
+# ---------------------------------------------------------------------------
+# R94: legacy i_want_to_say payload is silently ignored
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_i_want_to_say_payload_silently_ignored() -> None:
+    """R94: an envelope with only `i_want_to_say` (R93 P1) yields no proposal.
+
+    The parser silently ignores the legacy field. R94 has no compat path that
+    retro-promotes the legacy value to a reply.
+    """
+    import json as _json
+    payload = {
+        "thought": "a thought",
+        "sufficiency": 0.9,
+        "wants_to_continue": False,
+        "continue_reason": "",
+        "proposed_action": {"intends_action": False, "summary": ""},
+        "self_revision": {"intends_revision": False, "summary": ""},
+        "i_want_to_say": "operator-addressed reply (legacy)",
+    }
+    result, _ = _run(payload)
+    assert result.action_proposal is None
+
+
 def test_target_user_id_resolution_priority_model_supplied_wins() -> None:
     """`target_user_id` model-supplied wins over composition-projected operator.
 
@@ -183,6 +249,7 @@ def test_target_user_id_resolution_priority_model_supplied_wins() -> None:
 
     payload = envelope(
         action_intent="reply",
+        reply_text="hello",
         target_user_id="user:model-pick",
     )
     result, _ = _run(payload, current_operator_id="user:composition-default")
@@ -196,6 +263,7 @@ def test_target_user_id_falls_back_to_composition_projected() -> None:
 
     payload = envelope(
         action_intent="reply",
+        reply_text="hello",
         # no target_user_id
     )
     result, _ = _run(payload, current_operator_id="user:composition-default")
@@ -220,30 +288,35 @@ def test_legacy_model_intends_action_alone_is_insufficient() -> None:
     assert result.action_proposal is None
 
 
-def test_compat_reply_path_still_works() -> None:
-    """The R93 Phase 1 compat reply path is preserved.
+# ---------------------------------------------------------------------------
+# R94: the R93 P2 compat path (`reply_text` set without `action_intent`) is REMOVED.
+# These tests are now negative controls in R94.
+# ---------------------------------------------------------------------------
 
-    When the model fills `i_want_to_say` with operator-addressed reply text
-    and a current operator is present, the owner builds a reply proposal
-    even with no `action_intent` set. This preserves the R93 Phase 1 contract.
+
+def test_reply_text_alone_no_action_intent_yields_none() -> None:
+    """R94: `reply_text` set without `action_intent` yields no proposal.
+
+    R93 P2's compat path is REMOVED in R94. The model must pick an action
+    class explicitly; setting `reply_text` alone is silent.
     """
 
     payload = envelope(
-        i_want_to_say="compat reply text",
+        reply_text="compat reply text",
         # no action_intent, no tool
     )
     result, _ = _run(payload)
-    assert result.action_proposal is not None
-    assert result.action_proposal.requested_op == "reply_message"
-    op_params = dict(result.action_proposal.op_params)
-    assert op_params["outbound_text"] == "compat reply text"
-    assert op_params["target_user_id"] == "operator:r93-test"
+    assert result.action_proposal is None
 
 
-def test_compat_reply_path_silent_when_no_operator() -> None:
-    """The compat reply path silently abstains when no operator is present."""
+def test_reply_text_alone_no_operator_yields_none() -> None:
+    """R94: `reply_text` set without `action_intent` AND no operator yields no proposal.
 
-    payload = envelope(i_want_to_say="compat reply text")
+    Even if R94 had a compat path (it doesn't), the missing operator would
+    suppress the reply construction (honest absence).
+    """
+
+    payload = envelope(reply_text="compat reply text")
     result, _ = _run(payload, current_operator_id="")
     assert result.action_proposal is None
 

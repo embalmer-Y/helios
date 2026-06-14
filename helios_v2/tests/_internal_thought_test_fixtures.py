@@ -1,8 +1,14 @@
-"""Shared fixture helpers reused by the R93 implicit-reply tests.
+"""Shared fixture helpers reused by the R93 / R94 reply-path tests.
 
-Mirrors the proven helpers in `test_internal_thought_engine.py` so the R93 tests do not
+Mirrors the proven helpers in `test_internal_thought_engine.py` so the R93 / R94 tests do not
 duplicate non-trivial gate-result / retrieval-bundle / config / structured-path construction.
 This module name does NOT start with `test_`, so pytest does not collect it as a test module.
+
+R94 evolution: the `envelope()` helper's `i_want_to_say` parameter is replaced with `reply_text`
+to match the R94 schema (the R93 P1 reply field is retired; reply text now lives on
+`reply_text` and is read only when `action_intent="reply"`). Call sites that previously drove
+the R93 compat path (filling `i_want_to_say` without `action_intent`) are updated to fill
+`action_intent="reply"` together with `reply_text` (the R94 explicit-reply path).
 """
 
 from __future__ import annotations
@@ -150,7 +156,7 @@ def envelope(
     continue_reason: str = "",
     intends_action: bool = False,
     intends_revision: bool = False,
-    i_want_to_say: Any = None,
+    reply_text: Any = None,
     i_want_to_use_tool: Any = None,
     tool_op: Any = None,
     tool_params: Any = None,
@@ -165,17 +171,20 @@ def envelope(
         "proposed_action": {"intends_action": intends_action, "summary": ""},
         "self_revision": {"intends_revision": intends_revision, "summary": ""},
     }
-    if i_want_to_say is not None:
-        payload["i_want_to_say"] = i_want_to_say
+    if reply_text is not None:
+        payload["reply_text"] = reply_text
     if i_want_to_use_tool is not None:
         payload["i_want_to_use_tool"] = i_want_to_use_tool
     if tool_op is not None:
         payload["tool_op"] = tool_op
     if tool_params is not None:
         payload["tool_params"] = tool_params
-    # R93 Phase 2: additive envelope fields. `None` is a sentinel for "omit from payload"
-    # (the caller wants to exercise the absent-field path); the literal string "null" or
-    # a string value emits the field.
+    # R93 Phase 2 / R94: additive envelope fields. `None` is a sentinel for "omit from
+    # payload" (the caller wants to exercise the absent-field path); a string value emits
+    # the field. R94 removes the legacy `i_want_to_say` field; the reply text now lives
+    # on `reply_text` and is read only when `action_intent="reply"`. The fixture is
+    # explicit: callers must pass `action_intent="reply"` together with `reply_text`
+    # to drive the R94 explicit-reply path.
     if action_intent is not None:
         payload["action_intent"] = action_intent
     if target_user_id is not None:
