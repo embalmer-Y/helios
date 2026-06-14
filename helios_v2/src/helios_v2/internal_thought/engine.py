@@ -45,6 +45,45 @@ from .contracts import (
 # owner still anchors on retrieval evidence so the model cannot claim sufficiency alone.
 _MODEL_SIGNAL_WEIGHT = 0.6
 
+# R95 followup (C3): the channel subsystem is the SOLE source of truth for
+# op names. The engine never hardcodes an op name; even the offline
+# deterministic default derives the op from the request's
+# `prompt_contract_summary["available_channel_ops"]` projection. The
+# first-version (shim) assembly bridges inject a synthetic one-op projection
+# for the offline assembly; production (semantic) assembly projects the
+# real `frame.channel_state` into the same key.
+_DEFAULT_OFFLINE_PREFERRED_CHANNELS: tuple[str, ...] = ("cli",)
+_DEFAULT_OFFLINE_OUTBOUND_INTENSITY = 0.75
+
+
+def _default_op_from_request(request: InternalThoughtRequest) -> str | None:
+    """R95 followup (C3): derive the offline deterministic default op
+    from the request's available channel ops projection.
+
+    The OWNER does not name ops. It reads the first op's `op_name` from
+    `request.prompt_contract_summary["available_channel_ops"]` (a tuple of
+    dicts produced by the composition `_available_channel_ops(frame)`
+    projection in production, or by the first-version shim bridges in
+    offline assembly). Returns `None` when no op is available — the
+    caller should then leave `action_proposal` as `None` (cycle closes
+    internal-only).
+
+    This helper is the data-driven replacement for the R93 P1 byte-for-byte
+    `behavior_name="reply_message"` hardcode.
+    """
+    available_channel_ops = request.prompt_contract_summary.get("available_channel_ops")
+    if not isinstance(available_channel_ops, (tuple, list)) or not available_channel_ops:
+        return None
+    first = available_channel_ops[0]
+    if isinstance(first, dict):
+        op_name = first.get("op_name")
+        if isinstance(op_name, str) and op_name:
+            return op_name
+        return None
+    if isinstance(first, str) and first:
+        return first
+    return None
+
 
 def _validate_gate_result(gate_result: ThoughtGateResult) -> None:
     if not gate_result.result_id:
@@ -644,24 +683,33 @@ def _derive_thought_judgment(
         # proposal. The LLM's `tool_params` is passed through verbatim — the engine does
         # NOT auto-inject `target_user_id` from any source (no `current_operator_id`
         # projection, no channel-derived `source_user_id`, no static default).
-        # The deterministic offline path (evidence is None) keeps the R93 P1 acceptance
-        # criterion: byte-for-byte `reply_message` proposal with `outbound_text=
-        # thought.content` and `preferred_channels=("cli",)`.
+        # The deterministic offline path (evidence is None) is data-driven (R95 followup
+        # C3): the OWNER derives the default op from
+        # `request.prompt_contract_summary["available_channel_ops"]` — the channel
+        # subsystem (or its shim projection) is the sole source of truth. When no
+        # channel op is available, the cycle closes internal-only (R93-era
+        # `behavior_name="reply_message"` hardcode REMOVED).
         if evidence is None:
-            # Phase 1 acceptance criterion (R93, preserved in R95): the legacy
-            # `assemble_runtime()` deterministic offline path remains byte-for-byte
-            # unchanged.
-            action_proposal = ThoughtActionProposalCarrier(
-                proposal_id=f"thought-action:{request.request_id}",
-                scope="external",
-                behavior_name="reply_message",
-                requested_op="reply_message",
-                preferred_channels=("cli",),
-                outbound_text=thought.content,
-                outbound_intensity=0.75,
-                reason_trace=("thought judged sufficient for current cycle",),
-                governance_hints={"requires_identity_review": False},
-            )
+            default_op = _default_op_from_request(request)
+            if default_op is None:
+                action_proposal = None
+            else:
+                # R95 followup (C3): the offline default op is now data-driven from
+                # the channel subsystem projection. The proposal carries
+                # `outbound_text=thought.content` so the deterministic offline
+                # assembly's end-to-end rendering is preserved (the rendered text is
+                # the OWNER's thought, not a literal "reply_message" hardcode).
+                action_proposal = ThoughtActionProposalCarrier(
+                    proposal_id=f"thought-action:{request.request_id}",
+                    scope="external",
+                    behavior_name=default_op,
+                    requested_op=default_op,
+                    preferred_channels=_DEFAULT_OFFLINE_PREFERRED_CHANNELS,
+                    outbound_text=thought.content,
+                    outbound_intensity=_DEFAULT_OFFLINE_OUTBOUND_INTENSITY,
+                    reason_trace=("thought judged sufficient for current cycle",),
+                    governance_hints={"requires_identity_review": False},
+                )
         elif evidence.tool_op:
             # The model picked an op. Build a tool proposal with that op + params.
             # The LLM's tool_params is passed through verbatim. The planner (R85/R86)

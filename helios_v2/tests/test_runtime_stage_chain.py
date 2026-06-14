@@ -817,6 +817,22 @@ class FixedInternalThoughtRequestProvider(InternalThoughtRequestProvider):
                 "layer_names": tuple(layer.layer_name for layer in thought_contract.layers),
                 "supports_external_action_proposal": thought_contract.action_boundary.supports_external_action_proposal,
                 "supports_self_revision_proposal": thought_contract.action_boundary.supports_self_revision_proposal,
+                # R95 followup (C3): mirror the shim's synthetic channel
+                # state in the test fixture so the engine's offline
+                # deterministic default can derive the op name from the
+                # request. The engine no longer hardcodes "reply_message";
+                # the shim layer (this fixture / composition/bridges.py)
+                # owns the literal.
+                "available_channel_ops": (
+                    {
+                        "driver_id": "cli",
+                        "op_name": "reply_message",
+                        "required_params": ("outbound_text", "target_user_id"),
+                        "effect_class": "external_world",
+                        "risk_class": "unrestricted",
+                        "bound_user_ids": ("*",),
+                    },
+                ),
             },
             tick_id=frame.tick_id,
         )

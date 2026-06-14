@@ -143,7 +143,26 @@ def _internal_request() -> InternalThoughtRequest:
         source_retrieval_bundle_id="thought-window-bundle:001",
         source_continuation_active=False,
         internal_state_summary="current internal state summary",
-        prompt_contract_summary={"mode": "internal_thought", "voice": "structured"},
+        prompt_contract_summary={
+            "mode": "internal_thought",
+            "voice": "structured",
+            # R95 followup (C3): the offline deterministic default op is
+            # data-driven from `available_channel_ops`. The engine reads
+            # the first op's `op_name` from this key when `evidence is
+            # None` (i.e. the first-version offline path). Tests that
+            # exercise the LLM path (with `evidence.tool_op` set) ignore
+            # this key; tests that hit the offline path use it.
+            "available_channel_ops": (
+                {
+                    "driver_id": "cli",
+                    "op_name": "reply_message",
+                    "required_params": ("outbound_text", "target_user_id"),
+                    "effect_class": "external_world",
+                    "risk_class": "unrestricted",
+                    "bound_user_ids": ("*",),
+                },
+            ),
+        },
         tick_id=1,
     )
 

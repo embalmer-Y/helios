@@ -126,7 +126,22 @@ def _internal_request() -> InternalThoughtRequest:
         source_retrieval_bundle_id="thought-window-bundle:001",
         source_continuation_active=False,
         internal_state_summary="current internal state summary",
-        prompt_contract_summary={"mode": "internal_thought", "voice": "structured"},
+        prompt_contract_summary={
+            "mode": "internal_thought",
+            "voice": "structured",
+            # R95 followup (C3): see engine.py `_default_op_from_request`.
+            # The offline default op is data-driven from this key.
+            "available_channel_ops": (
+                {
+                    "driver_id": "cli",
+                    "op_name": "reply_message",
+                    "required_params": ("outbound_text", "target_user_id"),
+                    "effect_class": "external_world",
+                    "risk_class": "unrestricted",
+                    "bound_user_ids": ("*",),
+                },
+            ),
+        },
         tick_id=1,
     )
 

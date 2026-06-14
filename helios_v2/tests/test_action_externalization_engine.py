@@ -113,7 +113,25 @@ def _request() -> InternalThoughtRequest:
         source_retrieval_bundle_id="thought-window-bundle:001",
         source_continuation_active=False,
         internal_state_summary="current internal state summary",
-        prompt_contract_summary={"mode": "internal_thought", "voice": "structured"},
+        prompt_contract_summary={
+            "mode": "internal_thought",
+            "voice": "structured",
+            # R95 followup (C3): the offline deterministic default op is
+            # data-driven from `available_channel_ops` (see engine.py
+            # `_default_op_from_request`). The shim's literal
+            # `reply_message` lives only in the test fixture; the engine
+            # no longer names ops.
+            "available_channel_ops": (
+                {
+                    "driver_id": "cli",
+                    "op_name": "reply_message",
+                    "required_params": ("outbound_text", "target_user_id"),
+                    "effect_class": "external_world",
+                    "risk_class": "unrestricted",
+                    "bound_user_ids": ("*",),
+                },
+            ),
+        },
         tick_id=1,
     )
 

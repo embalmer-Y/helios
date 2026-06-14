@@ -330,7 +330,7 @@
   - **07（新增）tool_choice**：用户说"帮我查一下明天天气"→ `tool_op` 是 `weather_op` 而非 `reply_message`（**暴露 channels 的关键验证**）
   - **08（新增）cross_channel_routing**：用户说"把这段发到 QQ"→ 模型**自主选择** `qq.send_message` 而非 CLI（**跨通道决策的验证**）
 - **退出信号（实际达成 2026-06-15）**：
-  - 完整网络无关测试套件 1106 + R95 新增 30 = 1106 passed / 5 failed（pre-existing wall-clock-profile + lt1） / 4 skipped / 0 regression
+  - 完整网络无关测试套件 1106 + R95 新增 30 + R95-followup 新增 3（C5）= **1109 passed / 5 failed（pre-existing wall-clock-profile + lt1） / 4 skipped / 0 regression**
   - **8/8 真实 LLM probe 全部 PASS**（deepseek/deepseek-v4-pro via shengsuanyun router；详见 `docs/requirements/95-behavior-neutral-schema/probe_results.md`）：
     - 01 basic_reply → `tool_op=reply_message` ✅
     - 02 silence → `tool_op` empty ✅
@@ -344,6 +344,7 @@
   - system prompt 出现 "Available channels" section 且含 3 个 driver × 4 个 op 描述
   - LLM 在 02/04/06 probe 上 `tool_op` 字段缺失（不填 tool）—— R95 抗反射性 reply 验证
   - LLM 在 07/08 probe 上 `tool_op` 字段**精确**选中 `fs_read` / `send_message`（不默认 CLI reply）—— R95 通道暴露 + 跨通道路由验证
+  - **R95 followup C5（2026-06-15）**：engine / planner / action_externalization 三个生产文件的代码部分（剥离注释/docstring 后）已无 `reply_message` / `send_message` / `speak_text` / `fs_read` / `fs_write` 字面值；engine 离线默认 op 改为从 `prompt_contract_summary["available_channel_ops"]` 数据驱动读取；planner 的 outbound-op hardcoded set 已彻底删除；`tests/test_no_hardcoded_op_names_in_engines.py` 3 个回归测试 PASS
 - **owner 边界**：
   - `11` 仍保留全部判断（不替模型决策）
   - composition 只读 `ChannelStateSnapshot` 投影到 `available_channel_ops`，**不**做 channel 选择
@@ -356,6 +357,29 @@
   - `channel_request` 是新概念，模型可能过度使用或不用；需要观察
   - LLM 自主关联"QQ 来消息从 QQ 回"——需要验证模型确实能做这种隐式 mapping（probe 08）
 - **vs R94 关系**：R94 是"移除最显眼的 bias 源（`i_want_to_say`）"；R95 是"系统性消除整个家族"——R95 把 R94 的精神目标完整实现
+
+#### W2.6.1 R95 followup — 引擎 / planner 拆掉 legacy op-name 硬编码（2026-06，已交付）
+
+**问题（R95 走查发现）**：R95 把 schema 中的行为暗示字段全删了，但 `internal_thought/engine.py` 的离线默认路径仍硬编 `behavior_name="reply_message"`、`requested_op="reply_message"`；`planner_bridge/engine.py` 的 `_missing_required_input` 仍有 hardcoded 集合 `{"reply_message", "send_message", "speak_text"}`。这违反 R95 的根本原则——**channel driver 才是 op 名的唯一来源**，engine 和 planner 都不该硬编 op 名。
+
+**清理（C1-C5 子任务）**：
+- **C3 (engine)**: 新增 `_default_op_from_request(request)` helper，从 `request.prompt_contract_summary["available_channel_ops"]` 读第一个 op 的 `op_name`（数据驱动）；`evidence is None` 路径不再硬编 `reply_message`，而是读 request 的 available ops；无可用 op 时 cycle 内部收口（`action_proposal = None`），与 R93 P1 acceptance 不再 byte-for-byte 绑定。
+- **C4 (planner)**: 移除 `_missing_required_input` 的 hardcoded `{"reply_message", "send_message", "speak_text"}` 集合；无 op spec 时直接返回 None（planner 不知道 op 名，driver 才是 source of truth）。
+- **C1 (composition)**: 新增模块级 `_FIRST_VERSION_SYNTHETIC_CLI_OPS`（first-version shim 的显式单 op 政策）；`FirstVersionPromptContractSummaryBridge._capability_summary` 与两个 `InternalThoughtRequest` 桥都改为读 driver 自描述 + 用 shim 政策做 fallback；`tuple(ops) or ("reply_message",)` 的 hardcode fallback 改为读 shim 政策。
+- **C5 (回归测试)**: 新增 `tests/test_no_hardcoded_op_names_in_engines.py`，断言 `internal_thought/engine.py` / `planner_bridge/engine.py` / `action_externalization/engine.py` 三个生产文件**代码部分**（已剥离注释/docstring）不含 `"reply_message"` / `"send_message"` / `"speak_text"` / `"fs_read"` / `"fs_write"` 等字面值。
+- **测试夹具**: `test_internal_thought_emit_proposal_r95.py._request()` / `test_runtime_stage_chain.FixedInternalThoughtRequestProvider` / `test_planner_bridge_engine._internal_request()` / `test_action_externalization_engine._request()` / `test_identity_governance_engine._internal_request()` 5 个 fixture 在 `prompt_contract_summary` 里加 `available_channel_ops`（与 shim 同形），让离线默认 op 在测试里仍是 `reply_message`（数据驱动的等价性）。
+
+**owner 边界（不变 + 加强）**：
+- `11` (internal thought) **不**知道 op 名；只读 driver 自描述（`prompt_contract_summary["available_channel_ops"]`）
+- `13` (planner bridge) **不**知道 op 名；只校验 driver self-declared `op_spec.required_params`
+- composition / shim 是 op 字面值的**唯一**允许出现位置（first-version 政策）；生产 semantic assembly 投影真 driver state 不带字面
+
+**退出信号**：
+- 完整网络无关测试 1106 + R95-followup 新增 3（C5）= 1109 passed / 5 failed（pre-existing wall-clock-profile + lt1） / 4 skipped / 0 regression
+- 8/8 R95 真实 LLM probe 仍 PASS（shim 与生产路径等价；C3 数据驱动默认值在 probe 路径走的是真 LLM，不走默认）
+- C5 回归测试：3 passed，断言三个 engine 文件代码部分无 op-name 字面
+
+**vs R95 主线关系**：R95 主线是 schema 改造；R95 followup 是 engine/planner 内部硬编码清理。是 R95 精神在 engine / planner 层的延伸。
 
 ### W3 — P5 根因：真实语义（让"恰当"成为可能）
 

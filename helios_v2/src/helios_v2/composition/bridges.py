@@ -1950,6 +1950,26 @@ def _present_field_elapsed_clause(frame) -> str | None:
     return f"last input: {elapsed:.1f}s ago"
 
 
+# R95 followup (C3): the first-version (shim) assembly is a byte-for-byte
+# preserved test/legacy path. The shim does not have a real channel
+# subsystem, so it explicitly states its policy as a synthetic one-op
+# projection: cli × reply_message. The OWNER/engine is clean (reads from
+# `request.prompt_contract_summary["available_channel_ops"]`); the shim
+# is the only place this string literal lives, and it represents the
+# shim's declared channel state, not engine bias. Production semantic
+# assembly projects the real `frame.channel_state` into the same key.
+_FIRST_VERSION_SYNTHETIC_CLI_OPS: tuple[dict[str, object], ...] = (
+    {
+        "driver_id": "cli",
+        "op_name": "reply_message",
+        "required_params": ("outbound_text", "target_user_id"),
+        "effect_class": "external_world",
+        "risk_class": "unrestricted",
+        "bound_user_ids": ("*",),
+    },
+)
+
+
 def _available_channel_ops(frame) -> tuple[dict[str, object], ...]:
     """Owner: composition (R95).
 
@@ -2317,7 +2337,15 @@ class FirstVersionInternalThoughtRequestBridge:
                 # `target_user_id`; the LLM is the only source of identity
                 # (in `tool_params.target_user_id`), and the planner validates
                 # against the op's `required_params`.
-                "available_channel_ops": _available_channel_ops(frame),
+                # R95 followup (C3): when the runtime did not inject a real
+                # `frame.channel_state` (first-version shim assembly), fall back
+                # to the shim's explicit one-op policy
+                # (`_FIRST_VERSION_SYNTHETIC_CLI_OPS`). The engine reads from
+                # this key and does not name ops; the shim is the only place
+                # the literal `reply_message` lives.
+                "available_channel_ops": (
+                    _available_channel_ops(frame) or _FIRST_VERSION_SYNTHETIC_CLI_OPS
+                ),
             },
             tick_id=tick_id,
         )
@@ -2678,13 +2706,18 @@ class OwnerGroundedEmbodiedPromptRequestBridge:
 
         Project the real bound channels/ops from channel-state when a provider is wired (channel-bound
         assembly), so the model is told which tools actually exist; otherwise fall back to the
-        first-version reply-only constants. Transport facts only; no cognitive policy.
+        first-version shim's explicit one-op policy (`_FIRST_VERSION_SYNTHETIC_CLI_OPS`,
+        declared at module level). The shim's `reply_message` literal is the shim's declared
+        channel state, not engine bias — the engine reads from
+        `request.prompt_contract_summary["available_channel_ops"]` and does not name ops
+        (R95 followup C3). Transport facts only; no cognitive policy.
         """
 
         if self.channel_state_provider is None:
             return {
                 "available_channels": ("cli",),
                 "available_ops": ("reply_message",),
+                "available_channel_ops": _FIRST_VERSION_SYNTHETIC_CLI_OPS,
                 "forbidden_capabilities": ("direct_execution", "invented_channel"),
                 "ready_channels": ("cli",),
             }
@@ -2692,10 +2725,14 @@ class OwnerGroundedEmbodiedPromptRequestBridge:
         statuses = self.channel_state_provider.channel_status_snapshot()
         channels = tuple(descriptors.keys())
         ops: list[str] = []
+        available_channel_ops: list[dict[str, object]] = []
         for descriptor in descriptors.values():
             for op in descriptor.get("output_ops", ()):
                 if op not in ops:
                     ops.append(op)
+            for spec in descriptor.get("output_op_specs", ()) or ():
+                if isinstance(spec, dict):
+                    available_channel_ops.append(spec)
         ready = tuple(
             driver_id
             for driver_id, status in statuses.items()
@@ -2704,6 +2741,7 @@ class OwnerGroundedEmbodiedPromptRequestBridge:
         return {
             "available_channels": channels or ("cli",),
             "available_ops": tuple(ops) or ("reply_message",),
+            "available_channel_ops": tuple(available_channel_ops) or _FIRST_VERSION_SYNTHETIC_CLI_OPS,
             "forbidden_capabilities": ("direct_execution", "invented_channel"),
             "ready_channels": ready or channels or ("cli",),
         }
@@ -2829,7 +2867,11 @@ class SemanticInternalThoughtRequestBridge:
                 # `target_user_id`; the LLM is the only source of identity
                 # (in `tool_params.target_user_id`), and the planner validates
                 # against the op's `required_params`.
-                "available_channel_ops": _available_channel_ops(frame),
+                # R95 followup (C3): see the FirstVersionInternalThoughtRequestBridge
+                # builder above — same shim fallback policy.
+                "available_channel_ops": (
+                    _available_channel_ops(frame) or _FIRST_VERSION_SYNTHETIC_CLI_OPS
+                ),
             },
             tick_id=tick_id,
             present_field_summary=_present_field_summary_text(frame, self.temporal_source),

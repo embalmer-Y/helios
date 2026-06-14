@@ -339,8 +339,11 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
 
         Return the first required param key the proposal is missing for the selected op, validated
         generically against the driver's declared per-op spec (`op_specs[op].required_params`). When the
-        op declares no spec (legacy shim descriptors), fall back to the prior reply-op `outbound_text`
-        check so the default assembly is byte-for-byte unchanged. Returns `None` when inputs are complete.
+        op declares no spec (legacy shim descriptors), the planner reports no missing required input —
+        the channel subsystem is the SOLE source of truth for per-op required params; the planner no
+        longer carries a hardcoded set of "outbound ops" (R95 followup C4: the prior
+        `{"reply_message", "send_message", "speak_text"}` literal set is REMOVED; the planner does
+        not name ops). Returns `None` when inputs are complete.
         """
 
         op_specs = channel_descriptor.get("op_specs")
@@ -350,9 +353,12 @@ class FirstVersionPlannerBridgePath(PlannerBridgePath):
                 if key not in proposal.params:
                     return key
             return None
-        # Legacy fallback: no declared spec for this op (shim descriptors).
-        if proposal.preferred_op in {"reply_message", "send_message", "speak_text"} and "outbound_text" not in proposal.params:
-            return "outbound_text"
+        # R95 followup (C4): no spec declared for this op. The planner does not
+        # name ops; it reports no missing required input and lets the upstream
+        # contract-validation layer (or shim descriptor owner) catch the missing
+        # contract. The hardcoded `{"reply_message", "send_message", "speak_text"}`
+        # set was a R93-era fallback that violated the R95 principle (the planner
+        # must not know op names; the channel driver is the sole source of truth).
         return None
 
     @staticmethod
