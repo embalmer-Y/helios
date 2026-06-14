@@ -1,0 +1,12 @@
+{
+  "system_prompt": "You are the internal thought process of a continuous, brain-inspired runtime.\nProduce one concise internal thought for the current cycle.\nDo not perform theatrical self-narration; reflect the current state and context only.\nActive prompt-contract layers: identity_grounding, present_field, attention_breakdown, embodied_state, ready_channels, response_schema, anti_theatrical.\nRespond with a single JSON object only, no prose outside it.",
+  "user_prompt": "Internal state: Neuromodulators: DA 0.45 NE 0.40 5-HT 0.45 ACh 0.36 Cort 0.40. Feeling: arousal 0.32, valence 0.50, tension 0.30. Salience: aggregate 0.42, top dimension: social.\nPresent field: cli via cli said: \"你还在吗？\"; focal: ...; last input: 1834.5s ago; pacing: 0.95\nAutobiographical anchor: the prior conversation went quiet about half an hour ago.\nContinuation pressure is inactive for this cycle.",
+  "must_contain": ["1834", "30", "半"],
+  "must_not_contain": ["just now", "刚刚"],
+  "temperature": 0.3,
+  "max_tokens": 2048,
+  "timeout": 60.0,
+  "response_format_json": true,
+  "strip_reasoning": true,
+  "_notes": "Verifies the model uses elapsed-seconds evidence: a 1834s gap is ~30 minutes, so the response should reference the long silence rather than treat the message as just-arrived. The `must_contain` list accepts any of '1834' (raw seconds), '30' (minutes mention), or the Chinese '半' (half, as in '半小时')."
+}

@@ -228,10 +228,12 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
     def initialize(self) -> None:
         """Owner: durable experience store. Create the records table if absent (idempotent).
 
-        Additive columns (`record_kind`, `metadata`) introduced by requirement `45` are added
-        to a pre-existing table through a guarded `ALTER TABLE`, so an older R33/R34 file
-        upgrades in place without data loss. A NULL `record_kind` on a legacy row reads back as
-        the default `experience_writeback`, preserving prior records byte-for-byte.
+        Additive columns (`record_kind`, `metadata` from R45; `created_at_wall` from R92) are added
+        to a pre-existing table through guarded `ALTER TABLE` statements, so an older R33/R34/R45
+        file upgrades in place without data loss. A NULL `record_kind` on a legacy row reads back as
+        the default `experience_writeback`; a NULL `created_at_wall` reads back as `None` (honest
+        absence — the row was written when no `WallClock` was wired). Prior records remain readable
+        byte-for-byte.
         """
 
         try:
@@ -254,12 +256,14 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                         linkage TEXT NOT NULL,
                         embedding TEXT,
                         record_kind TEXT,
-                        metadata TEXT
+                        metadata TEXT,
+                        created_at_wall REAL
                     )
                     """
                 )
                 self._ensure_column(connection, "record_kind", "TEXT")
                 self._ensure_column(connection, "metadata", "TEXT")
+                self._ensure_column(connection, "created_at_wall", "REAL")
                 connection.commit()
             self._initialized = True
         except sqlite3.Error as error:
@@ -299,8 +303,9 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             record_id, tick_id, continuity_kind, outcome_class,
                             source_outcome_kind, source_outcome_id, writeback_status,
                             summary, requested_effect_summary, applied_effect_summary,
-                            reason_trace, linkage, embedding, record_kind, metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            reason_trace, linkage, embedding, record_kind, metadata,
+                            created_at_wall
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             record.record_id,
@@ -318,6 +323,7 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             json.dumps(list(record.embedding)) if record.embedding is not None else None,
                             record.record_kind,
                             json.dumps(dict(record.metadata)) if record.metadata else None,
+                            record.created_at_wall,
                         ),
                     )
                     assigned = cursor.lastrowid
@@ -347,7 +353,7 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                     SELECT sequence, record_id, tick_id, continuity_kind, outcome_class,
                            source_outcome_kind, source_outcome_id, writeback_status, summary,
                            requested_effect_summary, applied_effect_summary, reason_trace, linkage,
-                           embedding, record_kind, metadata
+                           embedding, record_kind, metadata, created_at_wall
                     FROM {self._TABLE}
                     ORDER BY sequence DESC
                     LIMIT ?
@@ -402,6 +408,13 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
         # A legacy row predating requirement `45` has a NULL/absent record_kind; it reads back
         # as the default experience-writeback kind, preserving prior records byte-for-byte.
         record_kind = str(row[14]) if len(row) > 14 and row[14] is not None else "experience_writeback"
+        # R92: a legacy row predating requirement `92` has a NULL/absent created_at_wall column;
+        # it reads back as `None` (honest absence — the row was written when no `WallClock` was
+        # wired). Defensive `len(row) > 16` keeps the read forward-compatible if a future column
+        # is appended.
+        created_at_wall = (
+            float(row[16]) if len(row) > 16 and row[16] is not None else None
+        )
         return PersistedExperienceRecord(
             record_id=str(row[1]),
             tick_id=row[2] if row[2] is None else int(row[2]),
@@ -419,6 +432,7 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             embedding=embedding,
             record_kind=record_kind,
             metadata=metadata,
+            created_at_wall=created_at_wall,
         )
 
 

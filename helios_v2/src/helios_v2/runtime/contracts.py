@@ -29,10 +29,24 @@ def _freeze_stage_results(stage_results: Mapping[str, object] | None) -> Mapping
 
 @dataclass(frozen=True)
 class RuntimeFrame:
-    """Immutable runtime-owned input contract passed into one stage execution."""
+    """Immutable runtime-owned input contract passed into one stage execution.
+
+    Carries the per-tick context every stage owner consumes.
+
+    Fields:
+        `tick_id` — monotonic per-process tick number; the canonical tick provenance handle.
+        `stage_results` — frozen mapping of already-completed stages this tick.
+        `tick_wall_seconds` — R92 additive optional wall-time fact for the current tick. When
+            the runtime kernel has an injected `helios_v2.wall_clock.WallClock`, this is the
+            value of one `WallClock.now()` call performed at the start of the tick (the same
+            value is seeded into every frame of the same tick). When no wall-clock is injected,
+            this is `None` (honest absence). Owners do not interpret this field; rendering and
+            persistence read it as a pure fact.
+    """
 
     tick_id: int
     stage_results: Mapping[str, object] | None = None
+    tick_wall_seconds: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "stage_results", _freeze_stage_results(self.stage_results))

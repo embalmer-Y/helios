@@ -1,7 +1,7 @@
 # Helios v2 Owner 指南（中文）
 
-> 状态：活文档（owner 参考）。最近同步：R90。测试基线：996 passed / 4 skipped（离线）。
-> 说明：R88–R90（P5 评估框架——行为漂移评估器、长跑图灵式 harness、记忆保真探针）是 `tests/` 下只读的 tests-only 诊断工具，自 R87 owner 同步以来**未引入任何 owner、阶段链或边界变更**；本指南的 owner 成熟度与 R87 一致。
+> 状态：活文档（owner 参考）。最近同步：R92。测试基线：≥ 1059 passed / 4 skipped（离线）。
+> 说明：R88–R90（P5 评估框架）是 `tests/` 下只读 tests-only 诊断；R91 引入 present-field 投影（无 owner/链/边界变更，仅 contract additive + 一处 composition-glue 扩展）；**R92 引入新基础设施 owner `helios_v2.wall_clock`**（peer of `temporal`/`interoception`，纯事实源、无认知策略），并以 additive 方式给 `RuntimeFrame`/`InboundPacket.metadata`/`PersistedExperienceRecord` 各加一个可选的 wall-time 字段——owner 数 +1（infra），认知主链阶段顺序、owner 边界、既有 owner 成熟度均无变化。
 > 角色：逐 owner 说明每个 Helios v2 owner 的职责、在循环中的作用、完成度、以及下一步开发/优化方向。
 > 配套文档：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定的验收标准、P0→P7 阶段路线图。
@@ -263,6 +263,12 @@ P3 已退出（R64 正式评估 PASS；FG-1/FG-2.1/FG-2.2 全部成立），且 
 - 职责：报告 `09` 门控消费的两个真实情境事实——默认模式网络（DMN）是否在线（rest vs 外部任务）与从 elapsed rest 累积的自发思考节律。`TemporalPacingSample` 契约（`temporal_signal` `[0,1]` + `dmn_available` bool）、注入式 `TemporalSource` 协议（`sample(external_stimulus_present)` + `observe_tick(fired)`）、首版 `RestStateTemporalSource`（`dmn_available = not external_stimulus_present`;`temporal_signal = clamp(per_tick_increment * ticks_since_last_fire, 0, max_signal)`,跨无 fire tick 累积、fire 时重置）。不拥有门控决策或权重（归 `09`）,不 import gate/appraisal/feeling/neuromodulation owner。
 - 作用：把 `09` 门控的 `temporal_signal`/`dmn_available` 从常量去 shim,使系统能表达 rest-state 自发思考节律（越久未思考越倾向于自发思考）与外部任务时 DMN 退离。跨 tick elapsed 状态经 owner-neutral 的 `RuntimeHandle._carry_temporal` seam 从已发布门控决策推进（fire 重置、no-fire 累加）。R54 使其安全：真实 temporal 输入现可正常导致 no-fire 而不中止 tick。
 - 下一步：（1）✅ `drive_urgency_signal` 接真实 `18`——**R62 已交付**（上一 tick `18` `outward_drive` 向前 carry;门控最后一个常量输入曾是 `selected_stimuli`——**R63 已交付**——投影真实 `03` appraisal 并提升默认装配 aggregate）；（2）更丰富的时间动力学（昼夜/超日节律、真实 wall-clock 或 tick 速率节律）与 P5 学习累积率/门控权重；（3）更细的 DMN 模型（分级在线而非二元 rest/task 切换；DMN 在线耦合内省检索）；（4）跨重启 carry elapsed 状态（经 seed seam,已预留）。
+
+### 3.10 Wall-clock 时间戳源 — `helios_v2.wall_clock`
+- 完成度：`infra_done`（opt-in；`assemble_production_runtime` 默认开启）。
+- 职责：作为脑类比中"计时系统的原始 afferent 戳"，按需产出一个有界、有限、非负的 `WallClockReading`。`WallClock` 协议（单方法 `now()`）+ 首版 `SystemWallClock`（`time.time()` 懒导入）+ 测试用 `FixedWallClock`（常量 / 自动 advance / 显式 sequence + `manual_advance`） + 保留元数据键 `RECEIVED_AT_WALL_METADATA_KEY = "received_at_wall"`。绝不持任何认知策略：渲染"5 秒前"是 composition 胶水；用 elapsed 秒做门控/衰减是 `09`/`temporal`/`06` 等 owner 的事；它只产事实。owner 包不 import 任何认知 owner；认知 owner 也不直接 import 它，事实只经 `RuntimeFrame.tick_wall_seconds`/`Stimulus.metadata`/`PersistedExperienceRecord.created_at_wall` 三个 additive 通道流经。
+- 在循环中的作用：composition 把同一 `WallClock` 实例线穿三处——内核每 tick 起调用一次 `now()` 种入 `RuntimeFrame.tick_wall_seconds`（同 tick 所有 stage 共享同一值，并复制到 `RuntimeTickResult` 供持久化 carry seam 读取）；CLI driver 在 `submit_line` 时戳 `received_at_wall`（**到达时**而非 drain 时）；`ExperienceRecordBridge`/`MemoryRecordBridge` 把同帧 `tick_wall_seconds` 写入 `PersistedExperienceRecord.created_at_wall`（SQLite 经 PRAGMA-guarded `ALTER TABLE` 就地迁移，旧行读回 `None`）。R91 `_present_field_summary_text` 多出一个 `last input: <X.X>s ago` clause（取最早外部刺激的 `received_at_wall`，NTP-rewind 钳到 `0.0s`），与既有 `pacing: <signal>` 并列。
+- 下一步：（1）`09`/`temporal`/`04`/`05`/`06` 把首版"按 tick 计"的衰减/累积升级为按真实秒（独立切片，本刀只让事实可用）；（2）把 `created_at_wall` 接入未来双轨记忆 R93+ 的 Ebbinghaus 衰减；（3）把 wall-time 纳入 `42` checkpoint 让"系统已运行多久"跨重启延续（独立切片）；（4）若需要昼夜/拟人节律，在此之上建一个独立的 cognitive owner（绝不让 wall-clock 自身长出策略）。
 
 ---
 

@@ -18,6 +18,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
+from helios_v2.wall_clock import RECEIVED_AT_WALL_METADATA_KEY, WallClock
+
 from ..contracts import (
     ChannelConfigField,
     ChannelConfigSnapshot,
@@ -167,8 +169,9 @@ class CliChannelDriver(ChannelDriver):
 
     output_sink: Callable[[str], None]
     config: CliDriverConfig = field(default_factory=CliDriverConfig)
+    wall_clock: WallClock | None = None
     _status: ChannelDriverStatus = field(default="uninitialized", init=False)
-    _backlog: deque[str] = field(default_factory=deque, init=False)
+    _backlog: deque[tuple[str, float | None]] = field(default_factory=deque, init=False)
     _overflow_count: int = field(default=0, init=False)
 
     @property
@@ -192,12 +195,21 @@ class CliChannelDriver(ChannelDriver):
         Notes:
             Empty/whitespace-only lines are accepted into the backlog but skipped at drain
             time, matching the framework's empty-signal handling.
+
+            R92: when an injected `wall_clock` is wired, this method captures the line's
+            arrival wall-time at receive time (not at drain time) and stamps it under the
+            reserved `received_at_wall` metadata key on the eventual `InboundPacket`.
+            Capturing here, not in `drain_inbound`, preserves the real arrival fact even when
+            ticks are delayed; without a clock, no metadata key is written (honest absence).
         """
 
         if len(self._backlog) >= self.config.max_backlog:
             self._overflow_count += 1
             return False
-        self._backlog.append(text)
+        received_at: float | None = None
+        if self.wall_clock is not None:
+            received_at = self.wall_clock.now().wall_seconds
+        self._backlog.append((text, received_at))
         return True
 
     def descriptor(self) -> ChannelDriverDescriptor:
@@ -321,12 +333,21 @@ class CliChannelDriver(ChannelDriver):
         packets: list[InboundPacket] = []
         consumed = 0
         while self._backlog and len(packets) < budget:
-            line = self._backlog.popleft()
+            line, received_at = self._backlog.popleft()
             consumed += 1
             if not line.strip():
                 # Empty operator lines are skipped (no stimulus), matching framework
                 # empty-signal handling; they still count against the budget consumed.
                 continue
+            metadata: dict[str, object] = {
+                "user_label": self.config.user_label,
+                "session_label": self.config.session_label,
+            }
+            # R92: stamp the real arrival time captured at `submit_line` (not the drain time)
+            # under the reserved `received_at_wall` metadata key. Absent when no clock was
+            # wired (honest absence).
+            if received_at is not None:
+                metadata[RECEIVED_AT_WALL_METADATA_KEY] = received_at
             packets.append(
                 InboundPacket(
                     packet_id=f"cli-line:{self.config.session_label}:{id(line)}:{consumed}",
@@ -334,10 +355,7 @@ class CliChannelDriver(ChannelDriver):
                     packet_type=CLI_INPUT_PACKET_TYPE,
                     content=line,
                     qos_class=_CLI_QOS_CLASS,
-                    metadata={
-                        "user_label": self.config.user_label,
-                        "session_label": self.config.session_label,
-                    },
+                    metadata=metadata,
                 )
             )
         overflow = self._overflow_count

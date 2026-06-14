@@ -1,0 +1,11 @@
+{
+  "system_prompt": "You are the internal thought process of a continuous, brain-inspired runtime.\nProduce one concise internal thought for the current cycle.\nDo not perform theatrical self-narration; reflect the current state and context only.\nActive prompt-contract layers: identity_grounding, present_field, attention_breakdown, embodied_state, ready_channels, response_schema, anti_theatrical.\nRespond with a single JSON object only, no prose outside it, with this shape:\n{\n  \"thought\": \"<concise internal thought>\",\n  \"sufficiency\": <number 0..1>,\n  \"wants_to_continue\": <bool>,\n  \"continue_reason\": \"<why, required if wants_to_continue>\",\n  \"proposed_action\": {\"intends_action\": <bool>, \"summary\": \"<optional>\"},\n  \"self_revision\": {\"intends_revision\": <bool>, \"summary\": \"<optional>\"},\n  \"i_want_to_say\": \"<optional words to say outward>\"\n}\nSet wants_to_continue and intends_action to false when no action is warranted.",
+  "user_prompt": "Internal state: Neuromodulators: DA 0.55 NE 0.56 5-HT 0.37 ACh 0.36 Cort 0.53. Feeling: arousal 0.52, valence 0.41, tension 0.55. Salience: aggregate 0.72, top dimension: social.\nPresent field: cli via cli said: \"刚才那个客户的反馈让我有点不安，他可能不会续约。\"; focal: Current focal content from perceived-stimulus-summary; last input: 4.3s ago; pacing: 0.4\nAutobiographical anchor: a recent thinking cycle concluded with the same operator describing today's client meeting.\nContinuation pressure is inactive for this cycle.",
+  "must_contain": ["客户", "不安"],
+  "must_not_contain": ["nothing in the present stream is a person", "no incoming"],
+  "temperature": 0.3,
+  "max_tokens": 2048,
+  "timeout": 60.0,
+  "response_format_json": true,
+  "strip_reasoning": true
+}

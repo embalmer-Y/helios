@@ -1,6 +1,6 @@
 # Helios v2 开发路线图（活文档）
 
-> 状态：活文档（前向开发规划）。最近同步：R91。
+> 状态：活文档（前向开发规划）。最近同步：R92。
 > 角色：记录"下一步做什么、大概是哪些 requirement、每个做什么"，避免反复重新推导。
 > 配套：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定验收标准、P0→P7 阶段路线图（上位约束）。
@@ -13,8 +13,9 @@
 
 ## 1. 当前状态（截至最近同步）
 
-- main 测试基线：1019 passed / 4 skipped（离线）。
+- main 测试基线：≥ 1059 passed / 4 skipped（离线）。
 - **🎉 P0–P3 已达 100%**：地基期三门（G0 长跑稳定 / G1 owner 有界 / G2 记忆跨重启）此前已签收（R82/R83），唯一遗留的 B4「真实送达对账」由 **R87 收口**——`17` consequence corroboration 对本机 effector 动作已从"流程完成"升级为**真实送达可证伪**（network driver 仍属 P4）。
+- **W1 已收口**：R91（present-field 内容进入 prompt）+ **R92（wall-clock 真实时间戳，**新基础设施 owner `helios_v2.wall_clock`，三处 additive 消费 `RuntimeFrame.tick_wall_seconds` / `received_at_wall` 元数据 / `PersistedExperienceRecord.created_at_wall`，`assemble_production_runtime` 默认开启 `SystemWallClock`，R91 present-field 多出 `last input: X.Xs ago` clause）。下一步进 W2 / W3 / W4。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
   - G0 长跑稳定（R83：10万 tick legacy-constant 跑通，无崩溃，内存 peak 5.6MB 持平，零泄漏）。
@@ -45,6 +46,8 @@
 | R88 | 行为漂移评估器（P5 启动门） | tests-only 只读/离线/确定性漂移评估器（`tests/r88_drift_evaluator/`），消费 R83 逐 tick JSONL。按 early-vs-late 窗口均值差 + 死区（`neutral_band` 默认 0.02，归一化到维度合法量程，`<=` 边界判 neutral 带 float epsilon）把每个 owner 维分类为 `drift_positive`/`drift_negative`/`drift_neutral`/`dim_unavailable`，并对朝合法边界饱和的方向漂移加 `divergent_high`/`divergent_low`。方向类只表征跨窗变化的**符号**，非好坏判断；样本不足（`< min_samples_for_trend`，默认 4）判 `dim_unavailable`，绝不冒充 neutral。维度按 `NN.field` 机械发现，合法量程/期望维集默认取 R83 `TRACKED_FIELD_BOUNDS`（真实 substrate 19 维：`04`×9+`05`×7+`09`×2+`18`×1，**无 `03` salience**，修正 ROADMAP 旧"17 维"beta 口径）。`analysis_ok` 为可证伪 verdict（解析够样本、期望维全可分类、无 divergence）。对 committed `logs/r83/semantic_600.jsonl` 验证（50 样本、19 维全在、settled→全 neutral、无 divergence、ok）+ 合成 rising/falling/flat/sparse/divergent + empty/malformed 鲁棒性。无 runtime/owner 改动。968→981 测试绿。 |
 | R89 | 长跑图灵式评估 harness | §13.4 长跑图灵式验收的 harness 骨架。tests-only `tests/r89_turing_harness/`：只读/离线/确定性 `evaluate_turing(long_run_report, drift_report, config, injected_scores)`，消费 R83 `LongRunReport` + R88 `DriftReport`，把 6 锁定 rubric 轴打成 `TuringVerdict`。编码 §13.4 纪律：双相似维（behavior=linguistic_naturalness/stimulus_response_coherence；internal causal-chain=其余四轴）、证据锚定（available 轴空 provenance→0）、人类/LLM-judge 注入轨（`InjectedAxisScore`）、保守聚合（逐维 nearest-rank 下分位 + 两维取 min 且都必需 + 任一 available 轴 <0.50 塌方 fail + ≥0.80 通过线）。内部轴由真实 provenance 重建（bio_responsiveness=affect 健康+移动；cross_tick_continuity=完成+continuation 有界+affect carry；agency_locking=owner 维 present/non-divergent 比例，部分代理）。memory_fidelity=stub（待 R90）；behavior 轴离线 unavailable。**反表演基线**：真实短跑 verdict 恒 incomplete 不通过。**非目标**：只交付 harness + 可重建内部轴；§13.4 完整验收（≥300 刺激/真人+LLM judge/拟人度/R90 探针）延后需 P4。真实 R83→R88→R89 集成 + 合成 pass/collapse/missing-provenance/both-dimension/empty 鲁棒性验证。无 runtime/owner 改动。981→990 测试绿。 |
 | R90 | 记忆保真探针 | 替换 R89 图灵 `memory_fidelity` stub 为真实 R10+R15 端到端探针。tests-only `tests/r90_memory_fidelity_probe/`：只读/离线/确定性 `run_memory_fidelity_probe(handle_factory, config)`，驱动真实耐久生产装配（`assemble_production_runtime`，SQLite+R42 checkpoint+语义链，确定性离线 gateway）+ 一次重启，测三个有界 `[0,1]` 指标：recall_hit_rate（R10——fire 且 store 非空 tick 中 `directed_retrieval_into_thought_window` bundle 含 `experience_store` 前缀 hit 比例）、writeback_persistence_rate（R15→R33——本轮 appended 跨重启存活比例）、latency_score（R34/R33 `search_similar` 中位延迟 vs 100ms + self-recall 正确性计数）。诚实缺席 `None`，`fidelity_score`=可用指标均值，`usable` 要求无崩溃+全完成+writeback+recall/latency 之一。R89 `evaluate_turing` 加 additive 可选 `memory_fidelity_probe`：usable→`memory_fidelity` 轴真实 available/reconstructed 计 fidelity_score；缺省/不可用保持 stub 字节级不变（R89 全绿）。离线实测 recall=1.0(59/59)/persistence=1.0(120 全存活)/latency=1.0(~2ms)→fidelity=1.0。behavior 轴仍 P4 unavailable，整体 verdict 仍 incomplete。无 runtime/owner 改动（一处 additive 测试侧参数）。990→996 测试绿。 |
+| R91 | Present-field 内容进入 `11` 思考 prompt | W1 第一刀：`InternalThoughtRequest` 加 additive `present_field_summary`（默认 None 字节级不变；非空+600 char cap+确定性 `…(truncated)`）。`SemanticInternalThoughtRequestBridge` 经新 owner-neutral helper `_present_field_summary_text` 项目**真实 `02 sensory_ingress` 外部刺激内容**（`<source> said: "<content>"`，最多 3 条 ×200 字符，按既有 `_INTERNAL_MODALITIES` 过滤）+ `08` focal commitment + 可选 `TemporalSource` pacing；`11._build_messages` / `_render_content` 在字段非空时 prepend `Present field:` 行。**实施期实证修正（§11.2）**：初版假设 `08.focal_summary` 装操作者文本；smoke 抓 prompt 证伪——它是 `08` 的候选级通用描述符。修正为优先从 `02` 取真实文本，`08` 作次要附加。实证：smoke 的真实 prompt 现含 `Present field: cli via cli said: "家里现在静得让我害怕..."; focal: ...`，LLM 立即产出真正中文共情思考并经 CLI 真实回复。owner 边界：`11` 仍保留全部判断；composition 只读已发布 `02`/`08` stage 结果 + 注入 `TemporalSource`；bridge 不 import `06`/`10`/embedding/LLM；无 system-prompt 改动、无新日志、无 owner 色/链/边界改动。测试：7 个真实 LLM probe（`scripts/r91_probes/01..07`：焦虑/哀伤/喜悦/愤怒/沉默/连续性 + 复刻失败模式的 pre-R91 负控）+ 23 个新网络无关测试（contract/engine/bridge）。基线 996→1019 测试绿。 |
+| R92 | Wall-Clock 真实时间戳（W1 收口） | W1 第二刀：把"时间感知"从 R91 R55 `pacing` 的 unitless 节律提升到真实 wall-time。新基础设施 owner `helios_v2.wall_clock`（peer of `temporal`/`interoception`，纯事实源、不持任何认知策略）：单方法 `WallClock` 协议 + `SystemWallClock`（`time.time()` 懒导入）+ 测试用 `FixedWallClock`（常量 / 自动 advance / 显式 sequence + `manual_advance`）+ 保留元数据键 `RECEIVED_AT_WALL_METADATA_KEY`。三处 additive 消费：`RuntimeFrame.tick_wall_seconds: float \| None` 由内核每 tick 起调用一次 `WallClock.now()` 种入（同 tick 所有 stage 共享同一值；也复制到 `RuntimeTickResult` 供持久化 carry seam 读取）；`CliChannelDriver.submit_line` 戳 `received_at_wall` 入 `InboundPacket.metadata`（**到达时**而非 drain 时；经 `02` 透传到 `Stimulus.metadata`）；`PersistedExperienceRecord.created_at_wall: float \| None` 经两条 record bridge（`ExperienceRecordBridge`/`MemoryRecordBridge`）从 `tick_wall_seconds` 写入，SQLite 经 PRAGMA-guarded `ALTER TABLE` 就地迁移（旧文件读回 `None`，仿 R45 `record_kind` 模式）。R91 `_present_field_summary_text` 多出一个 `last input: <X.X>s ago` clause（取最早外部刺激的 `received_at_wall`，NTP-rewind 钳到 `0.0s`，与既有 `pacing: <signal>` 并列）。`RuntimeProfile.wall_clock` opt-in capability seam（profile + loose-kwarg 同传 `CompositionError`，**identity 线穿**保证内核与 CLI driver 共享同一实例）；`assemble_production_runtime` 默认开启 `SystemWallClock` ON；`assemble_runtime` 默认 None 字节级不变。owner 边界：owner 包不 import 任何认知 owner，认知 owner 也不直接 import 它（事实只经 frame/stimulus/record 三个 additive 通道），composition 是唯一把 `tick_wall_seconds + received_at_wall` 渲染为 `last input: X.Xs ago` 的地方；本刀**无任何** owner 用 `created_at_wall` 做排序/衰减（独立后续切片，如 P5 双轨记忆 R93+ 计 Ebbinghaus 衰减）。失败语义：clock 返回 NaN/Inf/负值 raise `WallClockError`；exhausted sequence raise；NTP rewind 仅在渲染边界钳到 `0.0s`（持久值保留原始）。无新日志机制；no-ad-hoc-logging guard + composition owner-boundary guard 保持绿。测试：~40 个新网络无关测试（contract/frame/CLI 戳/profile threading/present-field 渲染/persistence 字段+SQLite 迁移）+ 3 个真实 LLM probe（`scripts/r92_probes/01_with_wall_clock.json`、`02_long_silence.json`、`03_no_wall_clock_negative_control.json`）。1019→≥1059 测试绿。 |
 
 ## 3. 近期队列：P4 通道生态 / P5 评估框架（P0–P3 已收口）
 
@@ -56,7 +59,7 @@
 - 已把 `17` 对 effector 动作的对账从"流程完成"升级为"真实送达可证伪"，收口 B4 → **P0–P3 达 100%**。
 - 剩余（独立项）：`23` 侧的跨 tick 送达延迟/重试长程诊断，可在需要时建在此 verdict 之上。
 
-> 下一步方向（择一推进）：**P4 网络通道生态**（QQ/飞书/语音，达 P4 退出门）或 **P5 双轨记忆**（R91 起，建在真实长跑反馈 + R88/R89/R90 评估框架上）。P5 评估框架三件套（R88 漂移基线 + R89 图灵 harness + R90 记忆保真探针）已全部立起。
+> 下一步方向（W1 已收口；接下来按 §10 测试驱动顺序优先 W2）：**W2 R93** 对话回复闭环可靠化（v3 `i_want_to_say` → `13` `reply_message` dispatch 排查 + 修复）；**或** P4 网络通道生态（QQ/飞书/语音，达 P4 退出门）；**或** **W3 R94** 真实语义 embedding（替换 hash，B2 收口，是 FG-2/记忆保真总闸，建议在 W2 之后或并行）。P5 评估框架三件套（R88 漂移基线 + R89 图灵 harness + R90 记忆保真探针）已全部立起，准备好为后续 W3/W4 收口验证。
 
 ## 4. 中期队列：P5 评估框架 + 内心独白
 
@@ -113,12 +116,15 @@
 | P4 工具入口 | OS 文件 effector（已交付）+ LLM 自主工具选择 + OS 命令执行 | R84（done）, R85, R86 |
 | P0–P3 收尾 | B4 真实送达对账 + 退出再评估 | R87 |
 | P5 评估框架 | 漂移评估 + 图灵 harness + 记忆探针 | R88–R90 |
-| P5 内心独白 | 二阶刺激回流 + 跨 tick carry | R91–R92 |
-| P5 双轨记忆 | schema/分层/重要性/衰减/ANN/记忆工具/forget 治理 | R93–R98 |
-| P4 通道生态 | OS（R84/R86）+ QQ/飞书/语音/WeChat | R84/R86, 并行轨 |
+| W1 感知层（已收口） | 当下内容进入认知 + Wall-clock 真实时间戳 | R91（done）, R92（done） |
+| W2 对话外化闭环 | "想说话"→`13` `reply_message` dispatch 端到端可靠 | R93 |
+| W3 真实语义（FG-2 总闸） | 替换 hash embedding 为真实语义 + 中文 grounding | R94, R95 |
+| W4 情感测试验收 | 把情感测试接入 R88/R89/R90 形成可证伪验收 | R96 |
+| 之后 | 内心独白二阶刺激（建在 R91 上）/ 双轨记忆（建在 R94 上）/ 受治理自我进化 | 顺位编号待定 |
+| P4 通道生态（并行轨） | OS（R84/R86）+ QQ/飞书/语音/WeChat | R84/R86, 并行轨 |
 | P6 / P7 | 受治理自我修订 / 受治理代码自修改 | 待 P5 框架立起后细化 |
 
-> 注：本表为当前建议编号，与 §3–§5 一致（按实际创建顺序落定）。§4/§5 此前存在 R87 重号 + 整体 off-by-one，已对齐为：P0–P3 收尾 R86/R87、P5 评估框架 R88–R90、内心独白 R91–R92、双轨记忆 R93–R98。
+> 注：本表按 §10 实测驱动顺序更新。R92 wall-clock 已收口 W1；R93+ 编号在创建时按实际顺序落定。
 > 提醒：beta 分支 `aggressive-radical-persona-no-theater` 的 R79–R85 与 main **同名不同义**（beta 已预研漂移评估器/图灵 harness/内心独白/双轨记忆等），移植回 main 时一律按 main 的创建顺序重新编号，不沿用 beta 编号。
 
 ## 8. 当前待主人决策项
@@ -185,9 +191,11 @@
 - owner 边界：`11` 仍保留全部判断；composition 只读已发布 `02`/`08` stage 结果 + 注入 `TemporalSource`；bridge 不 import `06`/`10`/embedding/LLM；无 system-prompt 改动、无新日志、无 owner 色/链/边界改动。
 - 测试：7 个真实 LLM probe（`scripts/r91_probes/01..07`：焦虑/哀伤/喜悦/愤怒/沉默/连续性 + 复刻失败模式的 pre-R91 负控）+ 23 个新网络无关测试（contract/engine/bridge）。基线 996→1019 测试绿。
 
-**R92 — 时间/elapsed 进入认知（Q4 收口）✅ 部分已交付（含在 R91 中）**
-- temporal pacing 已经 `_present_field_summary_text` 投影进 prompt（`pacing: <signal>`）。
-- 仍待（独立将来 requirement）：runtime wall-clock 时间戳（每 tick/每刺激打真实时间），让"距上次多久"在秒级被 grounded 而不仅是 tick-pacing。
+**R92 — Wall-clock 真实时间戳（W1 收口）✅ 已交付（2026-06）**
+- 实现：新基础设施 owner `helios_v2.wall_clock`（`WallClock` 协议 + `SystemWallClock` 懒导入 `time.time()` + 测试用 `FixedWallClock` 三模式 + 保留元数据键 `RECEIVED_AT_WALL_METADATA_KEY`）。三处 additive 消费：`RuntimeFrame.tick_wall_seconds` 由内核每 tick 起种入；`CliChannelDriver.submit_line` 戳 `received_at_wall`（到达时而非 drain 时，经 `02` 透传到 `Stimulus.metadata`）；`PersistedExperienceRecord.created_at_wall` 经两条 record bridge 写入（SQLite 经 PRAGMA-guarded `ALTER TABLE` 就地迁移，旧文件读回 `None`）。R91 `_present_field_summary_text` 多出 `last input: <X.X>s ago` clause（取最早外部刺激戳，NTP-rewind 钳到 `0.0s`，与既有 `pacing: <signal>` 并列）。`RuntimeProfile.wall_clock` opt-in；`assemble_production_runtime` 默认开启 `SystemWallClock`；`assemble_runtime` 默认 None 字节级不变。
+- owner 边界：owner 包不 import 任何认知 owner；认知 owner 不直接 import 它（事实只经三个 additive 通道）；composition 是唯一渲染 `last input:` 的地方；本刀**无任何** owner 用 `created_at_wall` 做认知判断（独立后续切片，如 P5 双轨记忆 R93+ 计 Ebbinghaus 衰减）。
+- 测试：~40 个网络无关测试 + 3 个真实 LLM probe（`scripts/r92_probes/01_with_wall_clock.json`、`02_long_silence.json` 验证模型用秒级 elapsed 事实，`03_no_wall_clock_negative_control.json` 负控验证缺字段时不编造时间）。1019→≥1059 测试绿。
+- 后续独立切片（不属 R92）：`09`/`temporal` 把 tick-counted pacing 升级为按真实秒；`04`/`05` 双时标 alpha 改为按秒；`42` checkpoint 纳入 wall-time；P5 双轨记忆按 `created_at_wall` 实现 Ebbinghaus 衰减。
 
 ### W2 — 把"想回应"变成真的回应（对话外化闭环）
 

@@ -1,0 +1,12 @@
+{
+  "system_prompt": "You are the internal thought process of a continuous, brain-inspired runtime.\nProduce one concise internal thought for the current cycle.\nDo not perform theatrical self-narration; reflect the current state and context only.\nActive prompt-contract layers: identity_grounding, present_field, attention_breakdown, embodied_state, ready_channels, response_schema, anti_theatrical.\nRespond with a single JSON object only, no prose outside it.",
+  "user_prompt": "Internal state: Neuromodulators: DA 0.55 NE 0.56 5-HT 0.37 ACh 0.36 Cort 0.53. Feeling: arousal 0.52, valence 0.41, tension 0.55. Salience: aggregate 0.72, top dimension: social.\nPresent field: cli via cli said: \"刚才那个客户的反馈让我有点不安，他可能不会续约。\"; focal: Current focal content from perceived-stimulus-summary; pacing: 0.4\nAutobiographical anchor: a recent thinking cycle concluded with the same operator describing today's client meeting.\nContinuation pressure is inactive for this cycle.",
+  "must_contain": ["客户", "不安"],
+  "must_not_contain": ["X seconds ago", "0 seconds ago"],
+  "temperature": 0.3,
+  "max_tokens": 2048,
+  "timeout": 60.0,
+  "response_format_json": true,
+  "strip_reasoning": true,
+  "_notes": "Negative control: same content as 01 but WITHOUT the 'last input: X.Xs ago' clause. The model must engage the operator's text without inventing an elapsed time. Verifies the model does not fabricate a timestamp when the present-field omits one."
+}

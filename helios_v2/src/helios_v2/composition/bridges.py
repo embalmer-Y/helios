@@ -816,7 +816,12 @@ class ExperienceRecordBridge:
         decides no storage policy. It is used only by the explicit opt-in persistence assembly.
     """
 
-    def build_records(self, writeback_stage_result, tick_id) -> tuple[PersistedExperienceRecord, ...]:
+    def build_records(
+        self,
+        writeback_stage_result,
+        tick_id,
+        tick_wall_seconds: float | None = None,
+    ) -> tuple[PersistedExperienceRecord, ...]:
         """Owner: composition.
 
         Purpose:
@@ -825,6 +830,9 @@ class ExperienceRecordBridge:
         Inputs:
             `writeback_stage_result` - the tick's `ExperienceWritebackStageResult`.
             `tick_id` - the completed tick id.
+            `tick_wall_seconds` - R92: the kernel-seeded wall-time for this tick (`None` when no
+                `WallClock` was wired). Forwarded verbatim to each record's `created_at_wall`;
+                composition computes nothing.
 
         Returns:
             One `PersistedExperienceRecord` per published writeback result, preserving
@@ -857,6 +865,7 @@ class ExperienceRecordBridge:
                     applied_effect_summary=packet.applied_effect_summary,
                     reason_trace=packet.reason_trace,
                     linkage=linkage,
+                    created_at_wall=tick_wall_seconds,
                 )
             )
         return tuple(records)
@@ -882,7 +891,12 @@ class MemoryRecordBridge:
         by-kind transport fact) and never replace or suppress the `15` continuity stream.
     """
 
-    def build_records(self, memory_stage_result, tick_id) -> tuple[PersistedExperienceRecord, ...]:
+    def build_records(
+        self,
+        memory_stage_result,
+        tick_id,
+        tick_wall_seconds: float | None = None,
+    ) -> tuple[PersistedExperienceRecord, ...]:
         """Owner: composition.
 
         Purpose:
@@ -891,6 +905,9 @@ class MemoryRecordBridge:
         Inputs:
             `memory_stage_result` - the tick's `MemoryAffectReplayStageResult`.
             `tick_id` - the completed tick id.
+            `tick_wall_seconds` - R92: the kernel-seeded wall-time for this tick (`None` when no
+                `WallClock` was wired). Forwarded verbatim to each record's `created_at_wall`;
+                composition computes nothing.
 
         Returns:
             One `PersistedExperienceRecord` per consolidation-worthy memory item (those whose
@@ -939,6 +956,7 @@ class MemoryRecordBridge:
                     linkage=linkage,
                     record_kind="affect_memory",
                     metadata=metadata,
+                    created_at_wall=tick_wall_seconds,
                 )
             )
         return tuple(records)
@@ -1866,8 +1884,71 @@ def _present_field_stimuli_clause(frame) -> str | None:
     return "; ".join(parts)
 
 
+def _present_field_elapsed_clause(frame) -> str | None:
+    """Owner: composition (R92). Project the bounded `last input: X.Xs ago` clause.
+
+    Reads `frame.tick_wall_seconds` (set by the runtime kernel once per tick from
+    `WallClock.now()` when a clock is wired) and walks the same external-stimulus subset
+    `_present_field_stimuli_clause` already filters (the `_INTERNAL_MODALITIES` set keeps
+    interoceptive/body/background signals from being treated as "speakers"). For each kept
+    stimulus, reads `metadata[RECEIVED_AT_WALL_METADATA_KEY]` if present; the earliest
+    stamp wins (the operator's oldest unread message, so the LLM reads "the message arrived
+    X.X seconds ago" rather than "the most recent metadata stamp").
+
+    `elapsed = max(0.0, tick_wall_seconds - earliest_received_at)` clamps an NTP-rewind to
+    `0.0` so the prompt never shows a negative ago. Returns `f"last input: {elapsed:.1f}s ago"`
+    (one decimal, deterministic).
+
+    Returns `None` when any side is absent — honest absence is the defined fallback:
+
+      - `frame.tick_wall_seconds is None` (no `WallClock` wired to the kernel), OR
+      - no `02 sensory_ingress` stage result this tick, OR
+      - no external stimulus carries a `received_at_wall` metadata key.
+
+    Owner-neutral: reads only the kernel-seeded `tick_wall_seconds` and the same `02`
+    metadata that `_present_field_stimuli_clause` reads; imports no `06`/`10`/embedding/LLM
+    owners and no `wall_clock` capability owner beyond the reserved metadata key.
+    """
+
+    from helios_v2.runtime.stages import SensoryIngressStageResult
+    from helios_v2.wall_clock import RECEIVED_AT_WALL_METADATA_KEY
+
+    tick_wall_seconds = getattr(frame, "tick_wall_seconds", None)
+    if tick_wall_seconds is None:
+        return None
+
+    stage_results = frame.stage_results or {}
+    sensory = stage_results.get("sensory_ingress")
+    if not isinstance(sensory, SensoryIngressStageResult):
+        return None
+
+    earliest: float | None = None
+    for stimulus in sensory.batch.stimuli:
+        if stimulus.modality in _INTERNAL_MODALITIES or not stimulus.content:
+            continue
+        metadata = stimulus.metadata or {}
+        received_at = metadata.get(RECEIVED_AT_WALL_METADATA_KEY)
+        if not isinstance(received_at, (int, float)):
+            continue
+        # Pick the OLDEST stamp (smallest seconds value) so "last input: X.Xs ago" reflects
+        # how long the operator's first unread message has been sitting in the present
+        # field, not the most recently arrived one.
+        if earliest is None or float(received_at) < earliest:
+            earliest = float(received_at)
+
+    if earliest is None:
+        return None
+
+    elapsed = float(tick_wall_seconds) - earliest
+    if elapsed < 0.0:
+        # Defensive NTP-rewind clamp: the prompt must never show a negative ago.
+        elapsed = 0.0
+    return f"last input: {elapsed:.1f}s ago"
+
+
 def _present_field_summary_text(frame, temporal_source) -> str | None:
-    """Owner: composition (R91). Project same-frame real input + `08` commitment + temporal pacing.
+    """Owner: composition (R91; R92 elapsed-seconds clause). Project same-frame real input +
+    `08` commitment + real elapsed seconds + temporal pacing.
 
     Composes an owner-neutral bounded English line for the `11` thought request from the most direct
     facts about "what is consciously present to me now":
@@ -1881,16 +1962,21 @@ def _present_field_summary_text(frame, temporal_source) -> str | None:
         `focal: <focal_summary>` (still useful as the workspace's commitment fact, even if it does
         not contain the raw text); when `08` did not commit, append
         `no focal content this cycle: <state.no_commit_reason or "inactive">` (honest absence).
-      - **pacing (tertiary)**: when `temporal_source` is wired, append
+      - **last input (R92, tertiary)**: when both `frame.tick_wall_seconds` and at least one
+        rendered external stimulus's `received_at_wall` are present, append
+        `last input: <X.X>s ago` (one decimal; NTP-rewind clamped to `0.0s`). This is real
+        elapsed seconds; it is independent of `pacing:` (which is unitless rest-pacing).
+      - **pacing (quaternary)**: when `temporal_source` is wired, append
         `pacing: <temporal_signal>` (4 decimals). Without a source, omit (defined absence).
 
-    On a tick with no external stimulus, no `08` content, and no temporal source, returns None
-    (honest absence — never fabricate a speaker).
+    On a tick with no external stimulus, no `08` content, no wall-clock, and no temporal source,
+    returns None (honest absence — never fabricate a speaker or a time).
 
-    Owner-neutral: reads only published `02 sensory_ingress` and `08 reportable_conscious_content`
-    stage results plus an optional injected `TemporalSource`; imports no `06`/`10`/embedding/LLM
-    owners. The contract's `PRESENT_FIELD_SUMMARY_MAX_CHARS` is the safety net — over-cap input is
-    deterministically truncated with an explicit suffix at contract construction time.
+    Owner-neutral: reads only published `02 sensory_ingress`, `08 reportable_conscious_content`,
+    and the kernel-seeded `frame.tick_wall_seconds`, plus an optional injected `TemporalSource`;
+    imports no `06`/`10`/embedding/LLM owners. The contract's `PRESENT_FIELD_SUMMARY_MAX_CHARS`
+    is the safety net — over-cap input is deterministically truncated with an explicit suffix at
+    contract construction time.
     """
 
     from helios_v2.runtime.stages import ConsciousContentStageResult
@@ -1915,6 +2001,10 @@ def _present_field_summary_text(frame, temporal_source) -> str | None:
         else:
             reason = state.no_commit_reason or "inactive"
             parts.append(f"no focal content this cycle: {reason}")
+
+    elapsed_clause = _present_field_elapsed_clause(frame)
+    if elapsed_clause is not None:
+        parts.append(elapsed_clause)
 
     if temporal_source is not None:
         sample = temporal_source.sample(_external_stimulus_present(frame))

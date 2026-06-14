@@ -155,6 +155,7 @@ from helios_v2.embedding import (
 from helios_v2.continuity_checkpoint import ContinuityCheckpointStore, SqliteCheckpointBackend
 from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
 from helios_v2.temporal import TemporalSource
+from helios_v2.wall_clock import SystemWallClock, WallClock
 from helios_v2.persistence import (
     ExperienceStore,
     InMemoryExperienceStoreBackend,
@@ -833,7 +834,9 @@ class RuntimeHandle:
         )
         if writeback_result is None:
             return
-        records = self.experience_record_bridge.build_records(writeback_result, result.tick_id)
+        records = self.experience_record_bridge.build_records(
+            writeback_result, result.tick_id, tick_wall_seconds=result.tick_wall_seconds
+        )
         if self.embed_record is not None:
             # Embed-at-write (semantic memory enabled): embed each record's summary and store
             # the vector with the record. An embedding failure propagates as a hard stop; the
@@ -867,7 +870,9 @@ class RuntimeHandle:
         memory_result = result.stage_results.get("memory_affect_and_replay")
         if memory_result is None:
             return
-        records = self.memory_record_bridge.build_records(memory_result, result.tick_id)
+        records = self.memory_record_bridge.build_records(
+            memory_result, result.tick_id, tick_wall_seconds=result.tick_wall_seconds
+        )
         if not records:
             return
         records = tuple(
@@ -954,6 +959,7 @@ _RUNTIME_PROFILE_FIELD_NAMES: tuple[str, ...] = (
     "external_signal_source",
     "default_signal_mode",
     "embodied_prompt_mode",
+    "wall_clock",
 )
 
 
@@ -999,6 +1005,7 @@ class RuntimeProfile:
     external_signal_source: "SensorySource | None" = None
     default_signal_mode: str = "semantic"
     embodied_prompt_mode: str = "v3"
+    wall_clock: "WallClock | None" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1104,6 +1111,7 @@ def assemble_runtime(
     external_signal_source: "SensorySource | None | object" = _UNSET,
     default_signal_mode: str | object = _UNSET,
     embodied_prompt_mode: str | object = _UNSET,
+    wall_clock: "WallClock | None | object" = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1165,6 +1173,7 @@ def assemble_runtime(
         ("external_signal_source", external_signal_source),
         ("default_signal_mode", default_signal_mode),
         ("embodied_prompt_mode", embodied_prompt_mode),
+        ("wall_clock", wall_clock),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1193,6 +1202,7 @@ def assemble_runtime(
     interoceptive_sampler = resolved_profile.interoceptive_sampler
     temporal_source = resolved_profile.temporal_source
     external_signal_source = resolved_profile.external_signal_source
+    wall_clock = resolved_profile.wall_clock
 
     # R69 auto-provisioning: when default_signal_mode is "semantic" and the caller did not
     # inject an experience store and/or embedding gateway, create fresh in-memory backends so
@@ -1308,7 +1318,11 @@ def assemble_runtime(
     if channel_cli:
         sink = cli_output_sink if cli_output_sink is not None else _NullCliSink()
         effective_channel_drivers.append(
-            CliChannelDriver(output_sink=sink, config=CliDriverConfig())
+            CliChannelDriver(
+                output_sink=sink,
+                config=CliDriverConfig(),
+                wall_clock=wall_clock,
+            )
         )
     effective_channel_drivers.extend(channel_drivers)
     if effective_channel_drivers:
@@ -1668,6 +1682,7 @@ def assemble_runtime(
         dependency_specs=resolved_specs,
         dependency_provider=resolved_provider,
         recorder=recorder,
+        wall_clock=wall_clock,
     )
     stages = [
         SensoryIngressRuntimeStage(ingress=ingress),
@@ -1976,6 +1991,7 @@ def assemble_production_runtime(
     gateway: "LlmGatewayAPI | None" = None,
     recorder: "RuntimeObservabilityRecorder | None" = None,
     embedding_gateway: "EmbeddingGatewayAPI | None" = None,
+    wall_clock: "WallClock | None" = None,
 ) -> RuntimeHandle:
     """Owner: composition (R82). Assemble the standard production runtime with persistence on.
 
@@ -1988,6 +2004,11 @@ def assemble_production_runtime(
         (closing the G2 persistence gate). It adds no assembly path and holds no cognitive policy;
         it constructs the durable backends and delegates to `assemble_runtime()`.
 
+        R92: this entry point also defaults the wall-clock capability ON (`SystemWallClock`), so
+        the production assembly carries real wall-time on every `RuntimeFrame`, every CLI inbound
+        packet (when channel-bound), and every persisted experience record. Test and CI callers
+        may inject a `FixedWallClock` to keep behavior deterministic.
+
     Inputs:
         `data_dir` - the directory for the durable SQLite files (default `DEFAULT_PRODUCTION_DATA_DIR`).
         `config` - optional `CompositionConfig` override (default first-version config).
@@ -1996,9 +2017,12 @@ def assemble_production_runtime(
         `recorder` - optional `21` observability recorder.
         `embedding_gateway` - optional embedding gateway override (default the production gateway,
             real-capable with an offline-hash fallback).
+        `wall_clock` - optional `WallClock` override (default `SystemWallClock()`); tests inject
+            a `FixedWallClock` for reproducibility.
 
     Returns:
-        A runnable `RuntimeHandle` with persistence and the continuity checkpoint defaulted on.
+        A runnable `RuntimeHandle` with persistence, the continuity checkpoint, and a wall-clock
+        defaulted on.
 
     Raises:
         `PersistenceError` / `CheckpointError` if a SQLite path is unwritable; `RuntimeStartupError`
@@ -2018,6 +2042,7 @@ def assemble_production_runtime(
     resolved_embedding = (
         embedding_gateway if embedding_gateway is not None else _production_embedding_gateway()
     )
+    resolved_wall_clock = wall_clock if wall_clock is not None else SystemWallClock()
     return assemble_runtime(
         config=config,
         gateway=gateway,
@@ -2026,4 +2051,5 @@ def assemble_production_runtime(
         embedding_gateway=resolved_embedding,
         continuity_checkpoint=checkpoint,
         default_signal_mode="semantic",
+        wall_clock=resolved_wall_clock,
     )

@@ -71,6 +71,7 @@ class PersistedExperienceRecord:
     embedding: tuple[float, ...] | None = None
     record_kind: str = "experience_writeback"
     metadata: Mapping[str, str] = field(default_factory=dict)
+    created_at_wall: float | None = None
 
     def __post_init__(self) -> None:
         for attr_name in (
@@ -112,6 +113,24 @@ class PersistedExperienceRecord:
                     "PersistedExperienceRecord embedding must be non-empty when present"
                 )
             object.__setattr__(self, "embedding", vector)
+        # R92: validate the optional `created_at_wall` field. None is honest absence (no
+        # `WallClock` was wired when the record was written, or the runtime read it back from
+        # an old SQLite file written before R92). When present, it must be a finite,
+        # non-negative real number — the same invariant `WallClockReading` enforces upstream.
+        if self.created_at_wall is not None:
+            import math as _math
+
+            value = self.created_at_wall
+            if not isinstance(value, (int, float)):
+                raise PersistenceError(
+                    "PersistedExperienceRecord.created_at_wall must be a real number when present"
+                )
+            value = float(value)
+            if _math.isnan(value) or _math.isinf(value) or value < 0.0:
+                raise PersistenceError(
+                    "PersistedExperienceRecord.created_at_wall must be finite and non-negative"
+                )
+            object.__setattr__(self, "created_at_wall", value)
 
     def with_sequence(self, sequence: int) -> "PersistedExperienceRecord":
         """Owner: durable experience store.
@@ -151,6 +170,7 @@ class PersistedExperienceRecord:
             embedding=self.embedding,
             record_kind=self.record_kind,
             metadata=dict(self.metadata),
+            created_at_wall=self.created_at_wall,
         )
 
     def with_embedding(self, vector: tuple[float, ...]) -> "PersistedExperienceRecord":
@@ -193,6 +213,7 @@ class PersistedExperienceRecord:
             embedding=tuple(float(component) for component in vector),
             record_kind=self.record_kind,
             metadata=dict(self.metadata),
+            created_at_wall=self.created_at_wall,
         )
 
 
