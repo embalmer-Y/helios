@@ -254,6 +254,31 @@ The module progress flow maps `docs/PROGRESS_FLOW.en.md` and `docs/PROGRESS_FLOW
 
 Both maps must be updated together (English and Chinese), and each map's "Last synced" line must name the requirement that last touched it. A change set that alters owner maturity, the stage chain, or owner boundaries without updating both progress flow maps is incomplete, exactly like a stale `index.md`.
 
+### 8.2 Prompt-change validation rule (real-LLM probe)
+
+Any requirement that adds or changes an LLM-facing prompt — a system/user prompt, an embodied
+prompt-contract layer (`16`), or what an owner projects into an LLM request (e.g. the `11`
+internal-thought request, the R70 semantic bridges) — MUST validate the EXPECTED enhanced prompt
+against the real configured model BEFORE or as part of implementation, using
+`scripts/run_llm_prompt_probe.py`.
+
+Mandatory steps:
+
+1. Construct the expected prompt (the system/user pair the change will produce) as a probe
+   `--case-file` (or direct `--system-prompt`/`--user-prompt`), including the new context fields.
+2. Run it against the real configured model (`.env` `OPENAI_API_KEY`/`OPENAI_BASE_URL`/
+   `HELIOS_LLM_MODEL`), and confirm the model behaves as intended: it engages the new context, parses
+   (when a structured envelope is expected), and trips no `must_not_contain` anti-pattern (e.g. a
+   theatrical phrase, or a "no real signal" symptom the change is meant to fix).
+3. For reasoning models (e.g. MiniMax-M3) pass `--strip-reasoning` (mirrors the `11` parser's
+   `<think>`/code-fence stripping) and an adequate `--max-tokens` (>= 2048; a richer prompt makes the
+   model think longer, so too small a budget truncates inside `<think>` with `finish_reason=length`).
+4. Save the probe JSON (`--save-json`, under git-ignored `logs/`) and record the probe outcome
+   (PASS + the key observation) in the requirement's `design.md` Validation Strategy.
+
+A prompt-changing requirement whose design does not cite a real-LLM probe result is incomplete. The
+probe is for design validation; it does not replace the network-free owner/contract tests.
+
 ## 9. Requirement Template
 Use this template when creating a new `requirement.md`.
 

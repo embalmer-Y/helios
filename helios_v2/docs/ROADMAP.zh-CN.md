@@ -229,3 +229,16 @@
 
 ### 一句话排序
 **R91 读到当下 → R92 感知时间 → R93 学会回应 → R94/R95 真实语义（恰当）→ R96 验收 → 内心独白/双轨记忆/自进化。**
+
+## 11. 工程纪律：prompt 变更必须先用真实 LLM probe 验证
+
+> 工具：`scripts/run_llm_prompt_probe.py`（真实 LLM prompt 探针：发 system/user → 输出，校验
+> must-contain/must-not-contain + 可选 JSON 解析，多模型对比，存 JSON 报告）。
+
+**规则（已写入 `requirements/requirement-authoring-standard.md` §8.2）**：任何**增/改 LLM 面向 prompt**
+的 requirement（`16` 具身 prompt 层、`11` 思考请求投影、R70 语义桥等），在实现前/实现中**必须**用该
+工具对**预期的增强 prompt**做真实模型验证——构造期望 prompt 作 `--case-file`，对真实模型跑，确认模型
+确实消费了新上下文、能解析、且不触发反模式（如表演化措辞、或本次要修复的"无真实信号"症状）；推理模型
+（MiniMax-M3）须加 `--strip-reasoning`（镜像 `11` 的 `<think>`/围栏剥离）+ 足够 `--max-tokens`（≥2048）。
+probe 结果（PASS + 关键观察）写进 requirement 的 `design.md` 验证策略。probe 只做设计验证，不替代
+网络无关的 owner/契约测试。

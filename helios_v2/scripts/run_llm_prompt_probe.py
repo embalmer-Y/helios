@@ -47,6 +47,7 @@ class PromptCase:
     max_tokens: int
     timeout: float
     response_format_json: bool
+    strip_reasoning: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ def _parse_case_file(case_file: Path) -> tuple[PromptCase, tuple[TargetDefinitio
         max_tokens=int(payload.get("max_tokens", 800)),
         timeout=float(payload.get("timeout", 30.0)),
         response_format_json=bool(payload.get("response_format_json", False)),
+        strip_reasoning=bool(payload.get("strip_reasoning", False)),
     )
     target_definitions = tuple(
         TargetDefinition(
@@ -119,6 +121,7 @@ def _build_case_from_args(args: argparse.Namespace) -> PromptCase:
         max_tokens=args.max_tokens,
         timeout=args.timeout,
         response_format_json=args.response_format_json,
+        strip_reasoning=args.strip_reasoning,
     )
 
 
@@ -157,14 +160,32 @@ def _resolve_target(target: TargetDefinition) -> tuple[ResolvedTarget, str]:
     )
 
 
+def _strip_reasoning(text: str) -> str:
+    """Mirror the `11` internal-thought parser's robustness: strip a leading reasoning `<think>`
+    block and surrounding ```json code fences before JSON parsing, so a reasoning model's output
+    (e.g. MiniMax-M3) is evaluated the same way the real runtime parses it."""
+
+    import re
+
+    stripped = text.strip()
+    # Remove a leading <think>...</think> block (reasoning models emit one before the answer).
+    stripped = re.sub(r"^<think>.*?</think>", "", stripped, count=1, flags=re.DOTALL).strip()
+    # Remove a surrounding markdown code fence (```json ... ``` or ``` ... ```).
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, flags=re.DOTALL)
+    if fence:
+        stripped = fence.group(1).strip()
+    return stripped
+
+
 def _evaluate_expectations(text: str, prompt_case: PromptCase) -> dict[str, Any]:
     missing = [needle for needle in prompt_case.must_contain if needle not in text]
     forbidden = [needle for needle in prompt_case.must_not_contain if needle in text]
     json_parse_ok: bool | None = None
     json_error: str | None = None
     if prompt_case.response_format_json:
+        candidate = _strip_reasoning(text) if prompt_case.strip_reasoning else text
         try:
-            json.loads(text)
+            json.loads(candidate)
         except json.JSONDecodeError as exc:
             json_parse_ok = False
             json_error = str(exc)
@@ -310,6 +331,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--response-format-json",
         action="store_true",
         help="Request JSON object output and validate that the returned content parses as JSON.",
+    )
+    parser.add_argument(
+        "--strip-reasoning",
+        action="store_true",
+        help="Before the JSON check, strip a leading <think>...</think> block and ```json fences, "
+        "mirroring the `11` internal-thought parser. Use this for reasoning models (e.g. MiniMax-M3).",
     )
     parser.add_argument(
         "--preview-chars",
