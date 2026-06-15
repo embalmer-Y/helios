@@ -1,12 +1,8 @@
-"""Requirement 97 - anchor catalog unit tests.
+"""Requirement 97 + 98 - anchor catalog unit tests.
 
 Six unit tests covering the `appraisal.anchor_catalog` data structure.
-These are the network-free, deterministic, fail-fast tests for the
-catalog substrate. They are referenced by
-`docs/requirements/97-chinese-appraisal-grounding/design.md` §5.4 and
-form the first of three R97 test files (the other two are
-`test_r97_chinese_grounding.py` for the estimator wiring and
-`r97_b3_closure.py` for the B3 closure focused tests).
+R98 adds 6 R98 Set A (医学共识身体症状) anchor tests appended below the
+R97 base 6 (total 12 tests in this file).
 """
 
 from __future__ import annotations
@@ -121,3 +117,92 @@ def test_catalog_with_only_zh_works() -> None:
     assert catalog.languages_for("threat") == ("zh",)
     assert catalog.phrases_for("threat") == ("我被攻击",)
     assert catalog.sets_for("threat")[0].language == "zh"
+
+
+# --------------------------------------------------------------------------- #
+# R98 Set A: 医学共识身体症状 anchor 极小扩 (6 个)。                            #
+# 设计原则（plan §3.2）: 优先 DSM-5/ICD-11 共识的焦虑/抑郁核心身体症状词。       #
+# --------------------------------------------------------------------------- #
+
+R98_SET_A_THREAT_ANCHORS: tuple[str, ...] = (
+    "我心跳加速心慌",
+    "我整夜失眠睡不着",
+    "我手心冒汗发抖",
+    "我脑子停不下来",
+    "我发高烧很难受",
+    "家里静得让人害怕",
+)
+
+
+def test_r98_set_a_threat_anchors_in_zh_threat_anchors() -> None:
+    # All 6 R98 Set A anchors must be present in `ZH_THREAT_ANCHORS`
+    # (the catalog substrate). This guards against silent catalog
+    # replacement regressions: R98 ships 5+6=11 ZH threat anchors and
+    # this test would fail if any of the 6 Set A items were dropped.
+    for anchor in R98_SET_A_THREAT_ANCHORS:
+        assert anchor in ZH_THREAT_ANCHORS, (
+            f"R98 Set A threat anchor {anchor!r} missing from ZH_THREAT_ANCHORS"
+        )
+
+
+def test_r98_set_a_total_zh_threat_count() -> None:
+    # R97 ships 5 ZH threat anchors; R98 adds 6 Set A → 11 total.
+    # This bound is the contract: catalog极小扩 (5→11), not 枚举爆炸.
+    assert len(ZH_THREAT_ANCHORS) == 11, (
+        f"Expected 11 ZH threat anchors (R97 5 + R98 Set A 6); got {len(ZH_THREAT_ANCHORS)}"
+    )
+
+
+def test_r98_set_a_all_chinese() -> None:
+    # Same CJK guard as R97 but for the 6 R98 Set A anchors: every
+    # phrase must contain at least one CJK character (no accidental
+    # English pasting during R98 catalog extension).
+    cjk_ranges = [
+        (0x4E00, 0x9FFF),
+        (0x3000, 0x303F),
+        (0x3400, 0x4DBF),
+        (0xFF00, 0xFFEF),
+    ]
+
+    def _is_cjk(char: str) -> bool:
+        cp = ord(char)
+        return any(start <= cp <= end for start, end in cjk_ranges)
+
+    for phrase in R98_SET_A_THREAT_ANCHORS:
+        assert any(_is_cjk(c) for c in phrase), (
+            f"R98 Set A threat anchor {phrase!r} contains no CJK characters"
+        )
+
+
+def test_r98_set_a_distinct_from_en_anchors() -> None:
+    # R98 Set A phrases must remain disjoint from R40 English anchors
+    # (the multilingual coverage invariant from R97 must continue to hold
+    # after catalog extension; otherwise we are duplicating, not adding).
+    assert set(R98_SET_A_THREAT_ANCHORS).isdisjoint(set(THREAT_PROTOTYPES))
+
+
+def test_r98_default_catalog_includes_set_a() -> None:
+    # The `DEFAULT_ANCHOR_CATALOG` (used when no catalog is injected)
+    # must include the R98 Set A anchors. This is the cold-start 兜底
+    # contract: an owner that runs with the default catalog gets the
+    # R97 5 + R98 6 ZH threat coverage without any explicit injection.
+    phrases = DEFAULT_ANCHOR_CATALOG.phrases_for("threat")
+    for anchor in R98_SET_A_THREAT_ANCHORS:
+        assert anchor in phrases, (
+            f"R98 Set A anchor {anchor!r} missing from DEFAULT_ANCHOR_CATALOG.phrases_for('threat')"
+        )
+
+
+def test_r98_zh_reward_unchanged() -> None:
+    # R98 plan §3.2 says: 辅小扩只针对 ZH threat, reward 不动。
+    # ZH_REWARD_ANCHORS length must remain 5 (R97 first-version) and
+    # the set contents unchanged. This guards against accidental reward
+    # extension in R98 (which the主人 explicitly declined).
+    assert len(ZH_REWARD_ANCHORS) == 5
+    assert ZH_REWARD_ANCHORS == (
+        "我感到非常喜悦",
+        "这是值得庆祝的成就",
+        "我获得了渴望的东西",
+        "我感到被深深地爱",
+        "这是有意义的成功",
+    )

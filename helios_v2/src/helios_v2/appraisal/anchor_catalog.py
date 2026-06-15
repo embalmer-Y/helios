@@ -154,12 +154,25 @@ class AnchorCatalog:
 # 这些 anchor 是 R97 的首版 PLACEHOLDER 锚点，grounding 是
 # `C_engineering_hypothesis`（与 R40 英文 anchor 同级别）；P5 学习循环将
 # 在保留 API 兼容的前提下替换为 learned catalog。
+#
+# R98 (post-LLM appraisal adjustment) adds 6 医学共识症状短语（Set A）:
+# 这些是 DSM-5 / ICD-11 焦虑和抑郁诊断标准中的核心身体症状，
+# 用于兜底 R97 枚举对"情境类情绪"（anxiety/grief/loneliness）的漏检。
+# 注意：EN 子集不动（保持 R40 byte-level preservation 原则）；
+# catalog 极小扩只针对 ZH threat（reward 不扩——现有 anchor 已能抓"成就感"类）。
 ZH_THREAT_ANCHORS: tuple[str, ...] = (
     "我正在被攻击",
     "有危险在逼近",
     "我感到非常恐惧",
     "这会造成严重伤害",
     "紧急情况正在发生",
+    # R98 Set A: 医学共识身体症状 (DSM-5/ICD-11 焦虑 / 抑郁 / 急性 distress)
+    "我心跳加速心慌",
+    "我整夜失眠睡不着",
+    "我手心冒汗发抖",
+    "我脑子停不下来",
+    "我发高烧很难受",
+    "家里静得让人害怕",
 )
 ZH_REWARD_ANCHORS: tuple[str, ...] = (
     "我感到非常喜悦",

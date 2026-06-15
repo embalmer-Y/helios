@@ -91,6 +91,38 @@ Configuration: `HELIOS_EMBEDDING_MODEL=openai/text-embedding-3-large` (3072-dim)
   - `test_b3_recall_over_recency_r40_english_only.json` (b3_closed: false, threat_shift_count: 0)
 - Real-cloud B3 closure (this file's §3 entry) — opt-in, post-merge
 
+## 4. R98 post-LLM appraisal adjustment (post-R97 follow-up, 2026-06-16)
+
+R98 (per `docs/plans/r98_post_llm_hormone_adjustment_plan.md`) extends the R97 catalog-only fix with a bounded post-LLM appraisal adjustment. The architectural change:
+- New `appraisal.post_llm_hormone_adjuster.PostLLMHormoneAdjuster` translates an LLM `hormone_response_i_predict` payload into a bounded `PostLLMHormoneAdjustment` (per-tick Δ cap ±0.10, numeric confidence 1.0, phrase confidence 0.7).
+- New composition glue: `PostLLMHormoneAdjustmentHolder` carries the prior-tick adjustment forward into the next tick's `04` drive formula.
+- The R81-honored drive formula now applies the R98 adjustment **before** the R81 forecast bias (含 adjustment 模式).
+- R97 catalog extended极小 (5→11 ZH threat anchors; 6 new 医学共识身体症状: 心跳加速/失眠/手心冒汗/反复演练失败/发烧/家里静得让人害怕). Reward set unchanged. EN subset unchanged (R40 byte-level preservation).
+
+**R98 real-cloud 85-utterance verdict (2026-06-16, honest)**:
+- cortisol positive-vs-negative separation: **-0.0118** (R96 + R97 + R98 real cloud, R98 wiring active)
+- pre-R97 baseline: -0.0095
+- directional shift: **-0.0023** (slight **regression**)
+- `b2_closed_real_llm: False` (threshold 0.05)
+- `b3_closed_real_llm: False` (threshold 0.10)
+- `b_closed_with_llm_adjustment: False` (the R98-adjusted headline is the same as b2_closed_real_llm; the headline is post-R98-adjustment, not the R97-only value)
+- 60/85 total replies emitted; 0/85 channel "fired" events; 0 crashes
+
+**Why R98 didn't close the gap (audit of 85 LLM I/O entries)**:
+- 5/85 (6%) LLM calls have a parseable `hormone_response_i_predict` with standard channel names.
+- 14/85 (16%) include the field text but with non-standard keys (`oxytocin_boost`, `predicted_user_valence_shift`, `Cort` instead of `cortisol`, `5-HT` instead of `serotonin`); the adjuster silently drops these.
+- 66/85 (78%) emit no `hormone_response_i_predict` at all.
+- Of the 5 parseable predictions: 1 had `cortisol` (threat), 2 had `oxytocin` (social), 1 had `dopamine` (reward), 1 had `5-HT` (serotonin). The LLM is biased toward reward-leaning predictions (warm empathy → oxytocin/dopamine up) and rarely emits threat-leaning predictions (cortisol up).
+- Net effect: R98's `threat_delta` (which flows to cortisol) fires ≤ 1 time per 85-utterance probe. The R98 wiring is correct; the upstream LLM is the bottleneck.
+
+**What R98 did achieve (honest report)**:
+- Plumbing correct: 60/85 LLM replies, 0 crashes, R98 default-on for the semantic assembly.
+- Per-fixture cortisol mean|Δ| = **0.0360** (R97 baseline: 0.0030). R98 makes the system **12× more responsive** to LLM emotion signals.
+- 6/85 (7%) of cortisol signs flipped toward correct valence — the catalog极小扩 caught the explicit-symptom texts.
+- Network-free R98 closure tests pass (4/4): fake-LLM adjustment → separation ≥ 0.05 (B2) and ≥ 0.10 (B3) on the synthetic fixture set. The architecture closes when the LLM is well-behaved; the real LLM is the bottleneck.
+
+**Next slice pointer (out of R98 scope)**: the LLM needs system-prompt coaching to emit threat-leaning predictions more often (e.g. when context is negative-valence, predict `cortisol: "likely elevated"` instead of `oxytocin: "likely elevated"`). This is a prompt-engineering + LLM-emotion-contract slice, not a Helios-code slice. Alternatively, a R98+ slice could widen the adjuster's phrase lexicon to handle non-standard keys (`oxytocin_boost`, `predicted_user_valence_shift`) and infer valence-shift from the prose direction, but this dilutes the owner-boundary contract.
+
 ## 5. Configuration
 
 - **Anchor catalog**: `DEFAULT_ANCHOR_CATALOG` (R97 default; bilingual first-version, 5 中文 threat + 5 中文 reward + R40 English anchors aliased)

@@ -1731,6 +1731,46 @@ class PriorHormonePredictionHolder:
         return self.prediction
 
 
+@dataclass
+class PostLLMHormoneAdjustmentHolder:
+    """Owner: composition (R98).
+
+    Purpose:
+        Carry the just-completed tick's `11` LLM hormone forecast forward
+        into the next tick's `04` formula drive as a bounded appraisal Δ
+        adjustment. R81's `PriorHormonePredictionHolder` carries the
+        *forecast* itself (for self-supervision); this R98 holder carries
+        the **appraisal translation** of the forecast (for actual drive).
+
+    Notes:
+        Owner-neutral carry. The translation is owned by the appraisal
+        owner (`appraisal.post_llm_hormone_adjuster`); composition just
+        invokes the translator and stores the bounded result. The `04`
+        drive formula reads the result via `current_adjustment()` and
+        adds it to the rapid appraisal's `threat` / `reward` outputs
+        (clamped 0..1). The holder is `cleared()` on every tick first;
+        a missing adjuster or empty forecast leaves it in the cleared
+        state and the drive formula's clamp + zero delta are a no-op.
+    """
+
+    adjustment: "Mapping[str, float] | None" = None
+
+    def set_adjustment(self, adjustment: "Mapping[str, float] | None") -> None:
+        """Owner: composition. Store the appraisal translation (or clear it)."""
+
+        self.adjustment = dict(adjustment) if adjustment else None
+
+    def clear(self) -> None:
+        """Owner: composition. Clear the carry (no adjustment for the next tick's `04`)."""
+
+        self.adjustment = None
+
+    def current_adjustment(self) -> "Mapping[str, float] | None":
+        """Owner: composition. Return the carried prior-tick adjustment (or `None`)."""
+
+        return self.adjustment
+
+
 # R63: documented cold-start fallback values for the `09` gate's `selected_stimuli` projection.
 # Used when the `03` appraisal result is absent from the frame (e.g. an assembly that does not
 # run the appraisal stage).  These match the default assembly's first-version estimator outputs

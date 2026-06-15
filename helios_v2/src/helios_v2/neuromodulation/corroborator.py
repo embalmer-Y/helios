@@ -54,6 +54,30 @@ class HormonePredictionSource(Protocol):
         """Return the carried prior-tick hormone forecast (channel name -> `[0, 1]`), or `None`."""
 
 
+@runtime_checkable
+class PostLLMHormoneAdjustmentSource(Protocol):
+    """Owner: neuromodulator system (R98).
+
+    Purpose:
+        Provide the prior-tick appraisal-owned `PostLLMHormoneAdjustment` that the
+        `04` drive formula adds to the rapid appraisal's threat / reward outputs
+        before computing the drive. The translation rules (which channels, what
+        magnitude) are owned by `appraisal.post_llm_hormone_adjuster`; this
+        source is just the owner-neutral carry seam.
+
+    Notes:
+        The `current_adjustment()` mapping is a `dict` of channel-delta fields
+        (`threat_delta`, `reward_delta`, `social_delta`, `uncertainty_delta`)
+        plus a `confidence` field (scaling factor in `[0, 1]`). The path uses
+        `effective_delta = delta * confidence` and clamps the result to the
+        legal range. When `confidence == 0` or the holder is cleared, the path
+        is a byte-for-byte no-op (the inner drive is returned unchanged).
+    """
+
+    def current_adjustment(self) -> Mapping[str, float] | None:
+        """Return the carried prior-tick appraisal Δ adjustment, or `None`."""
+
+
 @dataclass(frozen=True)
 class HormoneCorroborationOutcome:
     """Owner: neuromodulator system (R81).
@@ -173,30 +197,55 @@ class HormonePredictCorroborator:
 
 @dataclass
 class CorroborationBiasedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
-    """Owner: neuromodulator system (R81).
+    """Owner: neuromodulator system (R81 + R98).
 
     Purpose:
-        Inject the hormone-predict corroboration bias between the R36/R80 instantaneous drive and
-        the R43 dual-timescale wrapper. It computes the inner drive, reads the carried prior-tick
-        model forecast, and returns the corroborated (biased) levels as the instantaneous target the
-        dual-timescale wrapper then smooths (bias and drive at the same layer).
+        Inject two bounded, owner-judged signals between the R36/R80 instantaneous drive and
+        the R43 dual-timescale wrapper:
+
+        1. R98 post-LLM appraisal adjustment (NEW): read the carried prior-tick
+           appraisal-owned `PostLLMHormoneAdjustment` (translated from the LLM's
+           `hormone_response_i_predict` by the appraisal owner) and add the
+           bounded Δ to the inner drive. The adjustment is **additive**, not
+           replacement: the rapid appraisal's main signal stays in charge. The
+           adjustment is the cortico-amygdalar bounded modulation; without it
+           context-only emotion (anxiety / grief / loneliness) is dropped on
+           the floor.
+
+        2. R81 hormone-predict corroboration bias: read the carried prior-tick
+           model forecast and bias the now-adjusted drive toward the forecast
+           on directional agreement (the model can refine within the agreed
+           direction; it can never veto the formula or move a channel against it).
 
     Failure semantics:
         Total deterministic function. A `None` forecast (the common case: no model forecast, or a
-        non-fired prior tick) returns the inner drive byte-for-byte, so the path is invariant unless
-        the model actually forecasts.
+        non-fired prior tick) and a `None` post-LLM adjustment both yield the inner drive
+        byte-for-byte. Each layer is a no-op when its input is absent, so the path is invariant
+        unless both inputs are present.
 
     Notes:
         Stateless with respect to `prior_levels` (it forwards `None` to the inner drive and ignores
         its own `prior_levels`); cross-tick carry/decay is the dual-timescale wrapper's job and the
-        forecast carry is the composition holder's job. The forecast is read through the injected
-        `prediction_source` exactly as `03`'s grounded estimators read injected fact sources; this
-        owner imports no composition glue.
+        forecast / adjustment carry is the composition holder's job. The forecast / adjustment are
+        read through the injected sources exactly as `03`'s grounded estimators read injected fact
+        sources; this owner imports no composition glue.
+
+    Order of operations (R98 -> R81):
+        1. `drive = inner_drive(batch)` -- R36/R80 baseline
+        2. `drive = drive + post_llm_adjustment * confidence` (clamped) -- R98
+        3. `drive = corroborate(forecast, drive, config)` -- R81 (含 adjustment 模式)
+        4. Return `drive` to the R43 dual-timescale wrapper for cross-tick smoothing
     """
 
     drive_path: NeuromodulatorUpdatePath
     prediction_source: HormonePredictionSource
     corroborator: HormonePredictCorroborator
+    # R98: the prior-tick appraisal-owned adjustment source. Optional (default
+    # None) so callers that have not yet wired R98 see byte-for-byte R81 behavior.
+    # The translation rules (which LLM channels map to which appraisal deltas) are
+    # owned by `appraisal.post_llm_hormone_adjuster`; this path only reads the
+    # result and applies it to the drive.
+    post_llm_adjustment_source: PostLLMHormoneAdjustmentSource | None = None
 
     def update_levels(
         self,
@@ -205,9 +254,71 @@ class CorroborationBiasedNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
         tick_id: int | None,
         prior_levels: NeuromodulatorLevels | None = None,
     ) -> NeuromodulatorLevels:
-        """Return the corroboration-biased instantaneous drive for this tick."""
+        """Return the post-LLM-adjusted + R81-corroborated instantaneous drive for this tick."""
 
         del prior_levels
         drive = self.drive_path.update_levels(batch, config, tick_id, None)
+        # R98: apply the bounded appraisal Δ adjustment to the drive (additive,
+        # per-channel clamp). When the holder is absent or the adjustment has
+        # confidence=0, this is a byte-for-byte no-op.
+        drive = self._apply_post_llm_adjustment(drive, config)
+        # R81: corroborate the (now-adjusted) drive against the model forecast.
+        # When the model made no forecast, the corroborator returns the drive
+        # unchanged; this is the common case and must be invariant.
         prediction = self.prediction_source.current_prediction()
         return self.corroborator.corroborate(prediction, drive, config).biased_levels
+
+    def _apply_post_llm_adjustment(
+        self,
+        drive: NeuromodulatorLevels,
+        config: NeuromodulatorConfig,
+    ) -> NeuromodulatorLevels:
+        """Add the bounded R98 post-LLM adjustment to the drive (per-channel clamp).
+
+        R98 channel mapping (the appraisal owner's contract):
+            `threat_delta`      -> `cortisol`     (primary magnitude, ±0.10)
+            `reward_delta`      -> `dopamine`     (primary magnitude, ±0.10)
+            `reward_delta`      -> `serotonin`    (secondary magnitude, ±0.05)
+            `social_delta`      -> `oxytocin`     (primary magnitude, ±0.10)
+            `social_delta`      -> `opioid_tone`  (secondary magnitude, ±0.05)
+            `uncertainty_delta` -> `norepinephrine` (primary magnitude, ±0.10)
+
+        The contract is owned by the appraisal owner; this path only consumes
+        the deltas. The `confidence` field scales the effective delta and the
+        per-channel clamp guards against any owner misbehavior.
+        """
+
+        if self.post_llm_adjustment_source is None:
+            return drive
+        adjustment = self.post_llm_adjustment_source.current_adjustment()
+        if not adjustment:
+            return drive
+        confidence = float(adjustment.get("confidence", 0.0) or 0.0)
+        if confidence <= 0.0:
+            return drive
+        low = config.legal_min
+        high = config.legal_max
+        # R98 channel-to-channel mapping. The appraisal owner decides which
+        # appraisal deltas flow to which neuromodulator channels; this list
+        # is the owner-neutral consumption surface.
+        channel_deltas: tuple[tuple[str, float], ...] = (
+            ("cortisol", float(adjustment.get("threat_delta", 0.0) or 0.0)),
+            ("dopamine", float(adjustment.get("reward_delta", 0.0) or 0.0)),
+            ("serotonin", float(adjustment.get("reward_delta", 0.0) or 0.0) * 0.5),
+            ("oxytocin", float(adjustment.get("social_delta", 0.0) or 0.0)),
+            ("opioid_tone", float(adjustment.get("social_delta", 0.0) or 0.0) * 0.5),
+            ("norepinephrine", float(adjustment.get("uncertainty_delta", 0.0) or 0.0)),
+        )
+        adjusted: dict[str, float] = {}
+        for channel, raw_delta in channel_deltas:
+            drive_value = getattr(drive, channel)
+            channel_low = getattr(low, channel)
+            channel_high = getattr(high, channel)
+            effective = drive_value + raw_delta * confidence
+            adjusted[channel] = _clamp(effective, channel_low, channel_high)
+        # All other channels (excitation, inhibition) carry no R98 adjustment;
+        # pass them through unchanged.
+        for channel in _NEUROMODULATOR_CHANNELS:
+            if channel not in adjusted:
+                adjusted[channel] = getattr(drive, channel)
+        return NeuromodulatorLevels(**adjusted)

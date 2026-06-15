@@ -47,6 +47,14 @@ from .anchor_catalog import (
     AnchorCatalog,
     AnchorSet,
 )
+from .post_llm_hormone_adjuster import (
+    LLM_HORMONE_DELTA_MAX,
+    LLM_HORMONE_DELTA_MIN,
+    LLM_HORMONE_HIGH_THRESHOLD,
+    LLM_HORMONE_LOW_THRESHOLD,
+    PostLLMHormoneAdjustment,
+    PostLLMHormoneAdjuster,
+)
 
 __all__ = [
     "AssessStimulusBatchOp",

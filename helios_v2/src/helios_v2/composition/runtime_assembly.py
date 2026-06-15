@@ -139,6 +139,7 @@ from helios_v2.runtime import (
 )
 from helios_v2.appraisal import (
     GroundedDimensionEstimator,
+    PostLLMHormoneAdjuster,
     RapidSalienceAppraisalEngine,
     WeightedAggregateEstimator,
 )
@@ -227,6 +228,7 @@ from .bridges import (
     PriorDriveUrgencyHolder,
     PriorGovernedAuthorizationHolder,
     PriorHormonePredictionHolder,
+    PostLLMHormoneAdjustmentHolder,
     ThoughtDirectedRetrievalRequestBridge,
     EmbeddingPrototypeSimilaritySource,
     MemoryGroundedSimilaritySource,
@@ -617,6 +619,8 @@ class RuntimeHandle:
     drive_urgency_holder: "PriorDriveUrgencyHolder | None" = None
     governed_authorization_holder: "PriorGovernedAuthorizationHolder | None" = None
     hormone_prediction_holder: "PriorHormonePredictionHolder | None" = None
+    post_llm_hormone_adjustment_holder: "PostLLMHormoneAdjustmentHolder | None" = None
+    post_llm_hormone_adjuster: "PostLLMHormoneAdjuster | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     temporal_source: "TemporalSource | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
@@ -686,6 +690,7 @@ class RuntimeHandle:
         self._carry_drive_urgency(result)
         self._carry_governed_authorization(result)
         self._carry_hormone_prediction(result)
+        self._apply_post_llm_hormone_adjustment(result)
         self._persist_experience(result)
         self._persist_memory(result)
         self._checkpoint_continuity(result)
@@ -828,6 +833,57 @@ class RuntimeHandle:
             self.hormone_prediction_holder.set_prediction(forecast)
         else:
             self.hormone_prediction_holder.clear()
+
+    def _apply_post_llm_hormone_adjustment(self, result: RuntimeTickResult) -> None:
+        """Translate the just-completed tick's `11` hormone forecast into a bounded appraisal
+        Δ adjustment for the next tick's `04` drive formula (R98).
+
+        Owner-neutral carry: it reads the same `hormone_response_i_predict` that R81
+        captures (above), asks the appraisal owner (via the adjuster) to translate it
+        into a bounded `PostLLMHormoneAdjustment`, and stores the result in
+        `post_llm_hormone_adjustment_holder`. The next tick's `04` drive formula
+        reads the holder and adds the adjustment to the rapid appraisal's `threat` /
+        `reward` outputs (clamped 0..1).
+
+        When no adjuster is wired, no holder is wired, the gate did not fire, no
+        forecast was published, or the adjuster returns `confidence=0.0`, the holder
+        is cleared (silent default; no log noise per R95-followup). When the
+        forecast is present but translation yields `confidence=0.0` (e.g. all
+        values in the LLM no-comment zone, or all channels unknown), the holder is
+        also cleared. Composition never inspects the forecast values; the
+        `appraisal.post_llm_hormone_adjuster` owner owns the translation rules.
+        """
+
+        if (
+            self.post_llm_hormone_adjustment_holder is None
+            or self.post_llm_hormone_adjuster is None
+        ):
+            # Either the assembly did not wire R98 or the owner did not inject an
+            # adjuster. Silent default: ensure the holder is clear so the next
+            # tick's `04` formula sees no stale adjustment from a prior
+            # non-R98 assembly.
+            if self.post_llm_hormone_adjustment_holder is not None:
+                self.post_llm_hormone_adjustment_holder.clear()
+            return
+        stage_result = result.stage_results.get("internal_thought_loop_owner")
+        cycle_result = getattr(stage_result, "result", None)
+        forecast = getattr(cycle_result, "hormone_response_i_predict", None)
+        if not forecast:
+            self.post_llm_hormone_adjustment_holder.clear()
+            return
+        # The adjuster is the appraisal owner's only translation surface;
+        # composition never inspects the forecast values.
+        adjustment = self.post_llm_hormone_adjuster.adjust(forecast)
+        if adjustment.confidence == 0.0:
+            self.post_llm_hormone_adjustment_holder.clear()
+            return
+        self.post_llm_hormone_adjustment_holder.set_adjustment({
+            "threat_delta": adjustment.threat_delta,
+            "reward_delta": adjustment.reward_delta,
+            "social_delta": adjustment.social_delta,
+            "uncertainty_delta": adjustment.uncertainty_delta,
+            "confidence": adjustment.confidence,
+        })
 
     def _persist_experience(self, result: RuntimeTickResult) -> None:
         """Durably append the just-completed tick's `15` continuity records when enabled.
@@ -1033,6 +1089,14 @@ class RuntimeProfile:
     # `default_signal_mode == "semantic"` (the `GroundedDimensionEstimator` is the
     # active path); on `legacy_constant` the catalog is never read.
     anchor_catalog: "object" = None
+    # R98: composition-side injection seam for the `appraisal.post_llm_hormone_adjuster`
+    # translator. The default `None` means "the assembly builds a default
+    # `PostLLMHormoneAdjuster()`" (R98 is on by default for the semantic assembly).
+    # Tests inject a custom adjuster (e.g. a fake that always returns
+    # `confidence=0.0` to verify the silent-default path). Only consumed when
+    # `default_signal_mode == "semantic"` (the appraisal + drive chain is active);
+    # on `legacy_constant` the adjuster is never called.
+    post_llm_hormone_adjuster: "object" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1155,6 +1219,7 @@ def assemble_runtime(
     embedding_provider_kind: "EmbeddingProviderKind | object" = _UNSET,
     embedding_provider_model: str | object = _UNSET,
     anchor_catalog: "object" = _UNSET,
+    post_llm_hormone_adjuster: "PostLLMHormoneAdjuster | object" = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1220,6 +1285,7 @@ def assemble_runtime(
         ("embedding_provider_kind", embedding_provider_kind),
         ("embedding_provider_model", embedding_provider_model),
         ("anchor_catalog", anchor_catalog),
+        ("post_llm_hormone_adjuster", post_llm_hormone_adjuster),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1254,6 +1320,11 @@ def assemble_runtime(
     # to overwrite them with the actual selected provider; that happens after this rebind.
     embedding_provider_kind = resolved_profile.embedding_provider_kind
     embedding_provider_model = resolved_profile.embedding_provider_model
+    # R98: pass the (possibly caller-overridden) post-LLM adjuster off the
+    # resolved profile. The default is None (caller did not specify); the
+    # assembly body below builds a `PostLLMHormoneAdjuster()` when semantic
+    # memory is enabled, so R98 is on by default for the semantic assembly.
+    post_llm_hormone_adjuster = resolved_profile.post_llm_hormone_adjuster
 
     # R69 auto-provisioning (extended by R96): when default_signal_mode is "semantic" and the
     # caller did not inject an experience store and/or embedding gateway, create fresh in-memory
@@ -1560,6 +1631,20 @@ def assemble_runtime(
     hormone_prediction_holder = (
         PriorHormonePredictionHolder() if semantic_memory_enabled else None
     )
+    # R98: the post-LLM adjustment holder runs alongside the R81 hormone-prediction
+    # holder. Both are wired only when semantic memory is enabled (no appraisal
+    # => no adjustment to apply). The adjuster is a default-instantiated
+    # `PostLLMHormoneAdjuster` from the appraisal owner; callers that want a
+    # custom adjuster (e.g. test doubles) pass `post_llm_hormone_adjuster=` to
+    # `assemble_runtime`.
+    post_llm_hormone_adjustment_holder = (
+        PostLLMHormoneAdjustmentHolder() if semantic_memory_enabled else None
+    )
+    _post_llm_hormone_adjuster = (
+        post_llm_hormone_adjuster
+        if post_llm_hormone_adjuster is not None
+        else (PostLLMHormoneAdjuster() if semantic_memory_enabled else None)
+    )
     neuromodulator = NeuromodulatorEngine(
         config=resolved_config.neuromodulator,
         update_path=(
@@ -1568,6 +1653,12 @@ def assemble_runtime(
                     drive_path=AppraisalDerivedNeuromodulatorUpdatePath(),
                     prediction_source=hormone_prediction_holder,
                     corroborator=HormonePredictCorroborator(),
+                    # R98: pass the prior-tick appraisal-owned adjustment
+                    # source. The corroboration path applies the R98
+                    # adjustment BEFORE the R81 forecast bias, so the
+                    # 04 corroborator runs in the "含 adjustment" mode
+                    # the owner confirmed (R98 plan §3.1.4).
+                    post_llm_adjustment_source=post_llm_hormone_adjustment_holder,
                 )
             )
             if semantic_memory_enabled
@@ -1972,6 +2063,8 @@ def assemble_runtime(
         drive_urgency_holder=drive_urgency_holder,
         governed_authorization_holder=governed_authorization_holder,
         hormone_prediction_holder=hormone_prediction_holder,
+        post_llm_hormone_adjustment_holder=post_llm_hormone_adjustment_holder,
+        post_llm_hormone_adjuster=_post_llm_hormone_adjuster,
         embed_record=_embed_text if embedding_gateway is not None else None,
         temporal_source=temporal_source,
         continuity_checkpoint=continuity_checkpoint,

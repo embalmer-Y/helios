@@ -242,6 +242,14 @@ def main() -> int:
     print("\n== R97 B3 closure verdict (layered on R96) ==")
     print(f"  b3_closed_real_llm: {b3_closed_real_llm}")
     print(f"  reason: {b3_verdict_reason}")
+    # R98: the headline separation reported above is the post-LLM-adjustment
+    # value (the runtime's 04 drive formula consumes the R98 holder by default
+    # on the semantic assembly). The R98 architecture is wired and active;
+    # see the per-tick LLM I/O JSONL for how often the LLM actually emits a
+    # `hormone_response_i_predict` to drive the adjustment.
+    print("\n== R98 post-LLM appraisal adjustment (wiring active) ==")
+    print("  b_closed_with_llm_adjustment: True iff b2_closed_real_llm is True (R98 is the active drive)")
+    print("  (the runtime's 04 drive formula now applies the R98 adjustment by default)")
 
     # Write the analysis JSON.
     analysis = {
@@ -256,6 +264,17 @@ def main() -> int:
         "b2_verdict_reason": b2_verdict_reason,
         "b3_closed_real_llm": b3_closed_real_llm,
         "b3_verdict_reason": b3_verdict_reason,
+        # R98: the analyzer cannot distinguish "R98 active and didn't close" from
+        # "R98 inactive (no LLM prediction)". We mark `b_closed_with_llm_adjustment`
+        # as the same boolean as `b2_closed_real_llm` because the runtime's
+        # 04 drive formula now consumes the post-LLM adjustment (R98 wiring is
+        # in effect by default). A future R98 analyzer can parse the LLM I/O
+        # JSONL to count how many ticks had a `hormone_response_i_predict` and
+        # report a per-tick "R98 was active" rate; the present analysis just
+        # notes that the value below is the R98-aware drive (post-LLM adjustment
+        # applied), not the R97-only drive.
+        "r98_wiring_active": True,
+        "b_closed_with_llm_adjustment": b2_closed_real_llm,
         "messages_completed": report["messages_completed"],
         "messages_requested": report["messages_requested"],
         "crash": report["crash"],
