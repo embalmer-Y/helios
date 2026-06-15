@@ -1025,6 +1025,14 @@ class RuntimeProfile:
     # R69 auto-provisioning block has decided which provider to use.
     embedding_provider_kind: "EmbeddingProviderKind" = "deterministic_hash"
     embedding_provider_model: str = "deterministic-hash"
+    # R97: composition-side injection seam for the `03` appraisal owner's anchor catalog.
+    # The default `None` means "use the appraisal owner's `DEFAULT_ANCHOR_CATALOG`
+    # (bilingual Chinese + English first-version anchors)". When explicitly set, the
+    # supplied catalog replaces the default (this is the P5 learned-catalog injection
+    # seam: `RuntimeProfile(anchor_catalog=learned_catalog)`). Only consumed when
+    # `default_signal_mode == "semantic"` (the `GroundedDimensionEstimator` is the
+    # active path); on `legacy_constant` the catalog is never read.
+    anchor_catalog: "object" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1146,6 +1154,7 @@ def assemble_runtime(
     wall_clock: "WallClock | None | object" = _UNSET,
     embedding_provider_kind: "EmbeddingProviderKind | object" = _UNSET,
     embedding_provider_model: str | object = _UNSET,
+    anchor_catalog: "object" = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1210,6 +1219,7 @@ def assemble_runtime(
         ("wall_clock", wall_clock),
         ("embedding_provider_kind", embedding_provider_kind),
         ("embedding_provider_model", embedding_provider_model),
+        ("anchor_catalog", anchor_catalog),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1499,6 +1509,18 @@ def assemble_runtime(
     # retrieval/transport/prototype fact sources. When off, the deterministic first-version
     # estimator is unchanged.
     if semantic_memory_enabled:
+        # R97: thread the composition-side `anchor_catalog` injection (defaulting
+        # to the appraisal owner's `DEFAULT_ANCHOR_CATALOG` via the estimator's
+        # `default_factory`) into the `GroundedDimensionEstimator`. When the
+        # caller passes an explicit catalog (e.g. a P5 learned catalog), the
+        # `anchor_catalog` field of the profile wins; otherwise the appraisal
+        # owner's default bilingual catalog is used.
+        from helios_v2.appraisal.anchor_catalog import DEFAULT_ANCHOR_CATALOG
+        _anchor_catalog = (
+            resolved_profile.anchor_catalog
+            if resolved_profile.anchor_catalog is not None
+            else DEFAULT_ANCHOR_CATALOG
+        )
         dimension_estimator = GroundedDimensionEstimator(
             similarity_source=MemoryGroundedSimilaritySource(
                 embed_text=_embed_text,
@@ -1510,6 +1532,7 @@ def assemble_runtime(
             ),
             social_source=TransportGroundedSocialContextSource(),
             prototype_source=EmbeddingPrototypeSimilaritySource(embed_text=_embed_text),
+            anchor_catalog=_anchor_catalog,
         )
     else:
         dimension_estimator = FirstVersionDimensionEstimator()

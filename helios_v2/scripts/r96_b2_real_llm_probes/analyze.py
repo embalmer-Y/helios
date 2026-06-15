@@ -2,22 +2,35 @@
 
 Computes the same per-channel biochemical-delta facts as
 `scripts/analyze_emotion_test.py` (responsiveness, per-category signature, valence-group
-separation), then layers in the R96-specific B2 closure verdict:
+separation), then layers in two stacked verdicts:
 
-  - `cortisol` positive-vs-negative emotion separation (the headline B2 metric).
-  - `b2_closed_real_llm: bool | None`:
-        True  when the probe ran with `embedding_provider_kind == "openai_compatible"`
-              AND the `cortisol` positive-vs-negative separation is directionally larger
-              than the pre-R96 hash baseline (-0.0095 from ROADMAP §9.1). The acceptance
-              is directional, not numerical: any measurable positive shift closes the
-              B2 root cause.
-        False when the probe ran but the separation is *not* directionally larger than
-              baseline. This is the failing witness; the operator inspects the per-channel
-              breakdown to find which cognitive seam is still under-sensitive.
-        None  when the probe ran with `embedding_provider_kind == "deterministic_hash"`
-              (no `HELIOS_EMBEDDING_API_KEY` was set in `.env`). The hash path is the
-              R69-equivalent placeholder; it cannot close B2. Re-run with the credential
-              set to obtain a verdict.
+  - **R96 B2 closure** (root cause: 16-dim hash embedding is not semantic).
+    The headline metric is `cortisol` positive-vs-negative emotion separation.
+    `b2_closed_real_llm: bool | None` is `True` when the probe ran with
+    `embedding_provider_kind == "openai_compatible"` AND the `cortisol`
+    positive-vs-negative separation is directionally larger than the pre-R96 hash
+    baseline (-0.0095 from ROADMAP §9.1). The acceptance is directional, not
+    numerical: any measurable positive shift closes the B2 root cause. `False`
+    when the probe ran but the separation is *not* directionally larger than
+    baseline (failing witness). `None` when the probe ran with
+    `embedding_provider_kind == "deterministic_hash"` (the R69-equivalent
+    placeholder; it cannot close B2).
+
+  - **R97 B3 closure** (root cause: R40 threat/reward prototypes are English-only).
+    Layered on top of R96. The B3 verdict reuses the same `cortisol`
+    positive-vs-negative separation metric (which is the *B3* root-cause
+    witness) but with a stricter directional-shift threshold (R97 expects at
+    least 2x the B2 threshold because the appraisal owner's `DEFAULT_ANCHOR_CATALOG`
+    is now bilingual, giving Chinese inputs a non-zero threat / reward
+    cosine). `b3_closed_real_llm: bool | None` semantics are the same as
+    `b2_closed_real_llm`. The R97 catalog is auto-injected at the
+    `GroundedDimensionEstimator.anchor_catalog` seam; no `composition` code
+    change is required for the probe (R97 cascades through the existing R96
+    resolver + assembly path).
+
+When the probe is offline (hash path, no `HELIOS_EMBEDDING_API_KEY`), both
+verdicts are `None` (the cloud probe did not run). Re-run with the credential
+set to obtain a verdict.
 
 Run:
     python helios_v2/scripts/r96_b2_real_llm_probes/analyze.py \\
@@ -182,6 +195,54 @@ def main() -> int:
     print(f"  b2_closed_real_llm: {b2_closed_real_llm}")
     print(f"  reason: {b2_verdict_reason}")
 
+    # R97 B3 closure verdict: layered on top of R96. B3 requires BOTH the
+    # real-cloud embedding (R96) AND the appraisal owner's bilingual anchor
+    # catalog (R97 default `DEFAULT_ANCHOR_CATALOG`). When R96 is in place
+    # (real cloud), the appraisal owner automatically gets the R97 Chinese
+    # anchors via the estimator's `default_factory`; the B3 verdict is
+    # therefore the SAME cortisol-separation metric as B2, but with the
+    # threshold raised to a stricter level (the B2 root cause is "no
+    # semantic embedding"; the B3 root cause is "no Chinese anchors"). The
+    # B3 threshold of 0.10 reflects the R97 expectation that with proper
+    # Chinese anchors, the directional shift should be at least 2x the
+    # B2 threshold.
+    B3_DIRECTIONAL_SHIFT_THRESHOLD = 0.10
+    if embedding_kind != "openai_compatible":
+        b3_closed_real_llm = None
+        b3_verdict_reason = (
+            f"Probe ran with embedding_provider_kind={embedding_kind!r}; "
+            "B3 closure requires the real-cloud provider (R96) AND the "
+            "bilingual anchor catalog (R97 default `DEFAULT_ANCHOR_CATALOG`, "
+            "auto-injected). Set HELIOS_EMBEDDING_API_KEY in .env and re-run."
+        )
+    else:
+        b3_directional_shift = cortisol_separation - PRE_R96_CORTISOL_SEPARATION
+        if b3_directional_shift >= B3_DIRECTIONAL_SHIFT_THRESHOLD:
+            b3_closed_real_llm = True
+            b3_verdict_reason = (
+                f"cortisol positive-vs-negative separation moved from "
+                f"{PRE_R96_CORTISOL_SEPARATION:+.4f} (pre-R96 hash baseline) to "
+                f"{cortisol_separation:+.4f} (post-R97 real cloud + Chinese "
+                f"anchors), a directional shift of {b3_directional_shift:+.4f} "
+                f">= {B3_DIRECTIONAL_SHIFT_THRESHOLD} (R97 stricter B3 threshold)."
+            )
+        else:
+            b3_closed_real_llm = False
+            b3_verdict_reason = (
+                f"cortisol positive-vs-negative separation did NOT directionally "
+                f"improve: {cortisol_separation:+.4f} vs pre-R96 baseline "
+                f"{PRE_R96_CORTISOL_SEPARATION:+.4f} (shift {b3_directional_shift:+.4f} "
+                f"< {B3_DIRECTIONAL_SHIFT_THRESHOLD}). B3 root cause not closed; "
+                "the R97 Chinese anchors did not produce the expected shift on "
+                "the headline `cortisol` separation. Inspect per-category "
+                "signature above for the cognitive seam that is still under-"
+                "sensitive on Chinese input."
+            )
+
+    print("\n== R97 B3 closure verdict (layered on R96) ==")
+    print(f"  b3_closed_real_llm: {b3_closed_real_llm}")
+    print(f"  reason: {b3_verdict_reason}")
+
     # Write the analysis JSON.
     analysis = {
         "report_path": str(report_path),
@@ -193,6 +254,8 @@ def main() -> int:
         "directional_shift": round(cortisol_separation - PRE_R96_CORTISOL_SEPARATION, 4),
         "b2_closed_real_llm": b2_closed_real_llm,
         "b2_verdict_reason": b2_verdict_reason,
+        "b3_closed_real_llm": b3_closed_real_llm,
+        "b3_verdict_reason": b3_verdict_reason,
         "messages_completed": report["messages_completed"],
         "messages_requested": report["messages_requested"],
         "crash": report["crash"],

@@ -54,7 +54,10 @@ _FEELING = ("valence", "arousal", "tension", "comfort", "fatigue", "pain_like", 
 
 
 def _load_env() -> None:
-    env_path = Path(__file__).resolve().parents[2] / ".env"
+    # The .env file lives at the project root (helios/.env). This script is
+    # at helios_v2/scripts/r96_b2_real_llm_probes/run.py, so `parents[3]`
+    # is the project root (parents[0] = probe dir, [1] = scripts, [2] = helios_v2, [3] = helios).
+    env_path = Path(__file__).resolve().parents[3] / ".env"
     if not env_path.exists():
         return
     for line in env_path.read_text(encoding="utf-8").splitlines():

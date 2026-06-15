@@ -14,10 +14,18 @@ Does not own:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from helios_v2.sensory import Stimulus, StimulusBatch
+
+# The R97 `anchor_catalog` is a runtime-injected field on `GroundedDimensionEstimator`;
+# the import here is intentionally lazy to break the `engine` <-> `anchor_catalog`
+# import cycle (catalog also imports `THREAT_PROTOTYPES` / `REWARD_PROTOTYPES` from
+# this module). The default value is resolved by `GroundedDimensionEstimator`'s
+# `__post_init__`-equivalent dataclass field default, which is a function call:
+# we use a sentinel `_ANCHOR_CATALOG_SENTINEL` here and resolve to
+# `DEFAULT_ANCHOR_CATALOG` lazily at first construction.
 
 from .contracts import (
     AssessStimulusBatchOp,
@@ -28,6 +36,9 @@ from .contracts import (
     RapidSalienceAppraisalAPI,
     RapidSalienceVector,
 )
+
+if TYPE_CHECKING:
+    from .anchor_catalog import AnchorCatalog
 
 
 @dataclass(frozen=True)
@@ -337,6 +348,32 @@ def _normalize_cosine(value: float) -> float:
     return min(1.0, max(0.0, (value + 1.0) / 2.0))
 
 
+def _max_of_two_scaled(
+    a: float | None, b: float | None, gain: float
+) -> float:
+    """R97 helper: take the max of two optional cosine facts, then scale by `gain`.
+
+    Both `a` and `b` are optional (`None` means "no comparable input"); the result is
+    `0.0` only when **both** are `None`. When at least one is present, the larger
+    (positive-only, clamped to [0, 1] after the gain) wins. This implements the R97
+    owner-side "max-of-max across (R40 prototypes) and (anchor catalog)" pattern
+    without leaking catalog awareness into the composition source: the owner asks
+    the source for the max cosine of two separate prototype tuples and combines
+    them here.
+
+    Notes:
+        Owner-internal helper. Not exported on the public surface.
+    """
+
+    candidates: list[float] = []
+    for value in (a, b):
+        if value is not None:
+            candidates.append(max(0.0, value))
+    if not candidates:
+        return 0.0
+    return round(min(1.0, max(0.0, gain * max(candidates))), 4)
+
+
 # First-version threat/reward prototype phrase sets owned by the `03` appraisal owner (R40).
 # They encode the owner's first-version definition of "what counts as threat / reward" for the
 # prototype-embedding scorer. They are an explicit, hand-authored, English-centric PLACEHOLDER
@@ -359,6 +396,16 @@ REWARD_PROTOTYPES: tuple[str, ...] = (
     "a positive useful outcome",
     "something beneficial and worthwhile",
 )
+
+
+# R97: lazily resolve the default anchor catalog. This helper is called from
+# `GroundedDimensionEstimator.anchor_catalog` `default_factory`; the lazy import
+# is required because `appraisal.anchor_catalog` imports `THREAT_PROTOTYPES` /
+# `REWARD_PROTOTYPES` from this module. By the time `default_factory` runs,
+# this module is fully initialized, so the back-import is safe.
+def _resolve_default_anchor_catalog() -> AnchorCatalog:  # pragma: no cover - trivial
+    from .anchor_catalog import DEFAULT_ANCHOR_CATALOG as _CATALOG
+    return _CATALOG
 
 
 @runtime_checkable
@@ -423,6 +470,22 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
           `C_engineering_hypothesis`: the prototype set is a hand-authored, English-centric
           PLACEHOLDER anchor, not a calibrated affective model; it is the surface a later P5 /
           `06` memory-affect / `11`-LLM-re-appraisal slice replaces. It must not be over-claimed.
+
+          R97 (去英文中心 / 中文 appraisal grounding) extends this with a multilingual
+          `anchor_catalog: AnchorCatalog` (default `DEFAULT_ANCHOR_CATALOG`, bilingual
+          Chinese + English). The owner-owned threat / reward scoring now takes
+          `max(R40 prototypes_max, catalog_dimension_max)` across the two candidate
+          phrase sets, so a Chinese emotion input scoring near-zero against the
+          English R40 anchors can still score highly against the Chinese catalog
+          anchors. The catalog is the clean P5 learned-catalog replacement seam
+          (a P5 learned catalog is just `AnchorCatalog(sets=learned_sets)` injected
+          at the same composition seam). When `anchor_catalog` is the default
+          `DEFAULT_ANCHOR_CATALOG`, the R40 path remains byte-level equivalent for
+          English inputs (the English subset of the default catalog aliases
+          `THREAT_PROTOTYPES` / `REWARD_PROTOTYPES`); the catalog only adds new
+          Chinese coverage. Composition injects the catalog; the appraisal owner
+          consumes it via `phrases_for(dimension)` and owns which dimension
+          string maps to which salience.
         The aggregate judgment stays owned by the separate aggregate estimator. Stateless: no
         prior-tick read. No cold-start for threat/reward (prototypes are fixed, embedded once by
         the source).
@@ -434,6 +497,13 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     prototype_source: PrototypeSimilaritySource
     threat_prototypes: tuple[str, ...] = THREAT_PROTOTYPES
     reward_prototypes: tuple[str, ...] = REWARD_PROTOTYPES
+    # R97: anchor catalog is resolved lazily (default_factory) to break the
+    # `engine` <-> `anchor_catalog` import cycle. The default is `DEFAULT_ANCHOR_CATALOG`,
+    # which is a frozen bilingual catalog (Chinese + English) built from this module's
+    # R40 constants + the hand-authored Chinese anchors in `appraisal.anchor_catalog`.
+    anchor_catalog: AnchorCatalog = field(
+        default_factory=lambda: _resolve_default_anchor_catalog()
+    )
     threat_gain: float = 1.0
     reward_gain: float = 1.0
     social_floor: float = 0.0
@@ -483,16 +553,29 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         )
 
         threat_fact = self.prototype_source.max_similarity_to(stimulus, self.threat_prototypes)
-        threat = (
-            0.0
-            if threat_fact is None
-            else round(min(1.0, max(0.0, self.threat_gain * max(0.0, threat_fact))), 4)
+        # R97 (中文 appraisal grounding): also query the owner-owned anchor catalog
+        # for the same dimension, and take the max across (R40 prototypes) and
+        # (catalog phrases). When the catalog is the default `DEFAULT_ANCHOR_CATALOG`,
+        # the English subset aliases the R40 module constants, so the English-only
+        # path remains byte-level equivalent; the catalog only adds Chinese coverage.
+        catalog_threat_phrases = self.anchor_catalog.phrases_for("threat")
+        catalog_threat_fact = (
+            self.prototype_source.max_similarity_to(stimulus, catalog_threat_phrases)
+            if catalog_threat_phrases
+            else None
+        )
+        threat = _max_of_two_scaled(
+            threat_fact, catalog_threat_fact, self.threat_gain
         )
         reward_fact = self.prototype_source.max_similarity_to(stimulus, self.reward_prototypes)
-        reward = (
-            0.0
-            if reward_fact is None
-            else round(min(1.0, max(0.0, self.reward_gain * max(0.0, reward_fact))), 4)
+        catalog_reward_phrases = self.anchor_catalog.phrases_for("reward")
+        catalog_reward_fact = (
+            self.prototype_source.max_similarity_to(stimulus, catalog_reward_phrases)
+            if catalog_reward_phrases
+            else None
+        )
+        reward = _max_of_two_scaled(
+            reward_fact, catalog_reward_fact, self.reward_gain
         )
 
         return RapidDimensionEstimate(
