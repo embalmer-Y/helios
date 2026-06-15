@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 
 import pytest
@@ -3888,3 +3889,174 @@ def test_default_assembly_delivery_is_not_applicable() -> None:
     r = handle.tick()
     artifact = r.stage_results["evaluation_fidelity_and_diagnostic_provenance"].artifact
     assert artifact.gap_summary["consequence_delivery"] == "delivery_not_applicable"
+
+
+# --- Requirement 96: real semantic embedding as default ---
+
+
+from helios_v2.composition.embedding_provider_resolution import (
+    EmbeddingProviderResolution,
+)
+from helios_v2.composition import embedding_provider_resolution as _epr_module
+import helios_v2.composition.runtime_assembly as _ra_module
+
+
+def _spy_build_embedding_gateway(monkeypatch):
+    """Return a list that records every `build_embedding_gateway` call from `assemble_runtime`.
+
+    The R69 auto-provisioning block delegates the gateway construction to
+    `build_embedding_gateway` (R96 unification). Capturing the call lets the
+    composition-wiring tests assert the resolver's decision flowed through
+    to the gateway's `EmbeddingProfile` without depending on a private
+    handle field.
+    """
+
+    captured: list[dict] = []
+    real = _ra_module.build_embedding_gateway
+
+    def _spy(resolution, profile_name, env=None, offline_stub_value=...):  # type: ignore[no-untyped-def]
+        captured.append(
+            {
+                "resolution": resolution,
+                "profile_name": profile_name,
+                "offline_stub_value": offline_stub_value,
+            }
+        )
+        return real(resolution, profile_name, env=env, offline_stub_value=offline_stub_value)
+
+    monkeypatch.setattr(_ra_module, "build_embedding_gateway", _spy)
+    return captured
+
+
+def test_assemble_runtime_with_embedding_api_key_uses_openai_compatible(monkeypatch) -> None:
+    # With HELIOS_EMBEDDING_API_KEY set in the process env, the R69 auto-
+    # provisioning block calls the resolver, gets the cloud kind, and asks
+    # `build_embedding_gateway` to build an OpenAI-compatible gateway bound
+    # to the `experience-embedding` profile.
+    monkeypatch.setenv("HELIOS_EMBEDDING_API_KEY", "sk-r96-test")
+
+    captured = _spy_build_embedding_gateway(monkeypatch)
+    handle = _assemble()  # default_signal_mode="legacy_constant" -> no R69 block
+    # Force semantic mode so the R69 auto-provisioning block runs.
+    handle = _assemble(default_signal_mode="semantic")
+
+    assert len(captured) == 1
+    call = captured[0]
+    assert call["resolution"].kind == "openai_compatible"
+    assert call["resolution"].model == "text-embedding-3-small"
+    assert call["resolution"].api_key_env_var == "HELIOS_EMBEDDING_API_KEY"
+    assert call["profile_name"] == "experience-embedding"
+
+
+def test_assemble_runtime_without_embedding_api_key_uses_deterministic_hash(monkeypatch) -> None:
+    # Without the credential the resolver picks the explicit-honest R69 hash
+    # path. The captured call records `kind=deterministic_hash` and the
+    # offline-stub-value is the R69-canonical `auto-provisioned`.
+    monkeypatch.delenv("HELIOS_EMBEDDING_API_KEY", raising=False)
+
+    captured = _spy_build_embedding_gateway(monkeypatch)
+    handle = _assemble(default_signal_mode="semantic")
+
+    assert len(captured) == 1
+    call = captured[0]
+    assert call["resolution"].kind == "deterministic_hash"
+    assert call["resolution"].model == "deterministic-hash"
+    assert call["resolution"].api_key_env_var == "HELIOS_AUTO_EMBEDDING_KEY"
+    assert call["offline_stub_value"] == "auto-provisioned"
+
+
+def test_assemble_runtime_explicit_embedding_gateway_wins() -> None:
+    # When the caller injects `embedding_gateway=...`, the R69 auto-
+    # provisioning block is skipped entirely. The resolver is not consulted
+    # and `build_embedding_gateway` is not called. This preserves the R69
+    # explicit-injection precedence contract.
+    from helios_v2.embedding import (
+        DeterministicHashEmbeddingProvider,
+        EmbeddingGateway,
+        EmbeddingProfile,
+        EmbeddingProfileRegistry,
+    )
+
+    injected_gateway = EmbeddingGateway(
+        provider=DeterministicHashEmbeddingProvider(),
+        registry=EmbeddingProfileRegistry(
+            profiles=(
+                EmbeddingProfile(
+                    profile_name="experience-embedding",
+                    model="deterministic-hash",
+                    api_key_env="HELIOS_AUTO_EMBEDDING_KEY",
+                    base_url="http://localhost",
+                ),
+            )
+        ),
+        env={"HELIOS_AUTO_EMBEDDING_KEY": "auto-provisioned"},
+    )
+    store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
+    handle = _assemble(
+        default_signal_mode="semantic",
+        embedding_gateway=injected_gateway,
+        experience_store=store,
+    )
+    # The injected gateway is the source of truth. The handle's
+    # `embed_record` callable closes over the injected gateway, not a
+    # freshly auto-provisioned one.
+    assert handle.embed_record is not None
+    # The 16-dim hash provider is the injected one; the embed still works
+    # in offline mode.
+    vector = handle.embed_record("the cat sat on the mat")
+    assert len(vector) == 16
+
+
+def test_assemble_runtime_legacy_constant_mode_skips_resolver(monkeypatch) -> None:
+    # `default_signal_mode="legacy_constant"` short-circuits the R69
+    # auto-provisioning block, so the resolver is never consulted even
+    # when the credential is set. This preserves the R69
+    # `legacy_constant` mode verbatim — the 1110 baseline tests depending
+    # on this branch must not change.
+    monkeypatch.setenv("HELIOS_EMBEDDING_API_KEY", "sk-r96-test")
+    captured = _spy_build_embedding_gateway(monkeypatch)
+
+    handle = _assemble(default_signal_mode="legacy_constant")
+
+    # No semantic-mode R69 block -> no `build_embedding_gateway` call.
+    assert captured == []
+    # And the handle has no embed seam in legacy mode.
+    assert handle.embed_record is None
+
+
+def test_assemble_runtime_real_cloud_with_explicit_bge_m3(monkeypatch) -> None:
+    # An explicit `HELIOS_EMBEDDING_MODEL=bge-m3` flows through the
+    # resolver, the captured `build_embedding_gateway` call records the
+    # bge-m3 model with the correct dimensions (1024), and the api-key
+    # env var is preserved as the original `HELIOS_EMBEDDING_API_KEY`
+    # so the gateway reads the same variable the resolver inspected.
+    monkeypatch.setenv("HELIOS_EMBEDDING_API_KEY", "sk-r96-test")
+    monkeypatch.setenv("HELIOS_EMBEDDING_MODEL", "bge-m3")
+
+    captured = _spy_build_embedding_gateway(monkeypatch)
+    _assemble(default_signal_mode="semantic")
+
+    assert len(captured) == 1
+    call = captured[0]
+    assert call["resolution"].kind == "openai_compatible"
+    assert call["resolution"].model == "bge-m3"
+    assert call["resolution"].dimensions == 1024
+    assert call["resolution"].api_key_env_var == "HELIOS_EMBEDDING_API_KEY"
+
+
+def test_resolved_profile_embedding_provider_fields_are_frozen() -> None:
+    # The two new `RuntimeProfile` fields are frozen dataclass fields; they
+    # can be set at construction time (via keyword arg) but cannot be
+    # reassigned on an instance. This is the R58 frozen-dataclass
+    # invariant preserved for the R96 observability facts.
+    profile = RuntimeProfile(
+        embedding_provider_kind="openai_compatible",
+        embedding_provider_model="text-embedding-3-large",
+    )
+    assert profile.embedding_provider_kind == "openai_compatible"
+    assert profile.embedding_provider_model == "text-embedding-3-large"
+
+    with pytest.raises((AttributeError, dataclasses.FrozenInstanceError)):
+        profile.embedding_provider_kind = "deterministic_hash"  # type: ignore[misc]
+    with pytest.raises((AttributeError, dataclasses.FrozenInstanceError)):
+        profile.embedding_provider_model = "deterministic-hash"  # type: ignore[misc]

@@ -152,6 +152,19 @@ from helios_v2.embedding import (
     EmbeddingRequest,
     OpenAICompatibleEmbeddingProvider,
 )
+
+# R96: the embedding-provider resolution / gateway-construction logic is owned by
+# `composition.embedding_provider_resolution`. R82's `_production_embedding_gateway`
+# and the R69 auto-provisioning block in `assemble_runtime` both delegate to this
+# module; no duplicate constants and no drift.
+from helios_v2.composition.embedding_provider_resolution import (
+    EmbeddingProviderKind,
+    EmbeddingProviderResolution,
+    OFFLINE_EMBEDDING_KEY_STUB_VALUE,
+    OFFLINE_EMBEDDING_KEY_STUB_VALUE_R82,
+    build_embedding_gateway,
+    resolve_embedding_provider,
+)
 from helios_v2.continuity_checkpoint import ContinuityCheckpointStore, SqliteCheckpointBackend
 from helios_v2.interoception import RuntimeInteroceptiveSource, RuntimePressureSampler
 from helios_v2.temporal import TemporalSource
@@ -1006,6 +1019,12 @@ class RuntimeProfile:
     default_signal_mode: str = "semantic"
     embodied_prompt_mode: str = "v3"
     wall_clock: "WallClock | None" = None
+    # R96: composition-side observability of the active embedding provider. Defaults to the
+    # R69 hash-fallback path so a profile constructed without the new fields reproduces the
+    # pre-R96 byte-for-byte state. The fields are populated in `assemble_runtime` once the
+    # R69 auto-provisioning block has decided which provider to use.
+    embedding_provider_kind: "EmbeddingProviderKind" = "deterministic_hash"
+    embedding_provider_model: str = "deterministic-hash"
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1020,6 +1039,19 @@ class RuntimeProfile:
         if self.embodied_prompt_mode not in ("v1", "v3"):
             raise CompositionError(
                 f"embodied_prompt_mode must be 'v1' or 'v3', got '{self.embodied_prompt_mode}'"
+            )
+        # R96: validate the embedding-provider observability fields. The kind must be the
+        # R69/R96 literal set; the model must be a non-empty string. These are composition-
+        # side observability facts (recorded on the resolved profile only), never seen by
+        # cognitive owners.
+        if self.embedding_provider_kind not in ("openai_compatible", "deterministic_hash"):
+            raise CompositionError(
+                f"embedding_provider_kind must be 'openai_compatible' or 'deterministic_hash', "
+                f"got '{self.embedding_provider_kind}'"
+            )
+        if not self.embedding_provider_model:
+            raise CompositionError(
+                "embedding_provider_model must be a non-empty string"
             )
         # Semantic memory (`34`) requires durable persistence (`33`): an embedding gateway
         # without an experience store is a composition error, not a silent no-op.
@@ -1112,6 +1144,8 @@ def assemble_runtime(
     default_signal_mode: str | object = _UNSET,
     embodied_prompt_mode: str | object = _UNSET,
     wall_clock: "WallClock | None | object" = _UNSET,
+    embedding_provider_kind: "EmbeddingProviderKind | object" = _UNSET,
+    embedding_provider_model: str | object = _UNSET,
 ) -> RuntimeHandle:
     """Owner: composition.
 
@@ -1174,6 +1208,8 @@ def assemble_runtime(
         ("default_signal_mode", default_signal_mode),
         ("embodied_prompt_mode", embodied_prompt_mode),
         ("wall_clock", wall_clock),
+        ("embedding_provider_kind", embedding_provider_kind),
+        ("embedding_provider_model", embedding_provider_model),
     ):
         if _value is not _UNSET:
             _loose[_name] = _value
@@ -1203,50 +1239,97 @@ def assemble_runtime(
     temporal_source = resolved_profile.temporal_source
     external_signal_source = resolved_profile.external_signal_source
     wall_clock = resolved_profile.wall_clock
+    # R96: read the (possibly caller-overridden) embedding-provider observability fields
+    # off the resolved profile. The auto-provisioning block below may rebuild the profile
+    # to overwrite them with the actual selected provider; that happens after this rebind.
+    embedding_provider_kind = resolved_profile.embedding_provider_kind
+    embedding_provider_model = resolved_profile.embedding_provider_model
 
-    # R69 auto-provisioning: when default_signal_mode is "semantic" and the caller did not
-    # inject an experience store and/or embedding gateway, create fresh in-memory backends so
-    # the semantic assembly (the de-shimmed 03-10 chain) is the default behavior. Explicit
-    # caller-provided capabilities always take precedence.
+    # R69 auto-provisioning (extended by R96): when default_signal_mode is "semantic" and the
+    # caller did not inject an experience store and/or embedding gateway, create fresh in-memory
+    # backends so the semantic assembly (the de-shimmed 03-10 chain) is the default behavior.
+    # Explicit caller-provided capabilities always take precedence; in that case the R96
+    # resolver is not consulted and the gateway comes in as the caller built it.
+    #
+    # R96 owner-confirmed decision (option A — OpenAI-compatible cloud): when the caller does
+    # not supply an embedding_gateway, the auto-provisioning step calls the resolver with the
+    # current process env. If `HELIOS_EMBEDDING_API_KEY` is present and non-blank, the resolver
+    # picks the real-cloud profile (OpenAI-compatible provider, `text-embedding-3-small` by
+    # default, dimensions from the static map). Otherwise the resolver picks the explicit-honest
+    # R69 hash-fallback profile (byte-for-byte preserved as the active kind when credentials
+    # are absent; not silent degradation). The selected kind and model are recorded on the
+    # resolved profile so consumers can verify which provider is active without re-deriving it.
     if resolved_profile.default_signal_mode == "semantic":
         _auto_store = experience_store
         _auto_embedding = embedding_gateway
+        _auto_provider_kind: "EmbeddingProviderKind" = resolved_profile.embedding_provider_kind
+        _auto_provider_model: str = resolved_profile.embedding_provider_model
         if _auto_store is None and _auto_embedding is None:
             _auto_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
             _auto_store.initialize()
-            _auto_profile = EmbeddingProfile(
+            # R96: ask the resolver which provider to build. The resolver reads the env
+            # directly (it is the one owner-authorized place that does so) and returns a
+            # frozen decision with the model / base_url / dimensions / api_key_env_var.
+            _resolution = resolve_embedding_provider(env=os.environ)
+            _auto_embedding = build_embedding_gateway(
+                resolution=_resolution,
                 profile_name=embedding_profile_name,
-                model="deterministic-hash",
-                api_key_env="HELIOS_AUTO_EMBEDDING_KEY",
-                base_url="http://localhost",
+                env=os.environ,
+                offline_stub_value=OFFLINE_EMBEDDING_KEY_STUB_VALUE,
             )
-            _auto_embedding = EmbeddingGateway(
-                provider=DeterministicHashEmbeddingProvider(),
-                registry=EmbeddingProfileRegistry(profiles=(_auto_profile,)),
-                env={"HELIOS_AUTO_EMBEDDING_KEY": "auto-provisioned"},
-            )
+            _auto_provider_kind = _resolution.kind
+            _auto_provider_model = _resolution.model
         elif _auto_store is None:
             _auto_store = ExperienceStore(backend=InMemoryExperienceStoreBackend())
             _auto_store.initialize()
         elif _auto_embedding is None:
-            _auto_profile = EmbeddingProfile(
-                profile_name=embedding_profile_name,
-                model="deterministic-hash",
-                api_key_env="HELIOS_AUTO_EMBEDDING_KEY",
-                base_url="http://localhost",
+            # The caller injected the gateway; the resolver is not consulted (R69 explicit-
+            # injection precedence). The kind and model are derived from the injected
+            # gateway's provider class so the recorded observability fact is correct.
+            _auto_provider_kind = (
+                "openai_compatible"
+                if isinstance(_auto_embedding.provider, OpenAICompatibleEmbeddingProvider)
+                else "deterministic_hash"
             )
-            _auto_embedding = EmbeddingGateway(
-                provider=DeterministicHashEmbeddingProvider(),
-                registry=EmbeddingProfileRegistry(profiles=(_auto_profile,)),
-                env={"HELIOS_AUTO_EMBEDDING_KEY": "auto-provisioned"},
+            try:
+                _auto_provider_model = _auto_embedding.registry.resolve(
+                    embedding_profile_name
+                ).model
+            except Exception:  # noqa: BLE001 - observability best-effort
+                _auto_provider_model = (
+                    "text-embedding-3-small"
+                    if _auto_provider_kind == "openai_compatible"
+                    else "deterministic-hash"
+                )
+        else:
+            # Both injected: the gateway is the source of truth, the resolver is not
+            # consulted. Derive the kind and model from the injected gateway's shape.
+            _auto_provider_kind = (
+                "openai_compatible"
+                if isinstance(_auto_embedding.provider, OpenAICompatibleEmbeddingProvider)
+                else "deterministic_hash"
             )
+            try:
+                _auto_provider_model = _auto_embedding.registry.resolve(
+                    embedding_profile_name
+                ).model
+            except Exception:  # noqa: BLE001 - observability best-effort
+                _auto_provider_model = (
+                    "text-embedding-3-small"
+                    if _auto_provider_kind == "openai_compatible"
+                    else "deterministic-hash"
+                )
         experience_store = _auto_store
         embedding_gateway = _auto_embedding
-        # Rebuild the frozen profile so semantic_memory_enabled reflects the provisioned state.
+        # Rebuild the frozen profile so semantic_memory_enabled and the R96 observability
+        # fields reflect the actual selected provider. The new fields are composition-level
+        # observability facts only; they are never seen by any cognitive owner.
         resolved_profile = replace(
             resolved_profile,
             experience_store=experience_store,
             embedding_gateway=embedding_gateway,
+            embedding_provider_kind=_auto_provider_kind,
+            embedding_provider_model=_auto_provider_model,
         )
 
     resolved_config = config if config is not None else default_composition_config()
@@ -1916,16 +1999,12 @@ def _find_in_memory_sink(
 # SQLite files. `data/` and `*.sqlite3` are already in `.gitignore`.
 DEFAULT_PRODUCTION_DATA_DIR = "data"
 
-# Production embedding credential env names. When the api key is present the production embedding
-# gateway uses a real OpenAI-compatible provider; otherwise it falls back to the network-free
-# deterministic-hash provider so the standard assembly still runs offline (real embedding quality
-# is deferred to P5; the hash fallback is an explicit documented placeholder).
-_EMBEDDING_API_KEY_ENV = "HELIOS_EMBEDDING_API_KEY"
-_EMBEDDING_BASE_URL_ENV = "HELIOS_EMBEDDING_BASE_URL"
-_EMBEDDING_MODEL_ENV = "HELIOS_EMBEDDING_MODEL"
-_DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1"
-_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-_OFFLINE_EMBEDDING_KEY_ENV = "HELIOS_AUTO_EMBEDDING_KEY"
+# R82 + R96: the embedding credential env names and the provider-resolution logic are
+# owned by `composition.embedding_provider_resolution` (the SINGLE source of truth for
+# the project). R82's `_production_embedding_gateway` and the R69 auto-provisioning
+# block in `assemble_runtime` both call into the resolver; no duplication, no drift.
+# The env-var name constants and defaults are imported below; see
+# `composition/embedding_provider_resolution.py` for the contract.
 
 
 def _production_embedding_gateway(
@@ -1936,14 +2015,14 @@ def _production_embedding_gateway(
 
     Purpose:
         Return a real-capable, offline-safe embedding gateway bound to the retrieval path's
-        `experience-embedding` profile name. When `HELIOS_EMBEDDING_API_KEY` is present in the
-        environment, it uses the OpenAI-compatible provider (model/base-url from
-        `HELIOS_EMBEDDING_MODEL` / `HELIOS_EMBEDDING_BASE_URL`, with documented defaults); otherwise
-        it falls back to the network-free `DeterministicHashEmbeddingProvider`.
+        `experience-embedding` profile name. The credential resolution and provider
+        construction are delegated to `composition.embedding_provider_resolution`
+        (R96 unification; preserves the R82 byte-for-byte behavior with the offline
+        stub value `production-offline` for traceability).
 
     Inputs:
         `profile_name` - the embedding profile name (must match `assemble_runtime`'s
-        `embedding_profile_name`, default `experience-embedding`).
+            `embedding_profile_name`, default `experience-embedding`).
         `env` - the environment mapping to read credentials from (defaults to `os.environ`).
 
     Returns:
@@ -1951,42 +2030,26 @@ def _production_embedding_gateway(
         offline hash env key set).
 
     Notes:
-        The OpenAI-compatible provider lazily imports its SDK inside the call path, so constructing
-        this gateway is import-safe and network-free; no embedding call happens at assembly time.
-        This introduces no real embedding model as a hard dependency (P5 owns real embedding quality).
+        R96 owner-confirmed decision: when `HELIOS_EMBEDDING_API_KEY` is present in the
+        environment, the OpenAI-compatible provider is used (model/base-url from
+        `HELIOS_EMBEDDING_MODEL` / `HELIOS_EMBEDDING_BASE_URL`, with documented defaults);
+        otherwise the network-free `DeterministicHashEmbeddingProvider` is the explicit
+        fallback. The OpenAI-compatible provider lazily imports its SDK inside the call
+        path, so constructing this gateway is import-safe and network-free; no embedding
+        call happens at assembly time.
     """
 
-    resolved_env = env if env is not None else os.environ
-    api_key = resolved_env.get(_EMBEDDING_API_KEY_ENV)
-    if api_key:
-        profile = EmbeddingProfile(
-            profile_name=profile_name,
-            model=resolved_env.get(_EMBEDDING_MODEL_ENV, _DEFAULT_EMBEDDING_MODEL),
-            api_key_env=_EMBEDDING_API_KEY_ENV,
-            base_url=resolved_env.get(_EMBEDDING_BASE_URL_ENV, _DEFAULT_EMBEDDING_BASE_URL),
-        )
-        return EmbeddingGateway(
-            provider=OpenAICompatibleEmbeddingProvider(),
-            registry=EmbeddingProfileRegistry(profiles=(profile,)),
-            env=dict(resolved_env),
-        )
-    # Offline fallback: deterministic-hash provider with a defined ready env key.
-    profile = EmbeddingProfile(
+    resolution = resolve_embedding_provider(env=env if env is not None else os.environ)
+    return build_embedding_gateway(
+        resolution=resolution,
         profile_name=profile_name,
-        model="deterministic-hash",
-        api_key_env=_OFFLINE_EMBEDDING_KEY_ENV,
-        base_url="http://localhost",
-    )
-    return EmbeddingGateway(
-        provider=DeterministicHashEmbeddingProvider(),
-        registry=EmbeddingProfileRegistry(profiles=(profile,)),
-        env={_OFFLINE_EMBEDDING_KEY_ENV: "production-offline"},
+        env=env if env is not None else os.environ,
+        offline_stub_value=OFFLINE_EMBEDDING_KEY_STUB_VALUE_R82,
     )
 
 
 def assemble_production_runtime(
-    *,
-    data_dir: "str | os.PathLike[str] | None" = None,
+    data_dir: str = DEFAULT_PRODUCTION_DATA_DIR,
     config: "CompositionConfig | None" = None,
     gateway: "LlmGatewayAPI | None" = None,
     recorder: "RuntimeObservabilityRecorder | None" = None,

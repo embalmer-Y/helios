@@ -38,6 +38,23 @@ from .runtime_assembly import (
     default_composition_config,
 )
 from .bridges import SequenceExternalSignalSource
+from .embedding_provider_resolution import (
+    DEFAULT_EMBEDDING_BASE_URL,
+    DEFAULT_EMBEDDING_MODEL,
+    EMBEDDING_MODEL_DIMENSIONS,
+    EmbeddingProviderKind,
+    EmbeddingProviderResolution,
+    HELIOS_EMBEDDING_API_KEY_ENV,
+    HELIOS_EMBEDDING_BASE_URL_ENV,
+    HELIOS_EMBEDDING_MODEL_ENV,
+    OFFLINE_EMBEDDING_BASE_URL,
+    OFFLINE_EMBEDDING_KEY_ENV,
+    OFFLINE_EMBEDDING_KEY_STUB_VALUE,
+    OFFLINE_EMBEDDING_KEY_STUB_VALUE_R82,
+    OFFLINE_EMBEDDING_MODEL,
+    build_embedding_gateway,
+    resolve_embedding_provider,
+)
 
 __all__ = [
     "CANONICAL_STAGE_ORDER",
@@ -69,4 +86,19 @@ __all__ = [
     "embedding_profile_critical_dependency_spec",
     "experience_store_critical_dependency_spec",
     "llm_critical_dependency_spec",
+    "DEFAULT_EMBEDDING_BASE_URL",
+    "DEFAULT_EMBEDDING_MODEL",
+    "EMBEDDING_MODEL_DIMENSIONS",
+    "EmbeddingProviderKind",
+    "EmbeddingProviderResolution",
+    "HELIOS_EMBEDDING_API_KEY_ENV",
+    "HELIOS_EMBEDDING_BASE_URL_ENV",
+    "HELIOS_EMBEDDING_MODEL_ENV",
+    "OFFLINE_EMBEDDING_BASE_URL",
+    "OFFLINE_EMBEDDING_KEY_ENV",
+    "OFFLINE_EMBEDDING_KEY_STUB_VALUE",
+    "OFFLINE_EMBEDDING_KEY_STUB_VALUE_R82",
+    "OFFLINE_EMBEDDING_MODEL",
+    "build_embedding_gateway",
+    "resolve_embedding_provider",
 ]

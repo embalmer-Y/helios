@@ -1,6 +1,7 @@
 # Helios v2 开发路线图（活文档）
 
-> 状态：活文档（前向开发规划）。最近同步：R92。
+> 状态：活文档（前向开发规划）。最近同步：**R95 followup C6 + 编号重排 + embedding 模型拍板（2026-06-15）**——W2.6 schema cleanup 全部收口（C1-C5 engine/planner 硬编码清理 + C6 system prompt `Driver: X / Op: Y` 显式前缀），1110+ tests passed / 4 skipped（离线），**8/8 R95 真实 LLM probe 全部 PASS**（deepseek/deepseek-v4-pro via shengsuanyun router）。**主人已拍板**：下一批 R98→**R96** 重排（按编号顺序推进），R96 embedding 选 **A — 云端 OpenAI-compatible**（与 `.env` 现有 `HELIOS_EMBEDDING_API_KEY` / `HELIOS_EMBEDDING_BASE_URL` 兼容；R34 `OpenAICompatibleEmbeddingProvider` 已就位）。
+> **📌 下个迭代明确顺序（2026-06-15 主人拍板）**：W3 **R96**（真实语义 embedding，**OpenAI-compatible 云端**，**FG-2/记忆保真总闸**）→ R97（中文 appraisal grounding）→ W4 **R98**（情感验收探针正式化）→ **R99+**（双轨记忆，建在 R96 真实 embedding 上）→ 并行：P4 网络通道生态（QQ/飞书/语音）。内心独白方案已被 R91 present-field 通道覆盖，不再单独立项。
 > 角色：记录"下一步做什么、大概是哪些 requirement、每个做什么"，避免反复重新推导。
 > 配套：
 > - `ARCHITECTURE_PHILOSOPHY.zh-CN.md` — 终局目标、锁定验收标准、P0→P7 阶段路线图（上位约束）。
@@ -11,21 +12,45 @@
 > 未创建项的 Rxx 是**建议编号**，可能随实际创建顺序顺移。每完成一个 Rxx，把它从"队列"挪到
 > "已完成"并更新一行。任何改变 owner 成熟度/阶段门的变更，须同步 `index.md` 与进度图。
 
-## 1. 当前状态（截至最近同步）
+## 1. 当前状态（截至 2026-06-15，R95 followup C6 后）
 
-- main 测试基线：≥ 1059 passed / 4 skipped（离线）。
-- **🎉 P0–P3 已达 100%**：地基期三门（G0 长跑稳定 / G1 owner 有界 / G2 记忆跨重启）此前已签收（R82/R83），唯一遗留的 B4「真实送达对账」由 **R87 收口**——`17` consequence corroboration 对本机 effector 动作已从"流程完成"升级为**真实送达可证伪**（network driver 仍属 P4）。
-- **W1+W2 已收口**：R91（present-field 内容进入 prompt）+ **R92（wall-clock 真实时间戳）+ **R93（W2 对话回复闭环可靠化——"想说话"→`13` `reply_message` dispatch 端到端可靠，详见§10 W2）** + 原 R91（wall-clock 真实时间戳，**新基础设施 owner `helios_v2.wall_clock`，三处 additive 消费 `RuntimeFrame.tick_wall_seconds` / `received_at_wall` 元数据 / `PersistedExperienceRecord.created_at_wall`，`assemble_production_runtime` 默认开启 `SystemWallClock`，R91 present-field 多出 `last input: X.Xs ago` clause）。下一步进 W2 / W3 / W4。 **R93 Phase 2 - 行动自主 + 跨通道路由** 同批交付（2026-06）：模型对动作类（reply / tool / no_action）和目标用户/通道拥有完整自主权，通过新的 `action_intent` + `target_user_id` envelope 字段、`ChannelOpSpec.bound_user_ids`、以及 planner 的 `target_user` -> `preferred` -> `iteration-order` 优先级实现。旧 `emit_action` fallback 已删除。~47 个新测试 + 2 个真实 LLM probe（03 正控、04 负控）。**W2.5 R94（已交付 2026-06）**：彻底移除 `i_want_to_say` 字段名——Phase 1 引入的 `i_want_to_say` 字面带"say"动词，从 schema 层就引导 LLM 反射性填文字；Phase 2 de-emphasize 后负控 probe 仍存在残余偏差。R94 把这个字段名彻底删，换为 `reply_text`（仅当 `action_intent="reply"` 时相关），让 LLM 在 4 个 action 维度（reply / tool / no_action + 沉默）的真正自主权不被字段名所牵引。~1200+ 测试绿（4 个 pre-existing wall_clock 跳过 + 4 个新增 R94 专属 + 6 个 R93 文件重命名）。详见§10 W2.5。
+- main 测试基线：**1106 + R95 新增 30 + R95 followup C1-C5 新增 3 + C6 新增 1 = 1110 passed / 4 skipped（离线）/ 5 pre-existing wall-clock-profile + lt1 失败（需 LLM profile 启动）**。
+- **🎉 P0–P3 已达 100%**（R87 收口 B4 后）。**W1–W2.6 + R95 followup C1-C6 全部已交付**：
+  - **W1**：R91（present-field 内容进入 `11` 思考 prompt，operator 真实文本不再丢失）+ R92（wall-clock 真实时间戳，新 owner `helios_v2.wall_clock`）。
+  - **W2**：R93（`i_want_to_say` → `13 reply_message` dispatch 端到端可靠，89→1 断点修两处）+ R93 P2（行动自主 + 跨通道路由，删 `emit_action` fallback，新增 `action_intent` / `target_user_id` / `bound_user_ids`）。
+  - **W2.5**：R94（彻底移除 `i_want_to_say` 字段名带"say"动词的反射性填文偏差）。
+  - **W2.6**：R95（behavior-neutral schema，**8 个行为暗示字段全删**，新增 `thinking_complete` 倒置语义 + `channel_request`；system prompt 暴露完整"Available channels"区块；`tool_op` 提升为单一主决策字段；`reply_message` 不再特殊化；`target_user_id` 从顶层移除——身份完全是 LLM 自己的内容决策，不归 system 层处理）。
+  - **R95 followup C1-C5**（engine / planner 拆掉 legacy op-name 硬编码）+ **C6**（system prompt `Driver: X` / `Op: Y` 显式前缀）——确保 channel driver 是 op 名唯一权威来源，engine / planner / system prompt 都不知道 op 名。
+  - **真实 LLM 验证（2026-06-15）**：8/8 R95 probe 全部 PASS（deepseek/deepseek-v4-pro via shengsuanyun router）——anti-reflex-reply / action agency / channels exposure / cross-channel routing 四维全部覆盖。
 - **P0–P3 地基期工程门已全部签收**：
   - G2 持久化默认化（R82：`assemble_production_runtime()` 默认 SQLite store + R42 checkpoint + embedding 网关）。
   - G0 长跑稳定（R83：10万 tick legacy-constant 跑通，无崩溃，内存 peak 5.6MB 持平，零泄漏）。
   - G1 owner 有界性（R83 harness：04/05/09/18 逐 tick 有界、无 NaN、无发散，可证伪）。
-  - G2 形成/检索/重启接续此前已成立（R45/R34/R42）。
-  - B4 真实送达对账（R87：`tool_result` reafference 对账，`really_delivered`/`delivered_failed`/`delivery_unverified`）。
-- **P4 进行中**：R84 交付首个 effector driver（沙箱化 OS 文件 driver）+ 工具结果 reafference 回流 `02`；**R85 收口 FG-4 自主工具使用闭环**；**R86 交付受治理的 OS 命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手**（`unrestricted` 命令直跑、`restricted` 硬拒、`governed` 经 `14` 授权后执行；解释器/写自身代码永久 restricted）。**P4 退出门剩余**：网络通道（QQ/飞书/语音）。
-- **P5 评估框架已立起**：R88 行为漂移评估器（启动门）+ R89 长跑图灵式 harness（§13.4 六轴）+ R90 记忆保真探针（替换图灵 `memory_fidelity` stub 为真实 R10+R15 端到端探针）三件套交付完毕。下一步可转 P5 双轨记忆（R91 起）或 P4 网络通道。
-- 真实信号驱动：`02–10` 默认语义链、`04` 七通道+双时标+R81 对账、`11` LLM、`18` autonomy。
-- 仍 `baseline_real`：`12–16` 外化链（草稿非授权，但 R85/R86 起工具路径已可真实执行本机文件/命令副作用，R87 起其真实送达可证伪）；真实网络外化仍属 P4。
+  - G2 形成/检索/重启接续（R45/R34/R42）。
+  - B4 真实送达对账（R87：`tool_result` reafference 对账，`really_delivered` / `delivered_failed` / `delivery_unverified` / `delivery_not_applicable`）。
+- **P4 工具入口已收口（OS 文件 R84 + 自主选择 R85 + 受治理命令 R86）**。**P4 退出门剩余**：网络通道（QQ/飞书/语音，`.env` 已有 `HELIOS_QQ_*` / `ALIBABA_CLOUD_*` 凭证位）。
+- **P5 评估框架已立起**：R88 行为漂移评估器（19-dim，real substrate）+ R89 长跑图灵式 harness（§13.4 六轴）+ R90 记忆保真探针（真实 R10+R15 端到端）三件套已全部交付，可为 W3/W4 收口做可证伪验证。
+- 真实信号驱动：`02–10` 默认语义链、`04` 七通道+双时标+R81 对账、`11` LLM（v3 owner-grounded + R95 behavior-neutral）、`18` autonomy。
+- 仍 `baseline_real`：`12–16` 外化链（草稿非授权；R85/R86 起工具路径可真实执行本机文件/命令副作用；R87 起真实送达可证伪）。真实网络外化仍属 P4。
+
+### 1.0 📌 下个迭代明确顺序（2026-06-15 主人拍板 + 编号重排）
+
+按 §10 "测试驱动的近期开发计划"、§9.1 ROADMAP 实证根因（hash embedding 无语义、中文 appraisal 原型不匹配）、§3 队列状态综合：
+
+| 顺序 | Req | 名称 | 关键作用 | 依赖 | 估计风险 |
+|------|-----|------|----------|------|----------|
+| **1** | **R96** | 真实语义 embedding 接入（替换 hash，**OpenAI-compatible 云端**） | **B2 收口**——`03`/`06`/`10` 由真实语义驱动；相似情绪输入产生可区分且方向恰当的生化签名；记忆召回浮现相关对话内容 | R91 + R94 + R95 | 中（需引入云端 embedding 依赖；网络/API key 配置；离线凭证缺失硬切回 `DeterministicHashEmbeddingProvider` 保持测试绿） |
+| **2** | **R97** | 去英文中心 / 中文 appraisal grounding | `03` threat/reward 等多语/学习式锚点；情感恰当性 root-cause 修复 | R96 | 低 |
+| **3** | **R98** | 情感响应测试正式化为验收探针 | 把访客故事集 + 原始 LLM I/O 日志接入 R88/R89/R90 形成可证伪验收 | R91–R97 + W2.5 + W2.6 | 低（纯测试侧） |
+| **4** | **R99+** | 双轨记忆（schema / 分层 / 重要性 / 衰减 / 记忆工具 / forget 治理） | beta 分支的 R85 已预研；建在 R96 真实 embedding 上 | R96 | 中（多切片串接） |
+| **并行** | **P4 网络通道** | QQ / 飞书 / 语音 channel driver | 真实外部（网络）afferent/efferent；P4 退出门 | — | 中（网络 / 凭证） |
+
+**排序原则**：
+- 实证根因（hash embedding 无语义 → R96）优先于"再多的 prompt 调优都不解决根因"。
+- R97 → R98 顺序不可换：中文 grounding 是 input 端，验收探针是 output 端。
+- R99+ 双轨记忆是 P5 重头，建在 R96 真实 embedding 上才有效（否则又会被 hash-cosine 噪声污染）。
+- P4 网络通道与认知主链解耦，**并行轨**任意时点插入，不阻塞主链推进。
+- 内心独白方案已被 R91 present-field 通道覆盖（`02` 真实刺激 + `08` focal + temporal pacing），**不再单独立项**；如未来需要可并入 R96 之后。
 
 ### 1.1 R83 长跑的关键实测结论（修正先前判断）
 - 每 tick 成本**有界**，非随 store 发散：暖机后进入平台（legacy-constant ~9.5ms 持平 store 11→1991；语义 ~100ms 持平 store 290→1178）。
@@ -51,19 +76,24 @@
 | R93 | 对话回复闭环可靠化（W2 收口） | W2 第一刀：把"想说话"变成真的回复——R93 之前 89 条仅 1 条真正回复用户（v3 `i_want_to_say` 很少转成 CLI `reply_message` dispatch）。两处断点修复：(1) `_parse_structured_thought` 读顶层 `i_want_to_say` 进新增 additive `StructuredThoughtEvidence.intended_reply_text: str = ""`（2000 字符上限 + deterministic `…(truncated)`；非字符串 parse-error）。(2) `11._emit_proposal` 加隐式 reply 分支——条件：`intended_reply_text` 非空 ∧ 无显式 `tool_op` ∧ `current_operator_id` 非空；构造 `reply_message` tool intent，`op_params={"outbound_text": <reply>, "target_user_id": <operator>}`，走 R85 既有 planner-spine；显式 tool 优先；无 operator 静默不构造（绝不虚构目标）。(c) composition 加 owner-neutral `_current_operator_id(frame)` helper（最早外部刺激 `source_name`），两个 internal-thought request bridge 都把 `current_operator_id` 加进 `prompt_contract_summary`。(d) `_build_messages` 把 `i_want_to_say` 加入 schema 行并附"transport clause"。owner 边界：`11` 保留全部判断；composition 只读已发布 `02` 并正向投影 `current_operator_id`（不动 `06`/`10`/`13`）；`13` 仍按 driver 自描述的 `required_params` 校验（defense in depth——R85 不变）；不回灌 `11`。测试：5+12+6+7+4+6 = ~40 个网络无关测试 + 2 个真实 LLM probe（`scripts/r93_probes/01_basic_reply.json` 正控、`02_silence_negative_control.json` 负控）。 |
 | R93 P2 | 对话回复闭环可靠化 Phase 2 - 行动自主 + 跨通道路由 | R93 P1 引入的 `i_want_to_say` 解决了"端到端能不能回复"，但 2026-06 真实 LLM 评估暴露了"confiding machine"残余：97% 回复率却无法选 `no_action`。Phase 2 把动作类（reply / tool / no_action）和目标用户/通道完整交给 LLM：(a) 新增 envelope 字段 `action_intent`（reply/tool/no_action）+ `target_user_id`；(b) `ChannelOpSpec.bound_user_ids` 让 driver 自描述"接受哪些 user"；(c) planner 优先级 `target_user` → `preferred` → `iteration-order`；(d) 删旧 `emit_action` fallback。**仍保留 `i_want_to_say` 字段名但 P2 重大 de-emphasis**：L94/R94 决定彻底移除以解决"want to say"字段名对 LLM 的反射性填文偏差。~47 个新测试 + 2 个真实 LLM probe（03 正控、04 负控）。 |
 
-## 3. 近期队列：P4 通道生态 / P5 评估框架（P0–P3 已收口）
+## 3. 近期队列：W3 真实语义 / W4 情感验收 / R99+ 双轨记忆（W1–W2.6 + R95 followup C1-C6 已收口）
 
-### R86 — OS Channel Driver：命令执行 + 治理 fail-closed ✅ 已交付（见 §2）
-- 已实现为受治理的命令执行 effector + `13` 强制 risk-class 门 + `14` 两-tick fail-closed 授权握手。
-- 首版 governed 集 = sandbox 内有界变更（`mkdir`/`cp`/`mv`）；解释器（`python <脚本>`/`bash`/`pytest` 等）= 任意代码执行，argv 级 allowlist 关不住，**永久 restricted**，留给未来带 OS 隔离的独立 requirement；写自身代码硬拒（P7）。
+> **全部 W1–W2.6 + R95 followup C1-C6 已交付**（详见 §1.0 新顺序与 §2 已完成表）。本节**只列下一批待启动的切片**；上一批的 R86/R87 已在 §2 完成表登记。
+>
+> **新顺序（2026-06-15 主人拍板 + 编号重排）**：
+> 1. **R96** — 真实语义 embedding 接入（替换 hash，**OpenAI-compatible 云端**，B2 收口，**FG-2/记忆保真总闸**）
+> 2. **R97** — 去英文中心 / 中文 appraisal grounding（建在 R96 之上）
+> 3. **R98** — 情感响应测试正式化为验收探针（接 R88/R89/R90 形成可证伪验收）
+> 4. **R99+** — 双轨记忆（建在 R96 真实 embedding 上；细节见 §5）
+> 5. **并行轨**：P4 网络通道生态（QQ/飞书/语音，详见 §6）
+>
+> **详细切片描述、退出信号、依赖**见 §10 W3 / W4 / 之后段。**新顺序的完整论证**见 §1.0。
 
-### R87 — Consequence-Truth 真实送达对账 ✅ 已交付（见 §2）
-- 已把 `17` 对 effector 动作的对账从"流程完成"升级为"真实送达可证伪"，收口 B4 → **P0–P3 达 100%**。
-- 剩余（独立项）：`23` 侧的跨 tick 送达延迟/重试长程诊断，可在需要时建在此 verdict 之上。
+## 4. 中期队列：P5 评估框架（已立起）+ 后续认知深化
 
-> 下一步方向（W1+W2+W2.5+W2.6 已收口；R93 Phase 2 同步交付；**R94 已交付 2026-06**；**R95 已交付 2026-06**：behavior-neutral schema 完成；1106 + R95 新增 passed / 4 skipped；详见 §10 W2.6）：**W3 R98** 真实语义 embedding（替换 hash，B2 收口，是 FG-2/记忆保真总闸，原 R95 顺移）；**W3 R99** 去英文中心 / 中文 appraisal grounding（原 R96 顺移）；**W4 R100** 把情感测试正式化为验收探针（原 R97 顺移）；**或** P4 网络通道生态（QQ/飞书/语音，达 P4 退出门）。P5 评估框架三件套（R88 漂移基线 + R89 图灵 harness + R90 记忆保真探针）已全部立起，准备好为后续 W3/W4 收口验证。
-
-## 4. 中期队列：P5 评估框架 + 内心独白
+> **§4 是"已交付的中期切片"集合 + 后续认知深化的提示位**。P5 评估框架三件套（R88 / R89 / R90）已全部交付（详见 §2 完成表），用于为 W3 / W4 / R99+ 收口做可证伪验证。
+>
+> 旧 §4 中的"内心独白"二阶刺激源（`02` 新 sensory source + `03` estimator）方案已被 R91 present-field 通道覆盖（`02` 真实刺激 + `08` focal + `temporal` pacing 已让 LLM 读到当下；如未来需要把"上一 tick LLM 输出"作为另一 present-field 来源，并入 R96+ 切片统一做更自然），**不再单独立项**。
 
 ### R88 — 行为漂移评估器（P5 启动门）✅ 已交付（见 §2）
 - 已交付为 tests-only 的只读、离线、确定性漂移评估器（`tests/r88_drift_evaluator/`），消费 R83 逐 tick JSONL，按 early-vs-late 窗口均值差 + 死区把每个 owner 维度分类为 `drift_positive`/`drift_negative`/`drift_neutral`/`dim_unavailable`，并对朝合法边界饱和的漂移加 `divergent_high`/`divergent_low` 标记；`analysis_ok` 为可证伪 verdict。
@@ -79,34 +109,32 @@
 - 已交付为 tests-only 只读/离线/确定性探针（`tests/r90_memory_fidelity_probe/`），驱动真实耐久生产装配 + 一次重启，从真实 provenance 测三个有界指标替换 R89 图灵 `memory_fidelity` stub：`recall_hit_rate`（R10 端到端——fire 且 store 非空 tick 中，`10` bundle 含 store-sourced hit 的比例）、`writeback_persistence_rate`（R15→R33——本轮 appended 记录跨重启存活比例）、`latency_score`（R34/R33 `search_similar` 中位延迟 vs 100ms 阈值）。诚实缺席为 `None`，绝不编造；`fidelity_score` = 可用指标均值。
 - R89 `evaluate_turing` 加 additive 可选 `memory_fidelity_probe` 参数：usable report 使 `memory_fidelity` 轴变真实 `available`/`reconstructed`；缺省/不可用保持 stub 字节级不变（R89 测试全绿）。离线实测 recall=1.0(59/59)、persistence=1.0(120 全存活)、latency=1.0(~2ms) → fidelity=1.0。behavior 轴仍 unavailable（P4），整体 verdict 仍 incomplete——R90 只移除记忆 stub。
 
-### R91 — internal_monologue 二阶刺激源
-- `02` 新 sensory source + `03` appraisal estimator；上一 tick LLM 输出回流为 `internal_monologue` 刺激。依赖：R79。
+### 内心独白方案 — **不再单独立项**
 
-### R92 — 内心独白跨 tick carry + 09 自延续 + 18 source_kind + 42 v4
-- `RuntimeHandle._carry_internal_monologue` carry seam；`09` 加 `self_continuation_signal`；`18` `DeferredContinuityRecord.source_kind` 加 `"internal_monologue"`；`42` checkpoint v3→v4（带一次性迁移）。依赖：R91。
+beta 分支的 internal monologue 二阶刺激源（`02` 新 sensory source + `03` appraisal estimator；上一 tick LLM 输出回流为 `internal_monologue` 刺激；`RuntimeHandle._carry_internal_monologue` carry seam；`09` 加 `self_continuation_signal`；`18` `DeferredContinuityRecord.source_kind` 加 `"internal_monologue"`；`42` checkpoint v3→v4）已被 R91 present-field 通道覆盖。如未来确实需要把"上一 tick LLM 输出"作为另一 present-field 来源，应并入 R96+ 切片统一做，避免单立 R 号制造多余切换。
 
 ## 5. P5 重头：双轨记忆（建在真实长跑反馈上）
 
-### R101+（双轨记忆：原 §5 计划，编号在创建时落定）
-原 §5 的 R93–R98（schema/分层/重要性/衰减/检索规模化/工具/治理）已被 §10 W2.5 R94 / **W2.6 R95** / W3 R98 / W3 R99 / W4 R100 推后。
-建在真实 embedding（R98，原 R95）之上，**建议编号 R101 起**，但 R101 之前的实际编号顺移将在创建时落定。
-本节具体切片描述保留作 backlog（编号已顺移到 R101-R106）：
+### R99+（双轨记忆：原 §5 计划，编号在创建时落定）
+原 §5 的 R93–R98（schema/分层/重要性/衰减/检索规模化/工具/治理）已被 §10 W2.5 R94 / **W2.6 R95** / W3 R96 / W3 R97 / W4 R98 推后。
+建在真实 embedding（R96）之上，**建议编号 R99 起**，但 R99 之前的实际编号顺移将在创建时落定。
+本节具体切片描述保留作 backlog（编号已顺移到 R99-R104）：
 
-#### R101（建议）— MemoryRecord schema + 4 层时间分层
+#### R99（建议）— MemoryRecord schema + 4 层时间分层
 - L2/L3/L4/L5 分层，迁移 `PersistedExperienceRecord`。
 
-#### R102（建议）— 6 维 objective_importance + 双重确认写入
+#### R100（建议）— 6 维 objective_importance + 双重确认写入
 - 重要性独立于 LLM 判断的客观维度 + 双重确认写入规则。
 
-#### R103（建议）— Ebbinghaus 衰减 + recall 重固化 + 自动晋升层级
+#### R101（建议）— Ebbinghaus 衰减 + recall 重固化 + 自动晋升层级
 
-#### R104（建议）— bounded-window / ANN 语义检索
+#### R102（建议）— bounded-window / ANN 语义检索
 - 〔R83 修正后的 finding〕**非当前阻塞，是 P5 真实规模问题**：真实高维 embedding + 大 store 下朴素全库余弦才显著，届时换 bounded-window/ANN。建在双轨记忆检索层里最自然。
 
-#### R105（建议）— memory_tool_channel
+#### R103（建议）— memory_tool_channel
 - `30` 框架下 LLM 记忆工具（recall/forget/consolidate 必做，link/reflect 推迟）；所有 keyword 匹配改 embedding 余弦；解决 owner 命名冲突（新 owner 名，不与 R31 CLI 冲突）。
 
-#### R106（建议）— forget 治理 fail-closed
+#### R104（建议）— forget 治理 fail-closed
 - `14` 在 forget 上的 fail-closed 门 + 永久审计轨迹 + soft-delete + GC。
 
 ## 6. 并行轨：P4 其余 channel driver（与 A/B/C 解耦，任意插入）
@@ -126,24 +154,36 @@
 | W1 感知层（已收口） | 当下内容进入认知 + Wall-clock 真实时间戳 | R91（done）, R92（done） |
 | W2 对话外化闭环 | "想说话"→`13` `reply_message` dispatch 端到端可靠 | R93 |
 | W2.5 移除 `i_want_to_say` | LLM 完整行动 + 通道自主权（彻底删字段名，让 LLM 真正决定动作 + 通道） | R94（已交付 2026-06） |
-| W2.6 Behavior-neutral schema | 彻底消除 schema 中的"行为暗示"字段；reply 不再特殊化；channel 自描述能力；LLM 自行关联；新增 `channel_request` 让 LLM 表达缺失能力 | R95（已交付 2026-06：1106 + R95 新增 passed / 4 skipped；8 个 R95 probe 写完待 API key 轮换后跑） |
-| W3 真实语义（FG-2 总闸） | 替换 hash embedding 为真实语义 + 中文 grounding | R98（原 R95）, R99（原 R96） |
-| W4 情感测试验收 | 把情感测试接入 R88/R89/R90 形成可证伪验收 | R100（原 R97） |
-| 之后 | 内心独白二阶刺激（建在 R91 上）/ 双轨记忆（建在 R98 真实 embedding 上，受 R83 修正）/ 受治理自我进化 | 顺位编号待定（原 §5 R101+，原 R98+） |
+| W2.6 Behavior-neutral schema | 彻底消除 schema 中的"行为暗示"字段；reply 不再特殊化；channel 自描述能力；LLM 自行关联；新增 `channel_request` 让 LLM 表达缺失能力 | R95（已交付 2026-06-15：1106 + R95 新增 30 + C1-C5 新增 3 + C6 新增 1 = **1110 passed / 4 skipped**；**8/8 真实 LLM probe 全部 PASS**，deepseek-v4-pro via shengsuanyun） |
+| W3 真实语义（FG-2 总闸） | 替换 hash embedding 为真实语义 + 中文 grounding | **R96**（**OpenAI-compatible 云端**）, **R97** |
+| W4 情感测试验收 | 把情感测试接入 R88/R89/R90 形成可证伪验收 | **R98** |
+| 之后 | 双轨记忆（建在 R96 真实 embedding 上，受 R83 修正）/ 受治理自我进化 | **R99+**（内心独白已被 R91 present-field 覆盖，不再单独立项） |
 | P4 通道生态（并行轨） | OS（R84/R86）+ QQ/飞书/语音/WeChat | R84/R86, 并行轨 |
 | P6 / P7 | 受治理自我修订 / 受治理代码自修改 | 待 P5 框架立起后细化 |
 
-> 注：本表按 §10 实测驱动顺序更新。R92 wall-clock 已收口 W1；R93+ 编号在创建时按实际顺序落定。
-> 提醒：beta 分支 `aggressive-radical-persona-no-theater` 的 R79–R85 与 main **同名不同义**（beta 已预研漂移评估器/图灵 harness/内心独白/双轨记忆等），移植回 main 时一律按 main 的创建顺序重新编号，不沿用 beta 编号。
+> 注：本表按 §10 实测驱动顺序更新。R95 followup C1-C6 已收口 W2.6；R96+ 编号在创建时按实际顺序落定。
+> 提醒：beta 分支 `aggressive-radical-persona-no-theater` 的 R79–R85 与 main **同名不同义**（beta 已预研漂移评估器 / 图灵 harness / 内心独白 / 双轨记忆等，移植回 main 时一律按 main 的创建顺序重新编号，不沿用 beta 编号）。内心独白方案已废（被 R91 present-field 覆盖）；其余三件（漂移 / 图灵 / 双轨记忆）核心思路已并入 R88 / R89 / R99+。
 
 ## 8. 当前待主人决策项
 
-1. R85（LLM 自主工具选择）的工具意图 schema 形状与 planner 绑定策略边界（选择归 `13`，绝不回灌 `11`）。
-2. R86 命令执行的治理边界方案（allowlist / sandbox root / high-risk 清单 / 首版是否禁止写自身代码）。**未确认前不动 R86。**
-3. R84 生产部署时 OS 文件 driver 的 sandbox root 选址（建议 git-ignored 的 `data/fs_sandbox/`）与是否默认启用写。
-4. R83 CI 档时长：当前 150 tick（套件 ~16s）；如更看重 CI 速度可降到 ~80 tick（~10s）。
-5. 是否在某个节点手动跑"真实 LLM + 真实刺激"长跑（需 P4 真实 afferent 落地后信息量才大）。
-6. **R94（移除 `i_want_to_say`）的 prompt 风险评估**：R93 Phase 1 fine-tune 已习惯 `i_want_to_say` 字段名。R94 移除后，旧 fine-tune 可能不再产 reply。是否需要在 R94 之后补一次"回填评估"（让真实 LLM 在 R94 prompt 上做 1-2 周 fine-tune，对比 before/after probe 03/04）？还是接受"模型在新 prompt 上重新适配"的轻量方案？
+1. ~~R85（LLM 自主工具选择）的工具意图 schema 形状与 planner 绑定策略边界~~ ✅ 已交付（R85 §2）。
+2. ~~R86 命令执行的治理边界方案~~ ✅ 已交付（R86 §2，allowlist = unrestricted 只读/诊断 + governed `mkdir/cp/mv`；解释器与写自身代码永久 restricted；sandbox cwd = `data/cmd_sandbox/`）。
+3. ~~R84 生产部署时 OS 文件 driver 的 sandbox root 选址~~ ✅ 已交付（R84 §2，建议 `data/fs_sandbox/`，git-ignored；写操作受 `allow_write` 门控，默认 opt-in）。
+4. **R83 CI 档时长**：当前 150 tick（套件 ~16s）；如更看重 CI 速度可降到 ~80 tick（~10s）。——仍开放。
+5. **R96（原 R98）真实语义 embedding 接入——embedding 模型选择** ✅ **已拍板（2026-06-15）**：
+   - ✅ **A** — OpenAI 兼容云端 embedding（如 `text-embedding-3-small` 1536 维 / `bge-m3` 1024 维经 OpenAI-compatible endpoint；与 `.env` 现有 `HELIOS_EMBEDDING_API_KEY` / `HELIOS_EMBEDDING_BASE_URL` 兼容；R34 `OpenAICompatibleEmbeddingProvider` 已就位无需新依赖）
+   - 备选 **B**（本地 sentence-transformers）/ **C**（本项目自训）/ **D**（其他）**暂搁置**——留作 P5 学习循环立起后的降级或增强路径（届时若需离线优先 / 自训优化可立 R110+ 切片）
+   - **实施要点（首版）**：
+     - 模型选择建议 `text-embedding-3-small`（1536 维，性价比高，中英文均支持）或 `bge-m3`（1024 维多语，与 R97 衔接更顺）
+     - 通过 R34 已就位的 `OpenAICompatibleEmbeddingProvider` 走 `.env` 现有凭证，无新网络配置
+     - **离线/凭证缺失硬切回** `DeterministicHashEmbeddingProvider`（R69 默认）：若 `HELIOS_EMBEDDING_API_KEY` 为空或网络不可用，**必须保持 R69 语义装配默认行为**（现有 1110 测试不破）；API key 就绪时切真 embedding
+     - `embedding_profile_ready` 关键依赖 fail-fast，绝不静默降级到无 embedding
+     - 嵌入结果进 `PersistedExperienceRecord.embedding`（R34 已就位，无需新列），写时 embed + 检索时 embed
+   - **设计/实现纪律**：本 R96 切片开始前按 `requirements/requirement-authoring-standard.md` 写 `docs/requirements/96-real-semantic-embedding/{requirement,design,task}.md` 三件套；不直接动手 code。
+6. **R97（原 R99）中文 appraisal grounding**——选词集来源：(i) 手工 + 心理学词表；(ii) 翻译现英文 `THREAT_PROTOTYPES` / `REWARD_PROTOTYPES`（最小代价，但失去 cross-cultural grounding）；(iii) 来自真实标注语料或求助话语料的弱监督聚类（需外部数据）。建议 A+B 混合：先翻译锚点 ship，后续按 P5 评估数据驱动迭代。R96 拍板时一起定。
+7. **R98（原 R100）验收探针：是否包括"外化恰当性"轴**？R98 默认只接 R88/R89/R90 做内部轴。要不要新增"reply 选择恰当性"作为 Turing 第六轴，量化"低显著度静默 / 高显著度应答"准确率？如是，需扩 R89 schema + 收集 judge 评分。
+8. **P4 网络通道生态优先级**：QQ / 飞书 / 语音 / WeChat 中，下一个该上哪个？——`.env` 凭证位 (`HELIOS_QQ_*` / `ALIBABA_CLOUD_*`) 都已预留，但实际推进时机（与 W3 并行 / W3 完成后再做）待定。
+9. **R95 followup 后续**：C1-C5 + C6 已清完 engine/planner/system prompt 的硬编码与 driver/op 歧义。是否需要再走一次全面探针（11+ 个 probe）覆盖负面场景（高 salience + 沉默 / 错向 channel 选错 / 缺失 channel 时的 `channel_request` 触发等）？作为 R95 的稳定性回归。
 
 ## 9. 实证测试记录：真实 LLM 情感长跑（2026-06，CLI 注入）
 
@@ -401,32 +441,34 @@
 
 ### W3 — P5 根因：真实语义（让"恰当"成为可能）
 
-**R98 — 真实语义 embedding 接入（替换 hash，B2 收口）**（原 R95 顺移）
+**R96 — 真实语义 embedding 接入（替换 hash，B2 收口，**OpenAI-compatible 云端**）**（原 R98 顺移）
 - 问题（实证）：`03` 跑离线 hash embedding（无语义）→ 无法读懂中文情绪 → 生化响应与情绪无关、正负情绪分离≈0；记忆召回 hash 选取、语义无意义、且浮现自指"无动作"记录。
-- 做什么：接真实语义 embedding（本地小模型优先，支持自训练/离线再训练），使 `03` novelty/threat/reward、`06`/`10` 检索由真实语义驱动。
+- 做什么（**已拍板用 OpenAI-compatible 云端**，见 §8 item 5）：通过 R34 已就位的 `OpenAICompatibleEmbeddingProvider` 走 `.env` 现有 `HELIOS_EMBEDDING_API_KEY` / `HELIOS_EMBEDDING_BASE_URL`（与 LLM gateway 同套凭证），使 `03` novelty/threat/reward、`06`/`10` 检索由真实语义驱动。首版模型建议 `text-embedding-3-small`（1536 维）或 `bge-m3`（1024 维多语，与 R97 衔接）。
+- **离线/凭证缺失硬切回 `DeterministicHashEmbeddingProvider`**（R69 默认）保持现有 1110 测试绿；网络/API key 就绪时切真 embedding。`embedding_profile_ready` 关键依赖 fail-fast，绝不静默降级。
 - owner 边界：embedding 是能力 owner（`34`），`03`/`06`/`10` 消费；不改 owner 判断权。
 - 退出信号：相似情绪输入产生可区分且方向恰当的生化签名；记忆召回浮现相关对话内容。
 - 依赖：R91（先让内容进认知，embedding 才有完整价值）+ W2.5 R94（先让 LLM 真正决定动作，语义评估的输出才有意义）+ W2.6 R95（先把 schema 行为暗示清除，语义评估的输出才有意义）。
 
-**R99 — 去英文中心 / 可学习的 appraisal grounding**（原 R96 顺移）
+**R97 — 去英文中心 / 可学习的 appraisal grounding**（原 R99 顺移）
 - 问题（实证）：R40 threat/reward 原型是英文，中文输入下失效。
 - 做什么：支持中文语义的 appraisal 锚点（多语原型或学习式），系数 P5 可学。
-- 依赖：R98。
+- 依赖：R96。
 
 ### W4 — 用情感测试作为可证伪验收
 
-**R100 — 情感响应测试正式化为验收探针**（原 R97 顺移）
+**R98 — 情感响应测试正式化为验收探针**（原 R100 顺移）
 - 做什么：把 `scripts/emotion_test_run.py`（访客故事集 + 原始 LLM I/O 日志）+ `analyze_emotion_test.py` 接入 R88 漂移 / R89 图灵 harness / R90 记忆探针，形成可重复的"情感恰当性"可证伪验收；W1–W3 每完成一步重跑对照。
 - 退出信号：正负情绪生化分离显著、思考引用真实内容、记忆召回相关、回复闭环成立——全部可只读重建。
-- 依赖：R91–R99 + W2.5 R94 + W2.6 R95。
+- 依赖：R91–R97 + W2.5 R94 + W2.6 R95。
 
-### 之后（顺移的原 P5 计划）
-- 内心独白二阶刺激（原 R91/R92 内容）：建在 R91 present-field 通道上更自然（上一 tick LLM 输出回流为 present-field 的一种来源）。
-- 双轨记忆（原 R93–R98 内容 → 现 R101+）：schema/分层/重要性/衰减/记忆工具/forget 治理，建在 R98 真实 embedding 之上。
-- 受治理自我修订 / 代码自修改（P6/P7）。
+### 之后（顺移的原 P5 计划 + 后续阶段）
+- ~~内心独白二阶刺激（原 R91/R92 内容）~~ **— 已废**（被 R91 present-field 通道覆盖；如未来需把"上一 tick LLM 输出"作为 present-field 来源，并入 R96+ 切片）。
+- **R99+ 双轨记忆**（原 beta R85 内容 → 现 R99+）：schema / 4 层时间分层 / 6 维 `objective_importance` 双重确认写入 / Ebbinghaus 衰减 + recall 重固化 + 自动晋升 / bounded-window/ANN 检索（待 P5 真实规模）/ `memory_tool_channel`（`30` 框架下 LLM 记忆工具 recall/forget/consolidate）/ `14` 在 forget 上的 fail-closed 治理 + 永久审计轨迹 + soft-delete + GC。建在 R96 真实 embedding 之上（R96 是其前提，否则又会被 hash-cosine 噪声污染）。
+- **P4 网络通道生态**（与上述并行）：QQ / 飞书 / 语音（DashScope ASR/TTS）/ WeChat channel driver；达 P4 退出门。`.env` 凭证位已预留。
+- **受治理自我修订 / 代码自修改**（P6 / P7）：待 P5 学习循环与 P5 评估框架更深后细化。
 
-### 一句话排序（更新）
-**R91 读到当下 ✓ → R92 感知时间 ✓ → R93 学会回应 ✓ → R93 P2 完整行动 + 通道自主 ✓ → R94 移除 `i_want_to_say` ✓（W2.5，**已交付 2026-06**）→ R95 行为暗示清零 + channel 自描述（**W2.6，进行中**）→ R98 真实语义（恰当，原 R95）→ R99 中文 appraisal grounding（原 R96）→ R100 情感验收（原 R97）→ 内心独白/双轨记忆（R101+，原 R98+）/自进化。**
+### 一句话排序（2026-06-15 编号重排 + embedding 模型拍板后最终版）
+**R91 读到当下 ✓ → R92 感知时间 ✓ → R93 学会回应 ✓ → R93 P2 完整行动 + 通道自主 ✓ → R94 移除 `i_want_to_say` ✓（W2.5）→ R95 行为暗示清零 + channel 自描述 ✓（W2.6）→ R95 followup C1-C5 engine/planner 硬编码清理 ✓ → R95 followup C6 system prompt `Driver: X / Op: Y` 显式前缀 ✓ → **R96 真实语义 embedding**（W3 #1，**OpenAI-compatible 云端**，FG-2/记忆保真总闸）→ **R97 中文 appraisal grounding**（W3 #2）→ **R98 情感验收探针**（W4 #3）→ **R99+ 双轨记忆**（建在 R96 上）→ **P4 网络通道**（并行轨）→ P6/P7 受治理自我修订/代码自修改。**内心独白方案已被 R91 present-field 通道覆盖，不再单独立项。**
 
 ## 11. 工程纪律：prompt 变更必须先用真实 LLM probe 验证
 
