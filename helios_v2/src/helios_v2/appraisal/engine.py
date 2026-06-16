@@ -82,6 +82,52 @@ def _resolve_default_concept_prior() -> "ConceptPrior":  # pragma: no cover - tr
     return _CP.empty()
 
 
+@runtime_checkable
+class LlmAppraisalSource(Protocol):
+    """Owner: rapid salience appraisal (R-PROTO-LEARN.2).
+
+    Purpose:
+        Provide a Layer 2 LLM-driven appraisal fallback for cases where
+        Layer 1 (R40 + R97/R98 + R-PROTO-LEARN.6 + R-PROTO-LEARN.1) is
+        ambiguous. The LLM directly emits 5-dimension scores
+        `{threat, reward, novelty, social, uncertainty}` in `[0, 1]`
+        for the given stimulus content, without consulting memory or
+        prior emotion concepts. This is the "amygdala fast path":
+        the system-2 reasoning (LLM) is invoked when the system-1
+        (deterministic prototypes + RAG + interoception) cannot
+        produce a confident read.
+
+    Notes:
+        Injected into the owner. The concrete implementation lives in
+        a higher-level composition glue module that bridges to the LLM
+        gateway; this owner never imports the gateway directly (preserves
+        owner 02's no-LLM-dependency boundary). Returning `None` or an
+        empty dict means "LLM appraisal unavailable" (gateway down,
+        timeout, refusal), in which case the owner falls back to
+        Layer 1's best-effort read (R40 + R-PROTO-LEARN.6 + .1).
+    """
+
+    def llm_appraise(
+        self, content: str
+    ) -> "Mapping[str, float] | None":
+        """Return LLM-appraised 5-dim scores for `content`, or `None` if unavailable.
+
+        The returned dict may have any subset of the 5 keys; missing
+        keys are filled with the Layer 1 fallback value. Out-of-range
+        values are clamped by the owner. The implementation is
+        expected to be cheap (one LLM call) and synchronous.
+        """
+
+
+# R-PROTO-LEARN.2 (Layer 2 trigger heuristic): when Layer 1's best
+# confidence is below this threshold, the owner asks the LLM source
+# for a fresh appraisal. The default 0.4 was chosen empirically: R40
+# prototypes for ZH yield 0.5-0.9 cosine on clearly-threat stimuli,
+# but 0.0-0.3 on ambiguous ones, so 0.4 is a conservative cut
+# (Layer 2 fires only when Layer 1 is uncertain).
+R_PROTO_LEARN_2_DEFAULT_LLM_TRIGGER_THRESHOLD: float = 0.4
+
+
 @dataclass(frozen=True)
 class RapidDimensionEstimate:
     """Owner: rapid salience appraisal.
@@ -618,6 +664,31 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     # bounded (single-tick per-channel cap ≤ 0.10 per the R98 magnitude
     # cap convention).
     interoception_gain: float = 0.1
+    # R-PROTO-LEARN.2 (Layer 2 LLM-driven appraisal, the "amygdala
+    # fast path"): when Layer 1's best confidence is below
+    # `llm_appraisal_threshold`, the owner consults an injected
+    # `llm_appraisal_source` for a fresh 5-dim read. A `None` source
+    # means no Layer 2 path; the owner then falls back to Layer 1
+    # only. This is a per-tick opt-in (the trigger heuristic is
+    # owner-internal; the LLM call is delegated to the injected
+    # source, preserving owner 02's no-LLM-dependency boundary).
+    llm_appraisal_source: LlmAppraisalSource | None = None
+    # Layer 2 trigger threshold: the Layer 1 max-of-three confidence
+    # must be below this for the LLM to be consulted. Default 0.4
+    # matches `R_PROTO_LEARN_2_DEFAULT_LLM_TRIGGER_THRESHOLD` and
+    # is the empirical boundary between "confident R40 + R97/R98
+    # read" (≥ 0.4) and "ambiguous, ask the LLM" (< 0.4). Set to
+    # 0.0 to disable Layer 2 firing (R40 byte-level preservation
+    # on the appraisal axis); set to 1.0 to always fire (Layer 2
+    # dominates Layer 1).
+    llm_appraisal_threshold: float = R_PROTO_LEARN_2_DEFAULT_LLM_TRIGGER_THRESHOLD
+    # Layer 2 confidence blending: when Layer 2 fires, the final
+    # estimate is `blend_alpha * layer_1 + (1 - blend_alpha) * layer_2`.
+    # Default 0.5 = equal weight. 1.0 = Layer 1 dominates (LLM is a
+    # tie-breaker); 0.0 = Layer 2 dominates (LLM overrides R40).
+    # The default keeps both layers' contributions visible, which
+    # is the conservative ship for R-PROTO-LEARN.2.
+    llm_appraisal_blend_alpha: float = 0.5
 
     def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
         """Owner: rapid salience appraisal.
@@ -745,7 +816,18 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         # strictly tied to "what the input actually was" rather than
         # the body's amplification).
         adjusted = self._apply_interoception(estimate)
-        return adjusted
+        # R-PROTO-LEARN.2 (Layer 2 LLM appraisal, "amygdala fast path"):
+        # when Layer 1's best confidence is below the configured
+        # threshold AND an LLM source is injected, consult the LLM
+        # and blend its read with the Layer 1 read. The pre-bias
+        # `estimate` is the Layer 1 base; the post-bias `adjusted`
+        # is the body-modulated Layer 1 read. The LLM output
+        # represents the system-2 / LLM-driven "what does this
+        # actually feel like" read; the blend keeps both layers
+        # in play by default. Returns a NEW `RapidDimensionEstimate`;
+        # the inputs are not mutated.
+        blended = self._apply_llm_appraisal(stimulus, adjusted)
+        return blended
 
     # --------------------------------------------------------------------- #
     # R-PROTO-LEARN.5 public surface: observation + distribution read-back. #
@@ -854,6 +936,103 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         Returns a NEW `RapidDimensionEstimate`; the input is not mutated.
         """
         return self._apply_interoception(estimate)
+
+    # --------------------------------------------------------------------- #
+    # R-PROTO-LEARN.2 public surface: LLM appraisal fallback.              #
+    # --------------------------------------------------------------------- #
+
+    def _layer1_confidence(self, estimate: RapidDimensionEstimate) -> float:
+        """Owner-internal: compute Layer 1's best-confidence scalar from `estimate`.
+
+        The confidence is the maximum dimension value. This is a
+        coarse signal (R40 + R97/R98 + R-PROTO-LEARN.6 + .1's
+        evidence) — a stimulus with any dimension scoring ≥
+        `llm_appraisal_threshold` is considered "Layer 1 is
+        confident enough; do not bother the LLM".
+
+        Notes:
+            The 0.4 default threshold is empirically calibrated for
+            ZH threat stimuli (R40 + R97 ZH anchors score 0.5-0.9
+            on clear threats, 0.0-0.3 on ambiguous). EN may differ;
+            deployments can tune the threshold without touching
+            owner-internal logic.
+        """
+        return max(
+            estimate.threat,
+            estimate.reward,
+            estimate.novelty,
+            estimate.uncertainty,
+            estimate.social,
+        )
+
+    def _apply_llm_appraisal(
+        self, stimulus: Stimulus, layer1: RapidDimensionEstimate
+    ) -> RapidDimensionEstimate:
+        """Owner-internal: consult the LLM source when Layer 1 is uncertain.
+
+        Trigger condition: `layer1`'s best confidence is below
+        `llm_appraisal_threshold` AND `llm_appraisal_source` is not
+        `None`. When the LLM is consulted, its 5-dim read is blended
+        with `layer1` via `llm_appraisal_blend_alpha`:
+
+            final = alpha * layer1 + (1 - alpha) * llm_read
+
+        Each dimension is filled by the LLM read if the LLM provides
+        the key, otherwise the Layer 1 value is used. All values
+        are clamped to `[0, 1]` and rounded to 4 decimal places.
+
+        Returns a NEW `RapidDimensionEstimate`; inputs are not mutated.
+        When the LLM source is unavailable / returns `None` / returns
+        an empty dict, `layer1` is returned unchanged (Layer 1 only).
+        """
+        if self.llm_appraisal_source is None:
+            return layer1
+        confidence = self._layer1_confidence(layer1)
+        if confidence >= self.llm_appraisal_threshold:
+            return layer1
+        content = getattr(stimulus, "content", None) or ""
+        if not content:
+            return layer1
+        llm_read = self.llm_appraisal_source.llm_appraise(content)
+        if not llm_read:
+            return layer1
+        alpha = self.llm_appraisal_blend_alpha
+        return RapidDimensionEstimate(
+            threat=self._blend_dim("threat", layer1, llm_read, alpha),
+            reward=self._blend_dim("reward", layer1, llm_read, alpha),
+            novelty=self._blend_dim("novelty", layer1, llm_read, alpha),
+            uncertainty=self._blend_dim("uncertainty", layer1, llm_read, alpha),
+            social=self._blend_dim("social", layer1, llm_read, alpha),
+        )
+
+    def _blend_dim(
+        self,
+        dim: str,
+        layer1: RapidDimensionEstimate,
+        llm_read: "Mapping[str, float]",
+        alpha: float,
+    ) -> float:
+        """Owner-internal helper: blend one dimension, clamp + round."""
+        layer1_val = getattr(layer1, dim)
+        llm_val = llm_read.get(dim, layer1_val)
+        try:
+            llm_val = float(llm_val)
+        except (TypeError, ValueError):
+            llm_val = layer1_val
+        blended = alpha * layer1_val + (1.0 - alpha) * llm_val
+        return round(min(1.0, max(0.0, blended)), 4)
+
+    def llm_appraisal_blend(
+        self, stimulus: Stimulus, layer1: RapidDimensionEstimate
+    ) -> RapidDimensionEstimate:
+        """Public surface: re-run the Layer 2 LLM blend for an external stimulus + Layer 1 read.
+
+        Returns a NEW `RapidDimensionEstimate`; the inputs are not mutated.
+        The LLM is only consulted when `layer1`'s best confidence is
+        below `llm_appraisal_threshold` (same trigger as the inline
+        path in `estimate_dimensions`).
+        """
+        return self._apply_llm_appraisal(stimulus, layer1)
 
     def observe(self, observation: "Mapping[str, float]") -> None:
         """Public surface: explicit Bayesian update with caller-supplied observation.
