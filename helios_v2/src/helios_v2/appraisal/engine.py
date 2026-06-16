@@ -42,6 +42,34 @@ if TYPE_CHECKING:
     from .concept_state import ConceptPrior, DEFAULT_CONCEPTS as _DEFAULT_CONCEPTS, EmotionConcept
 
 
+@runtime_checkable
+class InteroceptionSource(Protocol):
+    """Owner: rapid salience appraisal (R-PROTO-LEARN.1).
+
+    Purpose:
+        Provide a hormone-state-derived interoception snapshot for appraisal
+        adjustment. R36 already maps appraisal -> hormone (one direction);
+        R-PROTO-LEARN.1 closes the OTHER direction by feeding the current
+        hormone state back into appraisal (the body-as-context reading).
+        This mirrors the cortical-amygdalar feedback loop: the amygdala's
+        salience read is partly informed by current body state, not only
+        by external stimulus features.
+
+    Notes:
+        Injected into the owner. The concrete source (composition glue)
+        reaches the neuromodulator owner; this owner never imports it.
+        Returning `None` means "no interoception data available" (cold
+        start or non-running neuromodulator subsystem), in which case
+        the appraisal falls back to stimulus-only scoring.
+    """
+
+    def hormone_state_snapshot(self) -> "Mapping[str, float] | None":
+        """Return the current 9-channel hormone state as `{channel: value}` in [0, 1].
+
+        Returns `None` if no hormone state is available (cold start).
+        """
+
+
 def _resolve_default_concepts() -> tuple["EmotionConcept", ...]:  # pragma: no cover - trivial
     """Lazy import of DEFAULT_CONCEPTS to break engine <-> concept_state cycle."""
     from .concept_state import DEFAULT_CONCEPTS as _CATALOG
@@ -573,6 +601,23 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     # Bayesian learning rate (multiplier on observation weight). 1.0 = full
     # learning; 0.0 = effectively disabled. Tunable per deployment.
     concept_learning_rate: float = 1.0
+    # R-PROTO-LEARN.1 (Layer 1 interoception, Active Inference):
+    # the appraisal owner reads the current hormone state via an injected
+    # `interoception_source` and applies a bounded bias to the output.
+    # R36 already maps appraisal -> hormone (this owner is the consumer
+    # there); R-PROTO-LEARN.1 closes the OTHER direction (hormone -> appraisal).
+    # This is the cortical-amygdalar feedback loop: the amygdala's
+    # salience read is partly informed by current body state, not only by
+    # external stimulus features. A `None` source means no interoception
+    # path (cold start or non-running neuromodulator subsystem); the
+    # appraisal then falls back to stimulus-only scoring (R40 path).
+    interoception_source: InteroceptionSource | None = None
+    # Interoception gain: scales the hormone-derived bias. 0.0 = disabled
+    # (R40 byte-level preservation on interoception axis); 1.0 = full
+    # effect per the mapping table. Default 0.1 keeps the influence
+    # bounded (single-tick per-channel cap ≤ 0.10 per the R98 magnitude
+    # cap convention).
+    interoception_gain: float = 0.1
 
     def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
         """Owner: rapid salience appraisal.
@@ -689,7 +734,18 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         # proportional to the magnitude of the corresponding dimension.
         # Updates are no-ops when both threat and reward are at/below 0.5.
         self._auto_observe(estimate)
-        return estimate
+        # R-PROTO-LEARN.1 (Layer 1 interoception, Active Inference):
+        # apply a bounded hormone-derived bias to the estimate. The
+        # bias is computed by `_apply_interoception` from the current
+        # hormone state via `interoception_source`. Returns a NEW
+        # `RapidDimensionEstimate` (the original is not mutated); the
+        # estimate passed to `_auto_observe` above is the pre-bias
+        # version (concept observation is driven by the stimulus-only
+        # read, not the body-modulated one — this keeps the prior
+        # strictly tied to "what the input actually was" rather than
+        # the body's amplification).
+        adjusted = self._apply_interoception(estimate)
+        return adjusted
 
     # --------------------------------------------------------------------- #
     # R-PROTO-LEARN.5 public surface: observation + distribution read-back. #
@@ -710,6 +766,94 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
             prior = self.concept_prior[0]
             new_prior = _bayesian_update(prior, observation)
             self.concept_prior[0] = new_prior
+
+    # --------------------------------------------------------------------- #
+    # R-PROTO-LEARN.1 public surface: interoception adjustment.            #
+    # --------------------------------------------------------------------- #
+
+    def _apply_interoception(
+        self, estimate: RapidDimensionEstimate
+    ) -> RapidDimensionEstimate:
+        """Owner-internal: apply a hormone-derived bias to `estimate`.
+
+        The bias mapping (first-version, R-PROTO-LEARN.1 ship):
+        - cortisol > 0.7 (high stress): threat += +0.05 * gain
+        - cortisol < 0.3 (low stress):  threat += -0.02 * gain
+        - oxytocin > 0.7 (high bond):   reward += +0.05 * gain
+        - oxytocin < 0.3 (low bond):    reward += -0.02 * gain
+        - serotonin > 0.7 (calm):       uncertainty += -0.03 * gain
+        - dopamine > 0.7 (high):        novelty += -0.03 * gain
+        - norepinephrine > 0.7 (alert): uncertainty += +0.04 * gain
+        - inhibition > 0.7 (gated):     novelty += +0.04 * gain
+
+        Each bias is clamped to the per-dimension `[0, 1]` range. The
+        final estimate is a NEW `RapidDimensionEstimate` (the input is
+        not mutated). When `interoception_source is None` or returns
+        `None`, the input is returned unchanged (cold-start semantics).
+
+        The mapping is heuristic (R-PROTO-LEARN.1 ship); a future P5
+        learning loop can replace it with a learned mapping. The
+        gain keeps the total per-tick influence bounded (default
+        0.1 * 0.05 = 0.005 per channel, well under the R98 ±0.10
+        per-tick cap).
+        """
+        if self.interoception_source is None or self.interoception_gain == 0.0:
+            return estimate
+        state = self.interoception_source.hormone_state_snapshot()
+        if state is None:
+            return estimate
+        gain = self.interoception_gain
+        threat = estimate.threat
+        reward = estimate.reward
+        novelty = estimate.novelty
+        uncertainty = estimate.uncertainty
+        social = estimate.social
+
+        cortisol = state.get("cortisol")
+        if cortisol is not None:
+            if cortisol > 0.7:
+                threat += 0.05 * gain
+            elif cortisol < 0.3:
+                threat -= 0.02 * gain
+        oxytocin = state.get("oxytocin")
+        if oxytocin is not None:
+            if oxytocin > 0.7:
+                reward += 0.05 * gain
+            elif oxytocin < 0.3:
+                reward -= 0.02 * gain
+        serotonin = state.get("serotonin")
+        if serotonin is not None and serotonin > 0.7:
+            uncertainty -= 0.03 * gain
+        dopamine = state.get("dopamine")
+        if dopamine is not None and dopamine > 0.7:
+            novelty -= 0.03 * gain
+        norepinephrine = state.get("norepinephrine")
+        if norepinephrine is not None and norepinephrine > 0.7:
+            uncertainty += 0.04 * gain
+        inhibition = state.get("inhibition")
+        if inhibition is not None and inhibition > 0.7:
+            novelty += 0.04 * gain
+
+        return RapidDimensionEstimate(
+            threat=round(min(1.0, max(0.0, threat)), 4),
+            reward=round(min(1.0, max(0.0, reward)), 4),
+            novelty=round(min(1.0, max(0.0, novelty)), 4),
+            uncertainty=round(min(1.0, max(0.0, uncertainty)), 4),
+            social=round(min(1.0, max(0.0, social)), 4),
+        )
+
+    def interoception_bias(
+        self, estimate: RapidDimensionEstimate
+    ) -> RapidDimensionEstimate:
+        """Public surface: apply the interoception adjustment to `estimate`.
+
+        Same as `_apply_interoception` but exposed for callers who want
+        to re-run the adjustment on an external estimate (e.g. a replayed
+        estimate from a saved batch).
+
+        Returns a NEW `RapidDimensionEstimate`; the input is not mutated.
+        """
+        return self._apply_interoception(estimate)
 
     def observe(self, observation: "Mapping[str, float]") -> None:
         """Public surface: explicit Bayesian update with caller-supplied observation.
