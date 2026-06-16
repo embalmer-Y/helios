@@ -29,6 +29,7 @@ from .contracts import (
     UpdateInteroceptiveFeelingOp,
     validate_internal_body_signal,
 )
+from .learning_path import P5FeelLearningPath
 
 
 def _validate_neuromodulator_state(state: NeuromodulatorState) -> None:
@@ -128,6 +129,7 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
     config: InteroceptiveFeelingConfig
     construction_path: FeelingConstructionPath
     dominant_dimension_reporter: DominantDimensionReporter
+    p5_feel_learner: P5FeelLearningPath | None = None
 
     def update_state(
         self,
@@ -135,6 +137,8 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
         internal_signals: tuple[Stimulus, ...] = (),
         tick_id: int | None = None,
         prior_state: InteroceptiveFeelingState | None = None,
+        llm_appraisal: tuple[float, ...] | None = None,
+        novelty: float = 0.0,
     ) -> InteroceptiveFeelingState:
         """Owner: interoceptive feeling layer.
 
@@ -144,7 +148,11 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
         Inputs:
             One `NeuromodulatorState`, optional body/interoceptive `Stimulus` values, an optional
             runtime tick id, and the optional prior-tick `InteroceptiveFeelingState` (`None` on a
-            cold start or for a stateless path).
+            cold start or for a stateless path). Optionally, an `llm_appraisal` 7-tuple and a
+            `novelty` float in `[0, 1]` for the P5-feel learning sidecar
+            (R-PROTO-LEARN.2 ground truth + R35/R40 appraisal novelty); when the
+            engine has a `p5_feel_learner`, these drive the per-tick learning
+            update. Both default to disabled.
 
         Returns:
             An `InteroceptiveFeelingState` containing the owner-produced dimensional feeling vector.
@@ -157,6 +165,14 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
             (or `None`) to the construction path. A stateless path ignores it; a dual-timescale
             persistence path uses it as the integrator's prior. Remaining unresolved feeling
             semantics stay inside the injected construction path.
+
+            The P5-feel learning sidecar is an opt-in parallel observer: it
+            runs after the construction path produces the canonical feeling
+            vector, but its outputs (learned W / bias / regime) are NOT
+            written back into the returned `InteroceptiveFeelingState`. The
+            sidecar exists so that owner 05 still owns the canonical
+            feeling, while P5-feel accumulates evidence that a later slice
+            can use to replace the hardcoded R36/R43 weights.
         """
 
         _validate_neuromodulator_state(neuromodulator_state)
@@ -170,6 +186,17 @@ class InteroceptiveFeelingEngine(InteroceptiveFeelingAPI):
             tick_id,
             prior_feeling,
         )
+        # P5-feel sidecar (opt-in): learn from the (hormone, LLM appraisal)
+        # pair WITHOUT perturbing the canonical feeling output. The sidecar
+        # is total and silent: a missing learner, a missing LLM appraisal,
+        # or an off-tick call all skip the update without raising.
+        if self.p5_feel_learner is not None:
+            self.p5_feel_learner.update(
+                neuromodulator_state,
+                llm_appraisal,
+                novelty,
+                tick_id,
+            )
         return InteroceptiveFeelingState(
             state_id=f"interoceptive-feeling-state:{neuromodulator_state.state_id}:{tick_id if tick_id is not None else 'na'}",
             source_neuromodulator_state_id=neuromodulator_state.state_id,
