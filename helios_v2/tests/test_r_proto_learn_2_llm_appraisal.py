@@ -353,12 +353,11 @@ def test_apply_llm_appraisal_partial_llm_coverage() -> None:
 
 def test_estimate_dimensions_auto_applies_layer2_when_trigger_fires() -> None:
     # With NO memory source and NO prototype hit, Layer 1 returns
-    # novelty=1.0 (no comparable memory) and uncertainty=1.0 (no
-    # comparable memory). max = 1.0 >= 0.4 -> Layer 1 IS confident
-    # ("the unknown is a confident read of 'novel'"). Layer 2 must
-    # NOT fire in this case. This is the R35/R39/R40 contract:
-    # novelty/uncertainty are themselves grounded in memory, and
-    # the absence of memory is a confident novelty read (1.0).
+    # threat=reward=social=0.0 (no prototypes, no social presence).
+    # After R-PROTO-LEARN.1+ refinement, the L2 trigger uses the
+    # max of the *content* dimensions (threat/reward/social) only,
+    # excluding novelty/uncertainty (which are evidence dims, not
+    # content reads). max(0, 0, 0) = 0.0 < 0.4 -> Layer 2 fires.
     log: list[str] = []
     stub = _StubLlmAppraisal(
         read={"threat": 0.0, "reward": 0.0, "novelty": 0.0, "social": 0.0, "uncertainty": 0.0},
@@ -366,10 +365,12 @@ def test_estimate_dimensions_auto_applies_layer2_when_trigger_fires() -> None:
     )
     est = _make_estimator(llm_appraisal_source=stub, llm_appraisal_threshold=0.4)
     out = est.estimate_dimensions(_stimulus("ambiguous visitor message"))
-    # LLM was NOT consulted (Layer 1 already confident via novelty=1.0).
-    assert log == []
-    # Final novelty = 1.0 (R35 path), not modified by LLM.
-    assert out.novelty == 1.0
+    # LLM WAS consulted (content confidence is 0.0, not confident).
+    assert log == ["ambiguous visitor message"]
+    # novelty blended: 0.5 * 1.0 (R35) + 0.5 * 0.0 (LLM) = 0.5
+    # (the LLM read overrides the "no memory" R35 prior because
+    # alpha=0.5; this is the conservative ship for R-PROTO-LEARN.2)
+    assert out.novelty == pytest.approx(0.5, rel=1e-3)
 
 
 def test_estimate_dimensions_layer2_fires_when_layer1_uniformly_low() -> None:
@@ -508,11 +509,19 @@ def test_layer1_confidence_helper() -> None:
     e = RapidDimensionEstimate(
         threat=0.1, reward=0.2, novelty=0.3, social=0.4, uncertainty=0.5
     )
-    assert est._layer1_confidence(e) == 0.5
+    # _layer1_confidence uses ONLY content dimensions
+    # (threat, reward, social) — not novelty/uncertainty. So the
+    # confidence is max(0.1, 0.2, 0.4) = 0.4, not 0.5.
+    assert est._layer1_confidence(e) == 0.4
     e2 = RapidDimensionEstimate(
         threat=0.9, reward=0.0, novelty=0.0, social=0.0, uncertainty=0.0
     )
     assert est._layer1_confidence(e2) == 0.9
+    # Novelty/uncertainty alone must NOT raise the confidence.
+    e3 = RapidDimensionEstimate(
+        threat=0.0, reward=0.0, novelty=1.0, social=0.0, uncertainty=1.0
+    )
+    assert est._layer1_confidence(e3) == 0.0
 
 
 def test_apply_llm_appraisal_empty_content_is_noop() -> None:

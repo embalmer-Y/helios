@@ -948,6 +948,18 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         # the pattern-completion path. Returns a NEW
         # `RapidDimensionEstimate`; the input is not mutated.
         recalled = self._apply_affect_memory(stimulus, surprised)
+        # R-PROTO-LEARN.5 (Layer 5 second observation): also run
+        # `_auto_observe` on the FINAL 6-layer read (post-L2 LLM +
+        # L3 surprise + L4 memory). This lets the concept prior
+        # accumulate the LLM's read of the content, the body
+        # bias, and the past-experience signal — i.e. the prior
+        # tracks the system's full appraisal of the input, not
+        # just the L1 stimulus-only read. The double-observation
+        # (once on L1, once on final) is bounded: L1 sees the
+        # raw stimulus; final sees the curated appraisal. Both
+        # are owned by the owner and update the same prior
+        # (their effects accumulate; the prior naturally averages).
+        self._auto_observe(recalled)
         return recalled
 
     # --------------------------------------------------------------------- #
@@ -1065,11 +1077,17 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     def _layer1_confidence(self, estimate: RapidDimensionEstimate) -> float:
         """Owner-internal: compute Layer 1's best-confidence scalar from `estimate`.
 
-        The confidence is the maximum dimension value. This is a
-        coarse signal (R40 + R97/R98 + R-PROTO-LEARN.6 + .1's
-        evidence) — a stimulus with any dimension scoring ≥
-        `llm_appraisal_threshold` is considered "Layer 1 is
-        confident enough; do not bother the LLM".
+        The confidence is the max of the "content" dimensions
+        (threat, reward, social) — the dimensions that represent
+        what the system actually thinks about the stimulus's
+        content. Novelty and uncertainty are *evidence* about
+        the appraisal (memory fact and retrieval ambiguity,
+        respectively), not the appraisal's content read; they
+        must NOT be allowed to mask an ambiguous content read
+        by always being high (e.g. `novelty = 1.0` for "no
+        memory" would falsely signal "Layer 1 is confident").
+        Excluding novelty/uncertainty makes the trigger a true
+        content-confidence check.
 
         Notes:
             The 0.4 default threshold is empirically calibrated for
@@ -1078,13 +1096,7 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
             deployments can tune the threshold without touching
             owner-internal logic.
         """
-        return max(
-            estimate.threat,
-            estimate.reward,
-            estimate.novelty,
-            estimate.uncertainty,
-            estimate.social,
-        )
+        return max(estimate.threat, estimate.reward, estimate.social)
 
     def _apply_llm_appraisal(
         self, stimulus: Stimulus, layer1: RapidDimensionEstimate
