@@ -55,12 +55,24 @@ from .post_llm_hormone_adjuster import (
     PostLLMHormoneAdjustment,
     PostLLMHormoneAdjuster,
 )
+from .concept_state import (
+    DEFAULT_CONCEPTS,
+    ConceptPrior,
+    EmotionConcept,
+    bayesian_update,
+    normalize,
+    observe_dimension,
+    top_concepts,
+)
 
 __all__ = [
     "AssessStimulusBatchOp",
+    "ConceptPrior",
     "DEFAULT_ANCHOR_CATALOG",
+    "DEFAULT_CONCEPTS",
     "AnchorCatalog",
     "AnchorSet",
+    "EmotionConcept",
     "GroundedDimensionEstimator",
     "MemoryGroundedDimensionEstimator",
     "MemorySimilaritySource",
@@ -79,4 +91,8 @@ __all__ = [
     "WeightedAggregateEstimator",
     "ZH_REWARD_ANCHORS",
     "ZH_THREAT_ANCHORS",
+    "bayesian_update",
+    "normalize",
+    "observe_dimension",
+    "top_concepts",
 ]

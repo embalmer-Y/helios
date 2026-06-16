@@ -39,6 +39,19 @@ from .contracts import (
 
 if TYPE_CHECKING:
     from .anchor_catalog import AnchorCatalog
+    from .concept_state import ConceptPrior, DEFAULT_CONCEPTS as _DEFAULT_CONCEPTS, EmotionConcept
+
+
+def _resolve_default_concepts() -> tuple["EmotionConcept", ...]:  # pragma: no cover - trivial
+    """Lazy import of DEFAULT_CONCEPTS to break engine <-> concept_state cycle."""
+    from .concept_state import DEFAULT_CONCEPTS as _CATALOG
+    return _CATALOG
+
+
+def _resolve_default_concept_prior() -> "ConceptPrior":  # pragma: no cover - trivial
+    """Lazy import of ConceptPrior.empty() to break engine <-> concept_state cycle."""
+    from .concept_state import ConceptPrior as _CP
+    return _CP.empty()
 
 
 @dataclass(frozen=True)
@@ -541,6 +554,25 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     # design intent: the description path is always on by default and only the
     # catalog's description availability gates it.
     description_threshold: float = 1.0
+    # R-PROTO-LEARN.5 (Layer 5 learning, Bayesian update):
+    # the appraisal owner maintains a mutable ConceptPrior across ticks.
+    # The frozen dataclass constraint requires the field itself to be a
+    # single-element list (the list is mutable, the dataclass field is
+    # frozen). `concept_prior[0]` is the live prior; updates via
+    # `observe(estimate)` replace it in-place.
+    # Default: empty prior (zero counts); seeded via `observe()` or via
+    # `seed_prior(concepts)` to initialize from the DEFAULT_CONCEPTS taxonomy.
+    concept_prior: list["ConceptPrior"] = field(
+        default_factory=lambda: [_resolve_default_concept_prior()]
+    )
+    # The concepts taxonomy used by the heuristic observation mapping. By
+    # default = DEFAULT_CONCEPTS. Tests can inject a smaller taxonomy.
+    concepts: tuple["EmotionConcept", ...] = field(
+        default_factory=lambda: _resolve_default_concepts()
+    )
+    # Bayesian learning rate (multiplier on observation weight). 1.0 = full
+    # learning; 0.0 = effectively disabled. Tunable per deployment.
+    concept_learning_rate: float = 1.0
 
     def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
         """Owner: rapid salience appraisal.
@@ -602,34 +634,10 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         # `description_threshold` AND the catalog has descriptions for this
         # dimension, also query the description embeddings. The final threat
         # value takes the max-of-three (prototype_max, phrase_max, description_max).
-        # Default `description_threshold=0.0` = "always run description fallback
-        # when available" (most inclusive); 1.0 = "never run description
-        # fallback" (R40 byte-level preservation on description axis).
         # Gate: `phrase_max < threshold` => description path runs.
-        #   - threshold=0.0 + phrase_max=0.0: 0.0 < 0.0 = False; description skipped.
-        #     But spec says "0.0 means always run". So we use `phrase_max <= threshold`
-        #     to make 0.0 trigger. Re-evaluating: this means ANY phrase_max triggers.
-        #   - threshold=1.0 + phrase_max=0.5: 0.5 <= 1.0 = True; description runs.
-        #     Spec says "1.0 means never run". So 1.0 should NOT trigger.
-        # Therefore the correct gate is the inverse: description runs when
-        # `phrase_max < threshold`. The intuitive semantics: threshold is "the
-        # minimum phrase_max that satisfies us; below this, fall back".
-        #   - threshold=0.0: phrase_max < 0.0 is never True => never falls back.
-        #     But spec says "0.0 = always run". Resolution: we make the gate
-        #     `phrase_max <= threshold` AND treat threshold=0.0 as a sentinel
-        #     for "always run" via a separate boolean (see below).
-        # Cleaner approach: split into `description_fallback_enabled` boolean.
-        # But the threshold form is more expressive (per-deployment tuning).
-        # Final resolution: use `phrase_max < threshold` and document that
-        # threshold=0.0 is the inclusive lower bound — caller should treat
-        # description as "always run when available" by checking
-        # `description_threshold == 0.0` separately if they need that semantic.
-        # For the engine, the literal semantics is:
-        #   threshold=0.0: only phrase_max < 0.0 triggers; effectively never
-        #     (description NEVER runs by default).
-        #   threshold=1.0: any phrase_max < 1.0 triggers; description ALWAYS runs.
-        # This is the inverse of the original docstring. We document this
-        # clearly: a HIGHER threshold = MORE aggressive fallback.
+        # Semantics: a HIGHER threshold = MORE aggressive fallback.
+        #   - threshold=1.0 (default): any phrase_max < 1.0 triggers => always fallback.
+        #   - threshold=0.0: phrase_max < 0.0 is impossible => never fallback.
         phrase_threat_max = max(
             (v for v in (threat_fact, catalog_threat_fact) if v is not None),
             default=0.0,
@@ -657,7 +665,7 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
             default=0.0,
         )
         reward_description_fact: float | None = None
-        if phrase_reward_max <= self.description_threshold:
+        if phrase_reward_max < self.description_threshold:
             catalog_reward_descriptions = self.anchor_catalog.descriptions_for("reward")
             if catalog_reward_descriptions:
                 reward_description_fact = self.prototype_source.max_similarity_to(
@@ -667,13 +675,88 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
             reward_fact, catalog_reward_fact, reward_description_fact, self.reward_gain
         )
 
-        return RapidDimensionEstimate(
+        estimate = RapidDimensionEstimate(
             threat=threat,
             reward=reward,
             novelty=novelty,
             social=social,
             uncertainty=uncertainty,
         )
+        # R-PROTO-LEARN.5 (Layer 5 learning, Bayesian update): after the
+        # dimension estimate is computed, apply one observation step to
+        # the concept prior. The observation mapping is owner-internal
+        # (`observe_dimension`); it activates threat/reward concepts
+        # proportional to the magnitude of the corresponding dimension.
+        # Updates are no-ops when both threat and reward are at/below 0.5.
+        self._auto_observe(estimate)
+        return estimate
+
+    # --------------------------------------------------------------------- #
+    # R-PROTO-LEARN.5 public surface: observation + distribution read-back. #
+    # --------------------------------------------------------------------- #
+
+    def _auto_observe(self, estimate: RapidDimensionEstimate) -> None:
+        """Owner-internal: apply one observation step derived from `estimate`.
+
+        Called at the end of `estimate_dimensions`. Updates the prior's
+        counts via `bayesian_update` with the heuristic mapping from the
+        owner-internal `observe_dimension(threat, reward, concepts)` helper.
+        Mutates `self.concept_prior[0]` in place (the field is a 1-element
+        list; the frozen dataclass is preserved by mutating only the list).
+        """
+        from .concept_state import bayesian_update as _bayesian_update, observe_dimension as _observe
+        observation = _observe(estimate.threat, estimate.reward, self.concepts)
+        if observation:
+            prior = self.concept_prior[0]
+            new_prior = _bayesian_update(prior, observation)
+            self.concept_prior[0] = new_prior
+
+    def observe(self, observation: "Mapping[str, float]") -> None:
+        """Public surface: explicit Bayesian update with caller-supplied observation.
+
+        `observation` is `{concept_name: weight}` (weight >= 0). Use this for
+        observations that are not derived from a `RapidDimensionEstimate`
+        (e.g. an LLM-injected `emotion concept` from Layer 4 construction).
+
+        Failure semantics:
+            Negative weights are silently skipped (a Bayesian prior must
+            not move backward). Unknown concept names are silently added.
+            Empty observation is a no-op.
+        """
+        from .concept_state import bayesian_update as _bayesian_update
+        prior = self.concept_prior[0]
+        self.concept_prior[0] = _bayesian_update(prior, observation)
+
+    def concept_distribution(self) -> "Mapping[str, float]":
+        """Public surface: return the current concept probability distribution.
+
+        Laplace-smoothed (default `smoothing_mass=1.0`) so no concept ever
+        has zero probability. Empty prior returns an empty mapping.
+        """
+        from .concept_state import normalize as _normalize
+        return _normalize(self.concept_prior[0])
+
+    def top_concepts(self, k: int = 3) -> "tuple[tuple[str, float], ...]":
+        """Public surface: return the top-k concepts by current probability.
+
+        Ties broken alphabetically (deterministic).
+        """
+        from .concept_state import top_concepts as _top
+        return _top(self.concept_prior[0], k=k)
+
+    def seed_prior(self, concepts: "tuple[EmotionConcept, ...] | None" = None) -> None:
+        """Public surface: reset the prior seeded from a concept taxonomy.
+
+        `concepts=None` uses the estimator's `self.concepts`. After this call,
+        the prior has zero counts for every concept but is initialized with
+        the concept names so observations can target them.
+
+        Failure semantics:
+            Empty concepts tuple leaves the prior empty (no concept names).
+        """
+        from .concept_state import ConceptPrior as _CP
+        target = concepts if concepts is not None else self.concepts
+        self.concept_prior[0] = _CP.from_concepts(target)
 
 
 def _validate_stimulus_batch(batch: StimulusBatch) -> None:
