@@ -168,6 +168,49 @@ class PredictionSource(Protocol):
 R_PROTO_LEARN_3_DEFAULT_SURPRISE_GAIN: float = 0.3
 
 
+@runtime_checkable
+class AffectMemoryRecallSource(Protocol):
+    """Owner: rapid salience appraisal (R-PROTO-LEARN.4).
+
+    Purpose:
+        Provide a Layer 4 affect-memory read: the historical
+        affect summary (mean threat/reward across past experiences
+        with similar content) for the current stimulus. The owner
+        uses this as an additional grounding signal: if past
+        experience consistently scored similar stimuli as
+        threatening, the current stimulus is also biased toward
+        threat. This is the "pattern completion" path: the
+        appraisal is informed by what the system has LEARNED
+        about similar inputs, not just by static prototypes
+        (Layer 1) or LLM opinion (Layer 2) or predictions (Layer 3).
+
+    Notes:
+        Injected into the owner. The concrete implementation
+        reads from R85 memory (or a successor). The
+        `recalled_threat` and `recalled_reward` are means over
+        the top-K most similar past experience records; both
+        must be in `[0, 1]`. Returning `(None, None)` means "no
+        past experience found" (cold start or first-ever tick);
+        the owner then returns the input unchanged.
+    """
+
+    def recall_affect(
+        self, content: str
+    ) -> "tuple[float | None, float | None]":
+        """Return `(recalled_threat, recalled_reward)` for `content`, or `(None, None)` if no past data."""
+
+
+# R-PROTO-LEARN.4 (Layer 4 affect-memory gain): when past experience
+# is available, the owner adds a bounded blend toward the recalled
+# affect. 0.0 = disabled (R40 byte-level preservation on the
+# affect-memory axis); 1.0 = full override (recalled affect is
+# the entire signal). Default 0.2 keeps the per-tick influence
+# bounded (≤ 0.2 * 1.0 = 0.2 per tick, within the R98 ±0.10 cap
+# when the recall is mild). This is the conservative ship for
+# R-PROTO-LEARN.4; deployments can tune per workload.
+R_PROTO_LEARN_4_DEFAULT_AFFECT_MEMORY_GAIN: float = 0.2
+
+
 @dataclass(frozen=True)
 class RapidDimensionEstimate:
     """Owner: rapid salience appraisal.
@@ -739,6 +782,18 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     # (R40 byte-level preservation on the surprise axis); 1.0 = full
     # surprise. Default 0.3 keeps the per-tick influence bounded.
     surprise_gain: float = R_PROTO_LEARN_3_DEFAULT_SURPRISE_GAIN
+    # R-PROTO-LEARN.4 (Layer 4 Pattern Completion, R85 affect-memory):
+    # the owner consults an injected `affect_memory_source` for
+    # historical affect on similar content. The recalled affect
+    # blends into the final threat and reward dimensions. A `None`
+    # source means no Layer 4 path; the owner then returns the
+    # Layer 1+2+3 read unchanged.
+    affect_memory_source: AffectMemoryRecallSource | None = None
+    # Affect-memory gain: scales the recall blend. 0.0 = disabled
+    # (R40 byte-level preservation on the affect-memory axis); 1.0
+    # = full override. Default 0.2 keeps the per-tick influence
+    # bounded.
+    affect_memory_gain: float = R_PROTO_LEARN_4_DEFAULT_AFFECT_MEMORY_GAIN
 
     def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
         """Owner: rapid salience appraisal.
@@ -885,7 +940,15 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         # the per-dimension `[0, 1]` range. Returns a NEW
         # `RapidDimensionEstimate`; the input is not mutated.
         surprised = self._apply_predictive_coding(stimulus, blended)
-        return surprised
+        # R-PROTO-LEARN.4 (Layer 4 Pattern Completion, R85 affect-memory):
+        # consult the past-experience affect recall and blend its
+        # threat/reward means into the final estimate. The recall
+        # is a "what the system has LEARNED about similar inputs"
+        # signal; blending it into the appraisal is the core of
+        # the pattern-completion path. Returns a NEW
+        # `RapidDimensionEstimate`; the input is not mutated.
+        recalled = self._apply_affect_memory(stimulus, surprised)
+        return recalled
 
     # --------------------------------------------------------------------- #
     # R-PROTO-LEARN.5 public surface: observation + distribution read-back. #
@@ -1171,6 +1234,81 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         path in `estimate_dimensions`).
         """
         return self._apply_predictive_coding(stimulus, actual)
+
+    # --------------------------------------------------------------------- #
+    # R-PROTO-LEARN.4 public surface: affect-memory pattern completion.    #
+    # --------------------------------------------------------------------- #
+
+    def _apply_affect_memory(
+        self,
+        stimulus: Stimulus,
+        actual: RapidDimensionEstimate,
+    ) -> RapidDimensionEstimate:
+        """Owner-internal: blend past-experience affect into `actual`.
+
+        The blend is per-dimension: the recalled threat mean is
+        blended into the actual threat, the recalled reward mean
+        into the actual reward. Other dimensions (novelty, social,
+        uncertainty) are unchanged (the recall is a "what we felt
+        about similar inputs" signal, not a surprise/confidence
+        read). The blend formula is:
+
+            final_dim = (1 - gain) * actual_dim + gain * recalled_dim
+
+        This is symmetric: gain=0 -> no-op (R40 byte-level
+        preservation), gain=1 -> recall overrides actual. The
+        default 0.2 keeps the per-tick influence bounded.
+
+        Returns a NEW `RapidDimensionEstimate`; the input is not
+        mutated. When the source is `None` / `gain == 0.0` / the
+        source returns `(None, None)` / the content is empty, the
+        input is returned unchanged.
+        """
+        if self.affect_memory_source is None or self.affect_memory_gain == 0.0:
+            return actual
+        content = getattr(stimulus, "content", None) or ""
+        if not content:
+            return actual
+        recalled = self.affect_memory_source.recall_affect(content)
+        if recalled == (None, None):
+            return actual
+        recalled_threat, recalled_reward = recalled
+        gain = self.affect_memory_gain
+        threat = actual.threat
+        reward = actual.reward
+        if recalled_threat is not None:
+            try:
+                rt = max(0.0, min(1.0, float(recalled_threat)))
+            except (TypeError, ValueError):
+                rt = actual.threat
+            threat = (1.0 - gain) * actual.threat + gain * rt
+        if recalled_reward is not None:
+            try:
+                rr = max(0.0, min(1.0, float(recalled_reward)))
+            except (TypeError, ValueError):
+                rr = actual.reward
+            reward = (1.0 - gain) * actual.reward + gain * rr
+        return RapidDimensionEstimate(
+            threat=round(min(1.0, max(0.0, threat)), 4),
+            reward=round(min(1.0, max(0.0, reward)), 4),
+            novelty=actual.novelty,
+            social=actual.social,
+            uncertainty=actual.uncertainty,
+        )
+
+    def affect_memory_recall(
+        self,
+        stimulus: Stimulus,
+        actual: RapidDimensionEstimate,
+    ) -> RapidDimensionEstimate:
+        """Public surface: re-run the Layer 4 affect-memory blend for an external stimulus + actual read.
+
+        Returns a NEW `RapidDimensionEstimate`; the inputs are not mutated.
+        The recall is only consulted when the source is configured and
+        the content is non-empty (same conditions as the inline path
+        in `estimate_dimensions`).
+        """
+        return self._apply_affect_memory(stimulus, actual)
 
     def observe(self, observation: "Mapping[str, float]") -> None:
         """Public surface: explicit Bayesian update with caller-supplied observation.
