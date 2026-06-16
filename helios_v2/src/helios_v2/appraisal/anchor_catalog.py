@@ -54,10 +54,21 @@ class AnchorSet:
         pure-data substrate: it knows the phrases and the label, not the salience
         meaning.
 
+        `description` (R-PROTO-LEARN.6, Layer 1 fallback): a parallel tuple of
+        LLM-friendly descriptions, one per phrase. When `phrases` themselves score
+        below the `description_threshold` against an input, the owner falls back to
+        the description embeddings. This implements the EmoGist (arXiv:2505.14660)
+        context-dependent retrieval idea at the catalog layer: a phrase like
+        "胸口闷得慌" may not appear verbatim, but its description "internalized
+        anxiety manifested as chest pressure" should match a similar input.
+        `description` defaults to `()` (no description fallback) so that all
+        pre-R-PROTO-LEARN.6 AnchorSet callers remain byte-level compatible.
+
     Failure semantics:
         Construction fails fast on empty `phrases`. The `language` and `dimension`
         fields are free-form strings; the owner is responsible for any further validation
-        (e.g. `dimension in {"threat", "reward"}`).
+        (e.g. `dimension in {"threat", "reward"}`). When `description` is non-empty,
+        it must have the same length as `phrases` (1:1 correspondence by index).
 
     Notes:
         Frozen: the catalog is immutable once constructed. A future P5 learned catalog
@@ -68,6 +79,7 @@ class AnchorSet:
     language: str
     dimension: str
     phrases: tuple[str, ...]
+    description: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.phrases:
@@ -80,6 +92,18 @@ class AnchorSet:
                 raise ValueError(
                     f"AnchorSet phrases must be non-empty strings, got {phrase!r}"
                 )
+        if self.description:
+            if len(self.description) != len(self.phrases):
+                raise ValueError(
+                    f"AnchorSet(language={self.language!r}, dimension={self.dimension!r}) "
+                    f"`description` length ({len(self.description)}) must match `phrases` "
+                    f"length ({len(self.phrases)})"
+                )
+            for desc in self.description:
+                if not isinstance(desc, str) or not desc.strip():
+                    raise ValueError(
+                        f"AnchorSet description entries must be non-empty strings, got {desc!r}"
+                    )
 
 
 @dataclass(frozen=True)
@@ -141,6 +165,21 @@ class AnchorCatalog:
                 seen.append(s.language)
         return tuple(seen)
 
+    def descriptions_for(self, dimension: str) -> tuple[str, ...]:
+        """Return the union of description entries across all sets of the given dimension.
+
+        R-PROTO-LEARN.6 (Layer 1 fallback, EmoGist context-dependent retrieval):
+        parallel to `phrases_for(dimension)`, but returns the description strings
+        instead of the phrase strings. Sets that declare `description=()` contribute
+        nothing. Empty tuple = no description fallback available for this dimension.
+        """
+        return tuple(
+            desc
+            for anchor_set in self.sets
+            if anchor_set.dimension == dimension
+            for desc in anchor_set.description
+        )
+
 
 # --------------------------------------------------------------------------- #
 # First-version Chinese threat / reward anchors (R97).                        #
@@ -174,12 +213,40 @@ ZH_THREAT_ANCHORS: tuple[str, ...] = (
     "我发高烧很难受",
     "家里静得让人害怕",
 )
+# R-PROTO-LEARN.6 (Layer 1 fallback, EmoGist context-dependent retrieval):
+# description tuple parallel to ZH_THREAT_ANCHORS (1:1 by index). These are
+# LLM-friendly paraphrases that better capture the affective meaning, so when
+# the surface phrase itself scores low against a novel input (e.g. "胸口闷得
+# 慌"), the description can still match via semantic embedding. Hand-authored;
+# grounding is `C_engineering_hypothesis` (placeholder, same level as phrases).
+ZH_THREAT_DESCRIPTIONS: tuple[str, ...] = (
+    "active hostility directed at me, feeling of being under attack",
+    "an imminent danger approaching me from outside",
+    "an overwhelming acute fear response, panic-like arousal",
+    "anticipated serious physical or psychological harm",
+    "an emergency situation unfolding right now requiring urgent action",
+    # R98 Set A descriptions (DSM-5/ICD-11 somatic symptoms of anxiety/depression)
+    "tachycardia and palpitations, acute autonomic arousal from anxiety",
+    "prolonged insomnia, inability to fall asleep, restless wakefulness",
+    "palmar hyperhidrosis and tremor, somatic anxiety manifestation",
+    "racing thoughts, intrusive cognitions, mental restlessness",
+    "high fever and physical discomfort, body in acute distress",
+    "loneliness and isolation, ambient silence triggering fear",
+)
 ZH_REWARD_ANCHORS: tuple[str, ...] = (
     "我感到非常喜悦",
     "这是值得庆祝的成就",
     "我获得了渴望的东西",
     "我感到被深深地爱",
     "这是有意义的成功",
+)
+# R-PROTO-LEARN.6 (Layer 1 fallback): description parallel to ZH_REWARD_ANCHORS.
+ZH_REWARD_DESCRIPTIONS: tuple[str, ...] = (
+    "an acute joy or happiness, positive emotional peak",
+    "a celebrated achievement, sense of accomplishment",
+    "the acquisition of a strongly desired object or goal",
+    "deep feeling of being loved, secure attachment activation",
+    "a meaningful success, purpose-aligned accomplishment",
 )
 
 
@@ -199,12 +266,23 @@ def _build_default_catalog() -> AnchorCatalog:
     from .engine import REWARD_PROTOTYPES as _EN_REWARD, THREAT_PROTOTYPES as _EN_THREAT
     return AnchorCatalog(
         sets=(
-            AnchorSet(language="zh", dimension="threat", phrases=ZH_THREAT_ANCHORS),
-            AnchorSet(language="zh", dimension="reward", phrases=ZH_REWARD_ANCHORS),
+            AnchorSet(
+                language="zh",
+                dimension="threat",
+                phrases=ZH_THREAT_ANCHORS,
+                description=ZH_THREAT_DESCRIPTIONS,
+            ),
+            AnchorSet(
+                language="zh",
+                dimension="reward",
+                phrases=ZH_REWARD_ANCHORS,
+                description=ZH_REWARD_DESCRIPTIONS,
+            ),
             # EN aliases — these are the same tuple objects as the R40 module
             # constants, so editing `THREAT_PROTOTYPES` / `REWARD_PROTOTYPES` in
             # `appraisal.engine` automatically propagates to the catalog without
             # any data drift. (The R40 path remains the canonical English source.)
+            # No description on EN sets: keeps R40 byte-level preservation.
             AnchorSet(language="en", dimension="threat", phrases=_EN_THREAT),
             AnchorSet(language="en", dimension="reward", phrases=_EN_REWARD),
         )

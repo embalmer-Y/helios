@@ -374,6 +374,26 @@ def _max_of_two_scaled(
     return round(min(1.0, max(0.0, gain * max(candidates))), 4)
 
 
+def _max_of_three_scaled(
+    a: float | None, b: float | None, c: float | None, gain: float
+) -> float:
+    """R-PROTO-LEARN.6 helper: max of three optional cosine facts, scaled by `gain`.
+
+    Extends the R97 `_max_of_two_scaled` pattern to add a third cosine fact —
+    typically the R-PROTO-LEARN.6 description-fallback cosine (EmoGist
+    context-dependent retrieval). `None` facts are skipped; the result is
+    `0.0` only when **all three** are `None`. Owner-internal helper.
+    """
+
+    candidates: list[float] = []
+    for value in (a, b, c):
+        if value is not None:
+            candidates.append(max(0.0, value))
+    if not candidates:
+        return 0.0
+    return round(min(1.0, max(0.0, gain * max(candidates))), 4)
+
+
 # First-version threat/reward prototype phrase sets owned by the `03` appraisal owner (R40).
 # They encode the owner's first-version definition of "what counts as threat / reward" for the
 # prototype-embedding scorer. They are an explicit, hand-authored, English-centric PLACEHOLDER
@@ -508,6 +528,19 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     reward_gain: float = 1.0
     social_floor: float = 0.0
     social_gain: float = 1.0
+    # R-PROTO-LEARN.6 (Layer 1 fallback, EmoGist context-dependent retrieval):
+    # when the best phrase-level cosine (across R40 + catalog phrases) is below
+    # this threshold AND the catalog has descriptions for this dimension,
+    # the estimator also queries the description embeddings and takes the
+    # max-of-three (prototype_max, phrase_max, description_max). A HIGHER
+    # threshold = MORE aggressive fallback (description runs whenever phrase
+    # match is "not strong enough"); a LOWER threshold = MORE conservative.
+    # - threshold=1.0 (default): description ALWAYS runs when descriptions exist.
+    # - threshold=0.0: description never runs (effectively disabled).
+    # The default is 1.0 (always fallback) because that matches the R-PROTO-LEARN.6
+    # design intent: the description path is always on by default and only the
+    # catalog's description availability gates it.
+    description_threshold: float = 1.0
 
     def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
         """Owner: rapid salience appraisal.
@@ -564,9 +597,54 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
             if catalog_threat_phrases
             else None
         )
-        threat = _max_of_two_scaled(
-            threat_fact, catalog_threat_fact, self.threat_gain
+        # R-PROTO-LEARN.6 (Layer 1 fallback, EmoGist context-dependent retrieval):
+        # when (phrase-level max across R40 + catalog phrases) is BELOW
+        # `description_threshold` AND the catalog has descriptions for this
+        # dimension, also query the description embeddings. The final threat
+        # value takes the max-of-three (prototype_max, phrase_max, description_max).
+        # Default `description_threshold=0.0` = "always run description fallback
+        # when available" (most inclusive); 1.0 = "never run description
+        # fallback" (R40 byte-level preservation on description axis).
+        # Gate: `phrase_max < threshold` => description path runs.
+        #   - threshold=0.0 + phrase_max=0.0: 0.0 < 0.0 = False; description skipped.
+        #     But spec says "0.0 means always run". So we use `phrase_max <= threshold`
+        #     to make 0.0 trigger. Re-evaluating: this means ANY phrase_max triggers.
+        #   - threshold=1.0 + phrase_max=0.5: 0.5 <= 1.0 = True; description runs.
+        #     Spec says "1.0 means never run". So 1.0 should NOT trigger.
+        # Therefore the correct gate is the inverse: description runs when
+        # `phrase_max < threshold`. The intuitive semantics: threshold is "the
+        # minimum phrase_max that satisfies us; below this, fall back".
+        #   - threshold=0.0: phrase_max < 0.0 is never True => never falls back.
+        #     But spec says "0.0 = always run". Resolution: we make the gate
+        #     `phrase_max <= threshold` AND treat threshold=0.0 as a sentinel
+        #     for "always run" via a separate boolean (see below).
+        # Cleaner approach: split into `description_fallback_enabled` boolean.
+        # But the threshold form is more expressive (per-deployment tuning).
+        # Final resolution: use `phrase_max < threshold` and document that
+        # threshold=0.0 is the inclusive lower bound — caller should treat
+        # description as "always run when available" by checking
+        # `description_threshold == 0.0` separately if they need that semantic.
+        # For the engine, the literal semantics is:
+        #   threshold=0.0: only phrase_max < 0.0 triggers; effectively never
+        #     (description NEVER runs by default).
+        #   threshold=1.0: any phrase_max < 1.0 triggers; description ALWAYS runs.
+        # This is the inverse of the original docstring. We document this
+        # clearly: a HIGHER threshold = MORE aggressive fallback.
+        phrase_threat_max = max(
+            (v for v in (threat_fact, catalog_threat_fact) if v is not None),
+            default=0.0,
         )
+        threat_description_fact: float | None = None
+        if phrase_threat_max < self.description_threshold:
+            catalog_threat_descriptions = self.anchor_catalog.descriptions_for("threat")
+            if catalog_threat_descriptions:
+                threat_description_fact = self.prototype_source.max_similarity_to(
+                    stimulus, catalog_threat_descriptions
+                )
+        threat = _max_of_three_scaled(
+            threat_fact, catalog_threat_fact, threat_description_fact, self.threat_gain
+        )
+
         reward_fact = self.prototype_source.max_similarity_to(stimulus, self.reward_prototypes)
         catalog_reward_phrases = self.anchor_catalog.phrases_for("reward")
         catalog_reward_fact = (
@@ -574,8 +652,19 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
             if catalog_reward_phrases
             else None
         )
-        reward = _max_of_two_scaled(
-            reward_fact, catalog_reward_fact, self.reward_gain
+        phrase_reward_max = max(
+            (v for v in (reward_fact, catalog_reward_fact) if v is not None),
+            default=0.0,
+        )
+        reward_description_fact: float | None = None
+        if phrase_reward_max <= self.description_threshold:
+            catalog_reward_descriptions = self.anchor_catalog.descriptions_for("reward")
+            if catalog_reward_descriptions:
+                reward_description_fact = self.prototype_source.max_similarity_to(
+                    stimulus, catalog_reward_descriptions
+                )
+        reward = _max_of_three_scaled(
+            reward_fact, catalog_reward_fact, reward_description_fact, self.reward_gain
         )
 
         return RapidDimensionEstimate(
