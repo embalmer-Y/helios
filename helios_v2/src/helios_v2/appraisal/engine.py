@@ -128,6 +128,46 @@ class LlmAppraisalSource(Protocol):
 R_PROTO_LEARN_2_DEFAULT_LLM_TRIGGER_THRESHOLD: float = 0.4
 
 
+@runtime_checkable
+class PredictionSource(Protocol):
+    """Owner: rapid salience appraisal (R-PROTO-LEARN.3).
+
+    Purpose:
+        Provide a Layer 3 Predictive-Coding read: the predicted
+        5-dim appraisal for the upcoming stimulus. The owner compares
+        the actual estimate to the prediction and treats the
+        disagreement as "surprise" (NEMORI / Free Energy perspective).
+
+    Notes:
+        The source may be backed by:
+        (a) an LLM that predicts "what would the visitor say next",
+        (b) a rolling-mean over recent actual estimates (system-1
+            prediction), or
+        (c) a memory-augmented prediction that uses R85 past
+            experience as a prior.
+
+        Returning `None` means "no prediction available" (cold start
+        or first-ever tick); the owner then returns the input
+        unchanged (Layer 3 is a no-op when no history exists).
+    """
+
+    def predict(
+        self, content: str
+    ) -> "RapidDimensionEstimate | None":
+        """Return the predicted 5-dim appraisal for `content`, or `None` if unavailable."""
+
+
+# R-PROTO-LEARN.3 (Layer 3 surprise gain): when the actual estimate
+# disagrees with the predicted estimate, the owner adds a bounded
+# "surprise" bias to the uncertainty dimension (the NEMORI / free-energy
+# framing: prediction error -> uncertainty). 0.0 = disabled (R40
+# byte-level preservation on the surprise axis); 1.0 = full surprise
+# (the surprise is the entire prediction error). Default 0.3 keeps
+# the per-tick influence bounded (≤ 0.3 * 1.0 = 0.3 per tick, well
+# within the R98 ±0.10 cap when the prediction error is small).
+R_PROTO_LEARN_3_DEFAULT_SURPRISE_GAIN: float = 0.3
+
+
 @dataclass(frozen=True)
 class RapidDimensionEstimate:
     """Owner: rapid salience appraisal.
@@ -689,6 +729,16 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
     # The default keeps both layers' contributions visible, which
     # is the conservative ship for R-PROTO-LEARN.2.
     llm_appraisal_blend_alpha: float = 0.5
+    # R-PROTO-LEARN.3 (Layer 3 Predictive Coding, NEMORI / free-energy):
+    # the owner compares the actual estimate to a `prediction_source`'s
+    # predicted 5-dim read and adds a bounded surprise bias to
+    # `uncertainty`. A `None` source means no Layer 3 path; the
+    # owner then returns the Layer 1+2 read unchanged.
+    prediction_source: PredictionSource | None = None
+    # Surprise gain: scales the prediction error. 0.0 = disabled
+    # (R40 byte-level preservation on the surprise axis); 1.0 = full
+    # surprise. Default 0.3 keeps the per-tick influence bounded.
+    surprise_gain: float = R_PROTO_LEARN_3_DEFAULT_SURPRISE_GAIN
 
     def estimate_dimensions(self, stimulus: Stimulus) -> RapidDimensionEstimate:
         """Owner: rapid salience appraisal.
@@ -827,7 +877,15 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         # in play by default. Returns a NEW `RapidDimensionEstimate`;
         # the inputs are not mutated.
         blended = self._apply_llm_appraisal(stimulus, adjusted)
-        return blended
+        # R-PROTO-LEARN.3 (Layer 3 Predictive Coding, NEMORI / free-energy):
+        # compare the actual blended estimate to a predicted 5-dim read
+        # and add a bounded surprise bias to uncertainty. The
+        # surprise is the L1 (Manhattan) distance between actual
+        # and predicted, scaled by `surprise_gain` and clamped to
+        # the per-dimension `[0, 1]` range. Returns a NEW
+        # `RapidDimensionEstimate`; the input is not mutated.
+        surprised = self._apply_predictive_coding(stimulus, blended)
+        return surprised
 
     # --------------------------------------------------------------------- #
     # R-PROTO-LEARN.5 public surface: observation + distribution read-back. #
@@ -1033,6 +1091,86 @@ class GroundedDimensionEstimator(RapidDimensionEstimator):
         path in `estimate_dimensions`).
         """
         return self._apply_llm_appraisal(stimulus, layer1)
+
+    # --------------------------------------------------------------------- #
+    # R-PROTO-LEARN.3 public surface: Predictive Coding surprise.          #
+    # --------------------------------------------------------------------- #
+
+    def _prediction_error(
+        self, actual: RapidDimensionEstimate, predicted: RapidDimensionEstimate
+    ) -> float:
+        """Owner-internal: L1 (Manhattan) distance between two 5-dim estimates.
+
+        Normalized to `[0, 1]` by dividing by 5 (the number of
+        dimensions). The result is 0.0 when the two vectors are
+        identical; 1.0 when they are maximally different in every
+        dimension (e.g. {1,1,1,1,1} vs {0,0,0,0,0}).
+        """
+        diff = (
+            abs(actual.threat - predicted.threat)
+            + abs(actual.reward - predicted.reward)
+            + abs(actual.novelty - predicted.novelty)
+            + abs(actual.uncertainty - predicted.uncertainty)
+            + abs(actual.social - predicted.social)
+        )
+        return diff / 5.0
+
+    def _apply_predictive_coding(
+        self,
+        stimulus: Stimulus,
+        actual: RapidDimensionEstimate,
+    ) -> RapidDimensionEstimate:
+        """Owner-internal: add a bounded surprise bias from the prediction error.
+
+        The surprise is `surprise_gain * prediction_error`, added
+        to the `uncertainty` dimension of `actual`. The
+        `uncertainty` increase reflects the NEMORI / free-energy
+        framing: the actual sensory input disagreed with the
+        predicted input, so the system's confidence in its
+        current appraisal drops. All other dimensions remain
+        unchanged (the surprise is a confidence read, not a
+        content read).
+
+        Returns a NEW `RapidDimensionEstimate`; the input is not
+        mutated. When `prediction_source` is `None` / `gain == 0.0`
+        / the source returns `None` / the content is empty, the
+        input is returned unchanged (Layer 3 is a no-op in those
+        cases).
+        """
+        if self.prediction_source is None or self.surprise_gain == 0.0:
+            return actual
+        content = getattr(stimulus, "content", None) or ""
+        if not content:
+            return actual
+        predicted = self.prediction_source.predict(content)
+        if predicted is None:
+            return actual
+        error = self._prediction_error(actual, predicted)
+        surprise = self.surprise_gain * error
+        new_uncertainty = round(
+            min(1.0, max(0.0, actual.uncertainty + surprise)), 4
+        )
+        return RapidDimensionEstimate(
+            threat=actual.threat,
+            reward=actual.reward,
+            novelty=actual.novelty,
+            social=actual.social,
+            uncertainty=new_uncertainty,
+        )
+
+    def predictive_coding_surprise(
+        self,
+        stimulus: Stimulus,
+        actual: RapidDimensionEstimate,
+    ) -> RapidDimensionEstimate:
+        """Public surface: re-run the Layer 3 surprise adjustment for an external stimulus + actual read.
+
+        Returns a NEW `RapidDimensionEstimate`; the inputs are not mutated.
+        The prediction is only consulted when the source is configured
+        and the content is non-empty (same conditions as the inline
+        path in `estimate_dimensions`).
+        """
+        return self._apply_predictive_coding(stimulus, actual)
 
     def observe(self, observation: "Mapping[str, float]") -> None:
         """Public surface: explicit Bayesian update with caller-supplied observation.
