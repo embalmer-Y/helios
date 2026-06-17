@@ -1,6 +1,6 @@
-"""Owner: learning framework (R-PROTO-LEARN.Tier1).
+"""Owner: learning framework (R-PROTO-LEARN.Tier1+2).
 
-Unified learning contract + framework for 5 owner-specific P5 learners.
+Unified learning contract + framework for owner-specific P5 learners.
 """
 
 from helios_v2.learning.contracts import (
@@ -9,9 +9,17 @@ from helios_v2.learning.contracts import (
     LearnerConfig,
     Regime,
 )
+from helios_v2.learning.action_externalization_learner import (
+    ActionExternalizationLearner,
+    ActionExternalizationLearnerConfig,
+)
 from helios_v2.learning.autonomy_learner import (
     AutonomyLearner,
     AutonomyLearnerConfig,
+)
+from helios_v2.learning.evaluation_learner import (
+    EvaluationLearner,
+    EvaluationLearnerConfig,
 )
 from helios_v2.learning.framework import (
     LearnerABC,
@@ -37,8 +45,12 @@ from helios_v2.learning.thought_gating_learner import (
 
 __all__ = [
     "DEFAULT_HORMONE_CHANNELS",
+    "ActionExternalizationLearner",
+    "ActionExternalizationLearnerConfig",
     "AutonomyLearner",
     "AutonomyLearnerConfig",
+    "EvaluationLearner",
+    "EvaluationLearnerConfig",
     "InternalThoughtLearner",
     "InternalThoughtLearnerConfig",
     "Learner",
