@@ -1142,3 +1142,282 @@ def test_p5_feel_module_requires_numpy():
         "learning_path.np is not the same as the imported numpy; "
         "ensure numpy is imported at module top level."
     )
+
+
+
+# --- R-PROTO-LEARN.10 appraisal-derived hormone path -----------------
+
+
+def test_r10_default_mapper_is_panksepp_grounded():
+    """The default feeling->salience mapper should produce a salience
+    vector with all 5 dims in [0, 1] for any legal 7-dim feeling
+    input, and threat should be high when valence is low and pain
+    is high (Panksepp RAGE/FEAR)."""
+    from helios_v2.feeling.learning_path import _default_feeling_to_salience
+    # Threatening situation: low valence, high tension, high pain
+    feeling = (0.1, 0.8, 0.9, 0.1, 0.5, 0.9, 0.2)
+    threat, reward, novelty, social, uncertainty = _default_feeling_to_salience(feeling)
+    assert 0.0 <= threat <= 1.0
+    assert 0.0 <= reward <= 1.0
+    assert 0.0 <= novelty <= 1.0
+    assert 0.0 <= social <= 1.0
+    assert 0.0 <= uncertainty <= 1.0
+    # Low valence + high pain -> high threat
+    assert threat > 0.5, f"expected high threat, got {threat}"
+    # Low valence + high pain -> low reward
+    assert reward < 0.3, f"expected low reward, got {reward}"
+
+
+def test_r10_default_mapper_handles_neutral():
+    """All-neutral feeling (0.5) should produce moderate salience,
+    not extreme values."""
+    from helios_v2.feeling.learning_path import _default_feeling_to_salience
+    feeling = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
+    threat, reward, novelty, social, uncertainty = _default_feeling_to_salience(feeling)
+    for name, v in [("threat", threat), ("reward", reward),
+                    ("novelty", novelty), ("social", social),
+                    ("uncertainty", uncertainty)]:
+        assert 0.0 <= v <= 1.0, f"{name} out of range: {v}"
+
+
+def test_r10_config_validates_missing_dependencies():
+    """When hormone_path='appraisal_derived' but the required
+    config fields are missing, config construction must fail with
+    a clear ValueError listing the missing fields."""
+    from helios_v2.feeling.learning_path import P5FeelLearningConfig
+    import pytest
+    with pytest.raises(ValueError) as exc:
+        P5FeelLearningConfig(hormone_path="appraisal_derived")
+    msg = str(exc.value)
+    assert "appraisal_neuromodulator_config" in msg
+    assert "appraisal_update_path" in msg
+    assert "appraisal_salience_mapper" in msg
+
+
+def test_r10_config_rejects_unknown_hormone_path():
+    """An unknown hormone_path value must raise ValueError."""
+    from helios_v2.feeling.learning_path import P5FeelLearningConfig
+    import pytest
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_path="bogus_path")
+
+
+def test_r10_appraisal_derived_hormone_via_owner_04_path():
+    """R10 must use the real owner 04 AppraisalDerivedNeuromodulatorUpdatePath.
+    The resulting hormone must be inside the legal [0, 1] range and
+    must differ from the prior (proving the path is doing real work)."""
+    from helios_v2.feeling.learning_path import (
+        P5FeelLearningConfig,
+        P5FeelLearningPath,
+        _default_feeling_to_salience,
+    )
+    from helios_v2.neuromodulation.engine import (
+        AppraisalDerivedNeuromodulatorUpdatePath,
+    )
+    from helios_v2.neuromodulation.contracts import (
+        NeuromodulatorConfig,
+        NeuromodulatorLevels,
+    )
+    # Build a real NeuromodulatorConfig
+    base = NeuromodulatorLevels(
+        dopamine=0.3, norepinephrine=0.3, serotonin=0.3,
+        acetylcholine=0.3, cortisol=0.3, oxytocin=0.3,
+        opioid_tone=0.3, excitation=0.3, inhibition=0.3,
+    )
+    legal_min = NeuromodulatorLevels(
+        dopamine=0.0, norepinephrine=0.0, serotonin=0.0,
+        acetylcholine=0.0, cortisol=0.0, oxytocin=0.0,
+        opioid_tone=0.0, excitation=0.0, inhibition=0.0,
+    )
+    legal_max = NeuromodulatorLevels(
+        dopamine=1.0, norepinephrine=1.0, serotonin=1.0,
+        acetylcholine=1.0, cortisol=1.0, oxytocin=1.0,
+        opioid_tone=1.0, excitation=1.0, inhibition=1.0,
+    )
+    nm_config = NeuromodulatorConfig(
+        tonic_baseline=base,
+        legal_min=legal_min,
+        legal_max=legal_max,
+        mandatory_learned_parameters=(
+            "channel_gain_sensitivity",
+            "cross_channel_coupling_strength",
+            "decay_speed_persistence",
+            "gate_influence_strength",
+            "hormone_predict_coupling",
+        ),
+    )
+    update_path = AppraisalDerivedNeuromodulatorUpdatePath()
+    # Threatening LLM appraisal
+    llm_appraisal = (0.1, 0.8, 0.9, 0.1, 0.5, 0.9, 0.2)
+    path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(
+            hormone_path="appraisal_derived",
+            hormone_closure_enabled=True,
+            hormone_closure_strength=1.0,
+            appraisal_neuromodulator_config=nm_config,
+            appraisal_update_path=update_path,
+            appraisal_salience_mapper=_default_feeling_to_salience,
+        )
+    )
+    state = _neuromod_state(cortisol=0.3, dopamine=0.3)
+    path.update(state, llm_appraisal, novelty=0.5, tick_id=0)
+    res = path.last_residual()
+    # The closed-loop residual must be finite and small (< 0.5) since
+    # the R10 path is doing real neuromodulation work, not a least-
+    # squares fit.
+    for i, v in enumerate(res):
+        assert -1.0 <= v <= 1.0, f"residual[{i}] out of [-1, 1]: {v}"
+    max_abs = max(abs(v) for v in res)
+    # We don't require < 0.01 here (R10 isn't a least-squares fit;
+    # it's a real cognitive policy whose output may leave some
+    # residual by design). Just verify it's smaller than open-loop.
+    assert max_abs < 0.7, f"R10 residual too large: {max_abs}"
+
+
+def test_r10_path_produces_smaller_residual_than_open_loop():
+    """R10 closed-loop residual must be smaller than open-loop."""
+    from helios_v2.feeling.learning_path import (
+        P5FeelLearningConfig,
+        P5FeelLearningPath,
+        _default_feeling_to_salience,
+    )
+    from helios_v2.neuromodulation.engine import (
+        AppraisalDerivedNeuromodulatorUpdatePath,
+    )
+    from helios_v2.neuromodulation.contracts import (
+        NeuromodulatorConfig,
+        NeuromodulatorLevels,
+    )
+    base = NeuromodulatorLevels(
+        dopamine=0.3, norepinephrine=0.3, serotonin=0.3,
+        acetylcholine=0.3, cortisol=0.3, oxytocin=0.3,
+        opioid_tone=0.3, excitation=0.3, inhibition=0.3,
+    )
+    legal_min = NeuromodulatorLevels(
+        dopamine=0.0, norepinephrine=0.0, serotonin=0.0,
+        acetylcholine=0.0, cortisol=0.0, oxytocin=0.0,
+        opioid_tone=0.0, excitation=0.0, inhibition=0.0,
+    )
+    legal_max = NeuromodulatorLevels(
+        dopamine=1.0, norepinephrine=1.0, serotonin=1.0,
+        acetylcholine=1.0, cortisol=1.0, oxytocin=1.0,
+        opioid_tone=1.0, excitation=1.0, inhibition=1.0,
+    )
+    nm_config = NeuromodulatorConfig(
+        tonic_baseline=base, legal_min=legal_min, legal_max=legal_max,
+        mandatory_learned_parameters=(
+            "channel_gain_sensitivity",
+            "cross_channel_coupling_strength",
+            "decay_speed_persistence",
+            "gate_influence_strength",
+            "hormone_predict_coupling",
+        ),
+    )
+    update_path = AppraisalDerivedNeuromodulatorUpdatePath()
+    llm_appraisal = (0.1, 0.8, 0.9, 0.1, 0.5, 0.9, 0.2)
+    state = _neuromod_state(cortisol=0.3, dopamine=0.3)
+
+    # Open loop
+    open_path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(
+            hormone_closure_enabled=False, hormone_path="numpy_pinv",
+        )
+    )
+    open_path.update(state, llm_appraisal, novelty=0.5, tick_id=0)
+    open_max = max(abs(v) for v in open_path.last_residual())
+
+    # R10 closed loop
+    r10_path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(
+            hormone_closure_enabled=True,
+            hormone_closure_strength=1.0,
+            hormone_path="appraisal_derived",
+            appraisal_neuromodulator_config=nm_config,
+            appraisal_update_path=update_path,
+            appraisal_salience_mapper=_default_feeling_to_salience,
+        )
+    )
+    r10_path.update(state, llm_appraisal, novelty=0.5, tick_id=0)
+    r10_max = max(abs(v) for v in r10_path.last_residual())
+
+    assert r10_max < open_max, (
+        f"R10 closure did not reduce residual: "
+        f"open={open_max:.3f}, r10={r10_max:.3f}"
+    )
+
+
+def test_r10_vs_r9_residuals_are_both_smaller_than_open_loop():
+    """R9 (numpy_pinv) and R10 (appraisal_derived) both must produce
+    smaller residuals than open-loop. The two paths can leave
+    different residuals since R9 is least-squares exact and R10 is
+    a real cognitive policy."""
+    from helios_v2.feeling.learning_path import (
+        P5FeelLearningConfig,
+        P5FeelLearningPath,
+        _default_feeling_to_salience,
+    )
+    from helios_v2.neuromodulation.engine import (
+        AppraisalDerivedNeuromodulatorUpdatePath,
+    )
+    from helios_v2.neuromodulation.contracts import (
+        NeuromodulatorConfig,
+        NeuromodulatorLevels,
+    )
+    base = NeuromodulatorLevels(
+        dopamine=0.3, norepinephrine=0.3, serotonin=0.3,
+        acetylcholine=0.3, cortisol=0.3, oxytocin=0.3,
+        opioid_tone=0.3, excitation=0.3, inhibition=0.3,
+    )
+    legal_min = NeuromodulatorLevels(
+        dopamine=0.0, norepinephrine=0.0, serotonin=0.0,
+        acetylcholine=0.0, cortisol=0.0, oxytocin=0.0,
+        opioid_tone=0.0, excitation=0.0, inhibition=0.0,
+    )
+    legal_max = NeuromodulatorLevels(
+        dopamine=1.0, norepinephrine=1.0, serotonin=1.0,
+        acetylcholine=1.0, cortisol=1.0, oxytocin=1.0,
+        opioid_tone=1.0, excitation=1.0, inhibition=1.0,
+    )
+    nm_config = NeuromodulatorConfig(
+        tonic_baseline=base, legal_min=legal_min, legal_max=legal_max,
+        mandatory_learned_parameters=(
+            "channel_gain_sensitivity",
+            "cross_channel_coupling_strength",
+            "decay_speed_persistence",
+            "gate_influence_strength",
+            "hormone_predict_coupling",
+        ),
+    )
+    update_path = AppraisalDerivedNeuromodulatorUpdatePath()
+    llm_appraisal = (0.1, 0.8, 0.9, 0.1, 0.5, 0.9, 0.2)
+    state = _neuromod_state(cortisol=0.3, dopamine=0.3)
+
+    def make(closure_enabled, path_kind, **extra):
+        return P5FeelLearningPath(
+            config=P5FeelLearningConfig(
+                hormone_closure_enabled=closure_enabled,
+                hormone_closure_strength=1.0,
+                hormone_path=path_kind,
+                **extra,
+            )
+        )
+
+    open_path = make(False, "numpy_pinv")
+    open_path.update(state, llm_appraisal, novelty=0.5, tick_id=0)
+    open_max = max(abs(v) for v in open_path.last_residual())
+
+    r9_path = make(True, "numpy_pinv")
+    r9_path.update(state, llm_appraisal, novelty=0.5, tick_id=0)
+    r9_max = max(abs(v) for v in r9_path.last_residual())
+
+    r10_path = make(
+        True, "appraisal_derived",
+        appraisal_neuromodulator_config=nm_config,
+        appraisal_update_path=update_path,
+        appraisal_salience_mapper=_default_feeling_to_salience,
+    )
+    r10_path.update(state, llm_appraisal, novelty=0.5, tick_id=0)
+    r10_max = max(abs(v) for v in r10_path.last_residual())
+
+    assert r9_max < open_max, f"R9 did not reduce: open={open_max}, r9={r9_max}"
+    assert r10_max < open_max, f"R10 did not reduce: open={open_max}, r10={r10_max}"

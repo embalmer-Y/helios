@@ -47,7 +47,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Mapping
+from typing import Callable, Literal, Mapping, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -251,6 +251,179 @@ def _compute_hormone_adjustment(
     )
 
 
+# --- R-PROTO-LEARN.10 appraisal-derived hormone path ---------------
+# Routes the LLM appraisal through the real owner 04 neuromodulation
+# path (`AppraisalDerivedNeuromodulatorUpdatePath`) instead of the
+# pure-mathematical pseudo-inverse solve. This is the "production"
+# closure: the LLM appraisal 7-dim -> salience 5-dim -> hormone
+# 9-dim pipeline uses the same equations that owner 04 uses for the
+# real rapid-appraisal input, so the closed-loop residual reflects
+# the actual cognitive policy rather than a least-squares fit.
+
+
+@runtime_checkable
+class FeelingToSalienceMapper(Protocol):
+    """R-PROTO-LEARN.10: maps the 7-dim LLM feeling appraisal onto
+    the 5-dim salience vector that owner 04 expects.
+
+    Inputs:
+        feeling: 7-tuple in `FEELING_DIMENSIONS` order, each in [0, 1].
+
+    Returns:
+        A 5-tuple in (threat, reward, novelty, social, uncertainty)
+        order, each in [0, 1]. The aggregate is recomputed by
+        `_compute_appraisal_derived_hormone`.
+    """
+
+    def __call__(
+        self, feeling: tuple[float, ...]
+    ) -> tuple[float, float, float, float, float]: ...
+
+
+def _default_feeling_to_salience(
+    feeling: tuple[float, ...],
+) -> tuple[float, float, float, float, float]:
+    """R-PROTO-LEARN.10: the default feeling->salience mapper.
+
+    Grounds each feeling dimension on the Panksepp 7 systems +
+    Fermin 2021 IMAC role assignments. Heuristics only -- the
+    `appraisal_neuromodulator_config` channel-gain sensitivities can
+    later tune these mappings without changing the equation shape.
+
+    Mapping (grounded in Panksepp 2011 + Fermin 2021):
+        threat     = (1 - valence) * tension + pain_like * 0.7
+        reward     = valence * (1 - fatigue) * (1 - pain_like)
+        novelty    = arousal * (1 - comfort)  (high arousal + low
+                     comfort = the new-thing feeling)
+        social     = social_safety * (1 - threat) * 0.7 + oxytocin
+                     proxy 0.3 (1 - threat = "approach" = social reach)
+        uncertainty = (1 - valence) * (1 - comfort) * arousal
+                     (low valence + low comfort + high arousal =
+                     anxious-uncertain)
+    """
+
+    if len(feeling) != 7:
+        raise ValueError(
+            f"feeling must have 7 dims, got {len(feeling)}"
+        )
+    valence, arousal, tension, comfort, fatigue, pain, social_safety = feeling
+    threat = _clamp(
+        (1.0 - valence) * tension + pain * 0.7, 0.0, 1.0
+    )
+    reward = _clamp(
+        valence * (1.0 - fatigue) * (1.0 - pain), 0.0, 1.0
+    )
+    novelty = _clamp(
+        arousal * (1.0 - comfort), 0.0, 1.0
+    )
+    social = _clamp(
+        social_safety * (1.0 - threat) * 0.7 + 0.3 * (1.0 - threat),
+        0.0,
+        1.0,
+    )
+    uncertainty = _clamp(
+        (1.0 - valence) * (1.0 - comfort) * arousal, 0.0, 1.0
+    )
+    return (threat, reward, novelty, social, uncertainty)
+
+
+def _compute_appraisal_derived_hormone(
+    llm_appraisal: tuple[float, ...],
+    current_hormone: tuple[float, ...],
+    neuromodulator_config,
+    appraisal_update_path,
+    salience_mapper: FeelingToSalienceMapper,
+    strength: float,
+    tick_id: int | None,
+) -> tuple[float, ...]:
+    """R-PROTO-LEARN.10: route the LLM appraisal through the real
+    owner 04 path to get a hormone adjustment.
+
+    1. Map 7-dim feeling to 5-dim salience (Panksepp-grounded).
+    2. Build a one-appraisal `RapidAppraisalBatch`.
+    3. Call `appraisal_update_path.update_levels(batch, config, tick_id, current_hormone)`.
+    4. Per-channel delta = new - current, scaled by `strength`, clipped to +/-1.
+    5. Return the (scaled, clipped) 9-dim delta.
+
+    The caller adds the delta to the current hormone before
+    re-projecting the feeling vector, so the closed-loop residual
+    (= target - W * (hormone + delta)) reflects the actual owner 04
+    cognitive policy.
+
+    Failure semantics:
+        Any exception (missing config, malformed batch, illegal
+        level) propagates; the caller is expected to validate
+        inputs at construction time.
+    """
+
+    if strength <= 0.0:
+        return (0.0,) * len(current_hormone)
+    # 1. feeling -> salience
+    threat, reward, novelty, social, uncertainty = salience_mapper(llm_appraisal)
+    aggregate = max(threat, reward, novelty, social, uncertainty)
+    # 2. build a one-appraisal batch (avoid the full Stimulus pipeline
+    # since we only have a 7-dim vector at this layer)
+    from helios_v2.appraisal.contracts import (
+        RapidAppraisal,
+        RapidAppraisalBatch,
+        RapidSalienceVector,
+    )
+    appraisal = RapidAppraisal(
+        appraisal_id=f"p5-feel-r10:{tick_id}",
+        stimulus_id=f"p5-feel-stim:{tick_id}",
+        source_name="p5_feel_llm_appraisal",
+        salience=RapidSalienceVector(
+            threat=threat,
+            reward=reward,
+            novelty=novelty,
+            social=social,
+            uncertainty=uncertainty,
+            aggregate=aggregate,
+        ),
+        provenance_signal_id=f"p5-feel-prov:{tick_id}",
+    )
+    batch = RapidAppraisalBatch(
+        batch_id=f"p5-feel-batch:{tick_id}",
+        appraisals=(appraisal,),
+    )
+    # 3. compute the new hormone via the real owner 04 path
+    from helios_v2.neuromodulation.contracts import NeuromodulatorLevels
+    prior_levels = NeuromodulatorLevels(
+        dopamine=current_hormone[0],
+        norepinephrine=current_hormone[1],
+        serotonin=current_hormone[2],
+        acetylcholine=current_hormone[3],
+        cortisol=current_hormone[4],
+        oxytocin=current_hormone[5],
+        opioid_tone=current_hormone[6],
+        excitation=current_hormone[7],
+        inhibition=current_hormone[8],
+    )
+    new_levels: NeuromodulatorLevels = appraisal_update_path.update_levels(
+        batch=batch,
+        config=neuromodulator_config,
+        tick_id=tick_id,
+        prior_levels=prior_levels,
+    )
+    # 4. per-channel delta, scaled by strength, clipped to +/-1
+    new_hormone = (
+        new_levels.dopamine,
+        new_levels.norepinephrine,
+        new_levels.serotonin,
+        new_levels.acetylcholine,
+        new_levels.cortisol,
+        new_levels.oxytocin,
+        new_levels.opioid_tone,
+        new_levels.excitation,
+        new_levels.inhibition,
+    )
+    deltas = tuple(
+        _clamp(strength * (new_hormone[i] - current_hormone[i]), -1.0, 1.0)
+        for i in range(9)
+    )
+    return deltas
+
+
 def _clamp(value: float, low: float, high: float) -> float:
     """Owner: interoceptive feeling layer (P5-feel learning path).
 
@@ -351,6 +524,22 @@ class P5FeelLearningConfig:
     hormone_closure_enabled: bool = True
     hormone_closure_strength: float = 0.7
     hormone_closure_clip: float = 0.5
+    # R-PROTO-LEARN.10: appraisal-derived hormone path
+    # Selects the closure implementation:
+    #   - "numpy_pinv"        (default, R-PROTO-LEARN.9): least-squares
+    #                         fit via numpy.linalg.pinv. No neuromodulator
+    #                         config required.
+    #   - "appraisal_derived" (R-PROTO-LEARN.10): routes the LLM
+    #                         appraisal through the real owner 04
+    #                         `AppraisalDerivedNeuromodulatorUpdatePath`.
+    #                         Requires `appraisal_neuromodulator_config`
+    #                         and `appraisal_update_path` to be set.
+    # The two paths can be swapped at construction time without
+    # changing the P5-feel public contract.
+    hormone_path: Literal["numpy_pinv", "appraisal_derived"] = "numpy_pinv"
+    appraisal_neuromodulator_config: object = None  # NeuromodulatorConfig | None
+    appraisal_update_path: object = None  # AppraisalDerivedNeuromodulatorUpdatePath | None
+    appraisal_salience_mapper: object = None  # FeelingToSalienceMapper | None
 
     def __post_init__(self) -> None:
         if self.learning_rate <= 0.0 or self.learning_rate > 1.0:
@@ -409,6 +598,24 @@ class P5FeelLearningConfig:
             raise ValueError(
                 f"hormone_closure_clip must be in (0, 1], got {self.hormone_closure_clip}"
             )
+        if self.hormone_path not in ("numpy_pinv", "appraisal_derived"):
+            raise ValueError(
+                f"hormone_path must be 'numpy_pinv' or 'appraisal_derived', "
+                f"got {self.hormone_path!r}"
+            )
+        if self.hormone_path == "appraisal_derived":
+            missing = []
+            if self.appraisal_neuromodulator_config is None:
+                missing.append("appraisal_neuromodulator_config")
+            if self.appraisal_update_path is None:
+                missing.append("appraisal_update_path")
+            if self.appraisal_salience_mapper is None:
+                missing.append("appraisal_salience_mapper")
+            if missing:
+                raise ValueError(
+                    "R-PROTO-LEARN.10 appraisal_derived path requires "
+                    f"the following config fields to be set: {', '.join(missing)}"
+                )
 
 
 @dataclass
@@ -561,22 +768,36 @@ class P5FeelLearningPath:
         levels = _neuromodulator_levels_mapping(hormone_state)
         current_feeling = self._project_feeling(levels)
 
-        # 2. R-PROTO-LEARN.9: optionally route the LLM appraisal through a
-        # hormone adjustment so the closed-loop residual is small.
+        # 2. R-PROTO-LEARN.9 / R-PROTO-LEARN.10: optionally route the LLM
+        # appraisal through a hormone adjustment so the closed-loop
+        # residual is small. Two implementations:
+        #   - numpy_pinv (R9): least-squares fit via numpy.linalg.pinv
+        #   - appraisal_derived (R10): real owner 04 neuromodulation path
         if (
             self.config.hormone_closure_enabled
             and llm_appraisal is not None
         ):
-            # Convert the hormone dict to an ordered tuple in HORMONE_CHANNELS
-            # order so the adjustment indexing lines up with W's columns.
             current_hormone = tuple(levels[ch] for ch in HORMONE_CHANNELS)
-            adjustment = _compute_hormone_adjustment(
-                W=self._W,
-                current_hormone=current_hormone,
-                target_feeling=llm_appraisal,
-                strength=self.config.hormone_closure_strength,
-                clip=self.config.hormone_closure_clip,
-            )
+            if self.config.hormone_path == "numpy_pinv":
+                adjustment = _compute_hormone_adjustment(
+                    W=self._W,
+                    current_hormone=current_hormone,
+                    target_feeling=llm_appraisal,
+                    strength=self.config.hormone_closure_strength,
+                    clip=self.config.hormone_closure_clip,
+                )
+            elif self.config.hormone_path == "appraisal_derived":
+                adjustment = _compute_appraisal_derived_hormone(
+                    llm_appraisal=llm_appraisal,
+                    current_hormone=current_hormone,
+                    neuromodulator_config=self.config.appraisal_neuromodulator_config,
+                    appraisal_update_path=self.config.appraisal_update_path,
+                    salience_mapper=self.config.appraisal_salience_mapper,
+                    strength=self.config.hormone_closure_strength,
+                    tick_id=tick_id,
+                )
+            else:
+                adjustment = (0.0,) * 9
             # Apply the adjustment unclamped here so the closed-loop
             # feeling matches the LLM appraisal. (The real hormone state
             # is never modified; this is a sidecar adjustment used only

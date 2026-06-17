@@ -384,6 +384,13 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--block", default="all",
                         help="a / b / c / d / all")
+    parser.add_argument(
+        "--path", default="numpy_pinv",
+        choices=("numpy_pinv", "appraisal_derived"),
+        help="R-PROTO-LEARN.9/10 closure path. "
+             "numpy_pinv = least-squares fit via numpy.linalg.pinv; "
+             "appraisal_derived = real owner 04 AppraisalDerivedNeuromodulatorUpdatePath.",
+    )
     args = parser.parse_args()
 
     if args.offline:
@@ -397,7 +404,51 @@ def main() -> int:
             return 1
 
     # R-PROTO-LEARN.8: use new learner defaults (W matrix full + retuned config)
-    learner = P5FeelLearningPath(config=P5FeelLearningConfig())
+    # R-PROTO-LEARN.9/10: closure path is selectable via --path
+    if args.path == "appraisal_derived":
+        from helios_v2.feeling.learning_path import _default_feeling_to_salience
+        from helios_v2.neuromodulation.engine import (
+            AppraisalDerivedNeuromodulatorUpdatePath,
+        )
+        from helios_v2.neuromodulation.contracts import (
+            NeuromodulatorConfig,
+            NeuromodulatorLevels,
+        )
+        base = NeuromodulatorLevels(
+            dopamine=0.3, norepinephrine=0.3, serotonin=0.3,
+            acetylcholine=0.3, cortisol=0.3, oxytocin=0.3,
+            opioid_tone=0.3, excitation=0.3, inhibition=0.3,
+        )
+        legal_min = NeuromodulatorLevels(
+            dopamine=0.0, norepinephrine=0.0, serotonin=0.0,
+            acetylcholine=0.0, cortisol=0.0, oxytocin=0.0,
+            opioid_tone=0.0, excitation=0.0, inhibition=0.0,
+        )
+        legal_max = NeuromodulatorLevels(
+            dopamine=1.0, norepinephrine=1.0, serotonin=1.0,
+            acetylcholine=1.0, cortisol=1.0, oxytocin=1.0,
+            opioid_tone=1.0, excitation=1.0, inhibition=1.0,
+        )
+        nm_config = NeuromodulatorConfig(
+            tonic_baseline=base, legal_min=legal_min, legal_max=legal_max,
+            mandatory_learned_parameters=(
+                "channel_gain_sensitivity",
+                "cross_channel_coupling_strength",
+                "decay_speed_persistence",
+                "gate_influence_strength",
+                "hormone_predict_coupling",
+            ),
+        )
+        update_path = AppraisalDerivedNeuromodulatorUpdatePath()
+        learner = P5FeelLearningPath(config=P5FeelLearningConfig(
+            hormone_path="appraisal_derived",
+            hormone_closure_strength=1.0,
+            appraisal_neuromodulator_config=nm_config,
+            appraisal_update_path=update_path,
+            appraisal_salience_mapper=_default_feeling_to_salience,
+        ))
+    else:
+        learner = P5FeelLearningPath(config=P5FeelLearningConfig())
     engine = _build_engine(learner)
 
     print(f"== R-PROTO-LEARN.7 P5-feel EXTENDED smoke ({label}, model={model}) ==")
