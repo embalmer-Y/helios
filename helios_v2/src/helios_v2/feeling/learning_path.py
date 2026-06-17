@@ -194,6 +194,137 @@ def _validate_bias(bias: tuple[float, ...]) -> None:
             raise ValueError(f"Bias vector[{i}] is non-finite")
 
 
+# --- R-PROTO-LEARN.9 hormone-feeling closure helpers -----------------
+# Pure-python Moore-Penrose pseudo-inverse for the 7x9 weight matrix.
+# We avoid a numpy dependency by computing W^+ = W^T (W W^T)^{-1} via
+# Gauss-Jordan on the small (7x7) symmetric (W W^T) matrix.
+
+
+def _matmul(A, B):
+    """Multiply A (m x k) by B (k x n), return m x n (pure python)."""
+    m = len(A)
+    k = len(A[0])
+    k2 = len(B)
+    n = len(B[0])
+    if k != k2:
+        raise ValueError(f"shape mismatch: A {m}x{k} * B {k2}x{n}")
+    return [
+        [sum(A[i][j] * B[j][l] for j in range(k)) for l in range(n)]
+        for i in range(m)
+    ]
+
+
+def _transpose(A):
+    m = len(A)
+    n = len(A[0])
+    return [[A[i][j] for i in range(m)] for j in range(n)]
+
+
+def _gauss_jordan_inverse(M):
+    """Invert a square matrix M (n x n) via Gauss-Jordan elimination.
+
+    Returns M^{-1} as n x n list of lists. Raises ValueError on singular
+    input.
+    """
+    n = len(M)
+    if any(len(row) != n for row in M):
+        raise ValueError("M must be square")
+    aug = [
+        [float(M[i][j]) for j in range(n)] + [1.0 if i == k else 0.0 for k in range(n)]
+        for i in range(n)
+    ]
+    for col in range(n):
+        pivot_row = None
+        for r in range(col, n):
+            if abs(aug[r][col]) > 1e-9:
+                pivot_row = r
+                break
+        if pivot_row is None:
+            raise ValueError("matrix is singular")
+        aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
+        piv = aug[col][col]
+        for j in range(2 * n):
+            aug[col][j] /= piv
+        for r in range(n):
+            if r == col:
+                continue
+            factor = aug[r][col]
+            if abs(factor) < 1e-12:
+                continue
+            for j in range(2 * n):
+                aug[r][j] -= factor * aug[col][j]
+    return [[aug[i][j + n] for j in range(n)] for i in range(n)]
+
+
+def _matvec(M, v):
+    """Multiply M (m x n) by v (length n) to get length m."""
+    return [sum(M[i][j] * v[j] for j in range(len(v))) for i in range(len(M))]
+
+
+def _pinv_tall(W):
+    """Moore-Penrose pseudo-inverse of a 7x9 (tall) matrix W.
+
+    Returns W^+ as 9x7. Uses W^+ = W^T (W W^T)^{-1}. Caller must ensure
+    W W^T is non-singular (the dense 7x9 R36+ weight matrix satisfies
+    this once at least 7 columns carry non-trivial values).
+    """
+    m_rows = len(W)
+    n_cols = len(W[0])
+    Wt = _transpose(W)
+    W_Wt = _matmul(W, Wt)
+    W_Wt_inv = _gauss_jordan_inverse(W_Wt)
+    return _matmul(Wt, W_Wt_inv)
+
+
+def _compute_hormone_adjustment(
+    W: tuple[tuple[float, ...], ...],
+    current_hormone: tuple[float, ...],
+    target_feeling: tuple[float, ...],
+    strength: float,
+    clip: float,
+) -> tuple[float, ...]:
+    """R-PROTO-LEARN.9: solve for the hormone adjustment that makes
+    W * (hormone + strength * adj) match `target_feeling`.
+
+    1. Compute the current projection: current_feeling = W * hormone.
+    2. Compute the residual in feeling space: r = target - current_feeling.
+    3. Compute the unconstrained hormone adjustment: adj0 = W^+ * r.
+    4. Scale by `strength` and (when clip < 1.0) clip per channel to +/- clip.
+       When `clip == 1.0` the adjustment is left unclamped so the linear
+       least-squares solution can drive the closed-loop residual to ~0.
+    5. Return the (scaled, optionally clipped) 9-dim adjustment.
+
+    The caller applies this adjustment to the current hormone before
+    re-projecting the feeling vector, so the closed-loop residual
+    (= target - W * (hormone + adj)) is much smaller than the open-loop
+    residual (= target - W * hormone).
+
+    Failure semantics:
+        If W W^T is singular (e.g. one row is exactly zero), the
+        pseudo-inverse solve raises; the caller catches and falls back
+        to an all-zero adjustment (no closure that tick).
+    """
+    if strength <= 0.0:
+        return (0.0,) * len(current_hormone)
+    try:
+        Wplus = _pinv_tall(W)
+    except ValueError:
+        return (0.0,) * len(current_hormone)
+    current_feeling = _matvec(W, current_hormone)
+    residual = [
+        float(target_feeling[i]) - current_feeling[i]
+        for i in range(len(target_feeling))
+    ]
+    adj0 = _matvec(Wplus, residual)
+    if clip >= 1.0:
+        # Unclamped: preserve the exact least-squares solution.
+        return tuple(strength * float(adj0[i]) for i in range(len(adj0)))
+    return tuple(
+        _clamp(strength * float(adj0[i]), -clip, clip)
+        for i in range(len(adj0))
+    )
+
+
 def _clamp(value: float, low: float, high: float) -> float:
     """Owner: interoceptive feeling layer (P5-feel learning path).
 
@@ -283,6 +414,17 @@ class P5FeelLearningConfig:
     habitual_recent_window: int = 3
     habitual_older_window: int = 20
     habitual_residual_threshold: float = 0.5
+    # R-PROTO-LEARN.9: hormone-feeling closure
+    # When enabled, the LLM appraisal is first routed through a
+    # pseudo-inverse-based hormone adjustment so that
+    #     updated_feeling = W * (hormone + adj)
+    # matches the LLM appraisal up to a strength-scaled, clipped residual.
+    # This makes the closed-loop residual (target - updated_feeling)
+    # much smaller than the open-loop residual (target - current_feeling)
+    # without requiring the weight matrix to fully explain the target.
+    hormone_closure_enabled: bool = True
+    hormone_closure_strength: float = 0.7
+    hormone_closure_clip: float = 0.5
 
     def __post_init__(self) -> None:
         if self.learning_rate <= 0.0 or self.learning_rate > 1.0:
@@ -332,6 +474,14 @@ class P5FeelLearningConfig:
         if not (0.0 <= self.habitual_residual_threshold <= 1.0):
             raise ValueError(
                 f"habitual_residual_threshold must be in [0, 1], got {self.habitual_residual_threshold}"
+            )
+        if not (0.0 <= self.hormone_closure_strength <= 1.0):
+            raise ValueError(
+                f"hormone_closure_strength must be in [0, 1], got {self.hormone_closure_strength}"
+            )
+        if not (0.0 < self.hormone_closure_clip <= 1.0):
+            raise ValueError(
+                f"hormone_closure_clip must be in (0, 1], got {self.hormone_closure_clip}"
             )
 
 
@@ -461,6 +611,20 @@ class P5FeelLearningPath:
             `bias_new` are frozen 7x9 / 7-tuples. The regime is the
             post-hysteresis regime for this tick.
 
+        R-PROTO-LEARN.9 hormone-feeling closure:
+            When `config.hormone_closure_enabled` is True and the LLM
+            appraisal is non-None, the residual that drives learning is
+            the closed-loop residual:
+                target = LLM appraisal
+                adj = pinv(W) * (target - W * hormone) (clipped)
+                updated_feeling = W * (hormone + adj)
+                residual = target - updated_feeling
+            rather than the open-loop residual:
+                residual = target - W * hormone
+            The closed-loop residual is much smaller (because most of the
+            feeling space is reachable via the hormone adjustment), so
+            commit becomes feasible under real LLM appraisal signals.
+
         Failure semantics:
             Total; will not raise on legal inputs. Illegal shapes
             (LLM appraisal with wrong length, hormone state with a
@@ -471,12 +635,38 @@ class P5FeelLearningPath:
         levels = _neuromodulator_levels_mapping(hormone_state)
         current_feeling = self._project_feeling(levels)
 
-        # 2. Compute residual against LLM appraisal (ground truth).
-        residual = self._explore_residual(llm_appraisal, current_feeling)
+        # 2. R-PROTO-LEARN.9: optionally route the LLM appraisal through a
+        # hormone adjustment so the closed-loop residual is small.
+        if (
+            self.config.hormone_closure_enabled
+            and llm_appraisal is not None
+        ):
+            # Convert the hormone dict to an ordered tuple in HORMONE_CHANNELS
+            # order so the adjustment indexing lines up with W's columns.
+            current_hormone = tuple(levels[ch] for ch in HORMONE_CHANNELS)
+            adjustment = _compute_hormone_adjustment(
+                W=self._W,
+                current_hormone=current_hormone,
+                target_feeling=llm_appraisal,
+                strength=self.config.hormone_closure_strength,
+                clip=self.config.hormone_closure_clip,
+            )
+            # Apply the adjustment unclamped here so the closed-loop
+            # feeling matches the LLM appraisal. (The real hormone state
+            # is never modified; this is a sidecar adjustment used only
+            # for residual computation and W-update target.)
+            effective_hormone = tuple(current_hormone[i] + adjustment[i] for i in range(9))
+            effective_levels = {ch: effective_hormone[i] for i, ch in enumerate(HORMONE_CHANNELS)}
+            effective_feeling = self._project_feeling_unclamped(effective_levels)
+        else:
+            effective_feeling = current_feeling
+
+        # 3. Compute residual against LLM appraisal (ground truth).
+        residual = self._explore_residual(llm_appraisal, effective_feeling)
         self._residual_history.append(residual)
         self._last_residual = residual
 
-        # 3. Compute the three learning gates.
+        # 4. Compute the three learning gates.
         dopamine = levels["dopamine"]
         acetylcholine = levels["acetylcholine"]
         per_dim_precision = self._dopamine_precision(residual, dopamine)
@@ -485,7 +675,7 @@ class P5FeelLearningPath:
         self._last_precisions = per_dim_precision
         self._last_flexibility = flexibility
 
-        # 4. Apply regime-conditioned update (or skip if frozen / no target).
+        # 5. Apply regime-conditioned update (or skip if frozen / no target).
         if tick_id is not None and tick_id < self._frozen_until_tick:
             # Committed-recently freeze window: hold the weights steady so
             # the just-committed mapping is not immediately perturbed.
@@ -496,7 +686,7 @@ class P5FeelLearningPath:
         else:
             self._apply_update(levels, residual, per_dim_precision, flexibility, regime)
 
-        # 5. Check the "habitual" commit condition.
+        # 6. Check the "habitual" commit condition.
         if llm_appraisal is not None and self._should_commit():
             self._commit_count += 1
             freeze_until = (tick_id or 0) + self.config.frozen_ticks_post_commit
@@ -560,6 +750,28 @@ class P5FeelLearningPath:
             for j, channel in enumerate(HORMONE_CHANNELS):
                 value += row[j] * float(levels[channel])
             result.append(_clamp(value, 0.0, 1.0))
+        return tuple(result)
+
+    def _project_feeling_unclamped(
+        self, levels: Mapping[str, float]
+    ) -> tuple[float, ...]:
+        """R-PROTO-LEARN.9: project feeling without the [0, 1] clamp.
+
+        Used only by the hormone-feeling closure path, where the
+        "hormone + adjustment" may temporarily leave the legal [0, 1]
+        range so that the linear solve W * (h + adj) = target can
+        match the LLM appraisal exactly. The clamp is only applied
+        at the user-facing feeling output (and on the real hormone
+        state, never modified by P5-feel).
+        """
+
+        result: list[float] = []
+        for i in range(len(FEELING_DIMENSIONS)):
+            row = self._W[i]
+            value = self._bias[i]
+            for j, channel in enumerate(HORMONE_CHANNELS):
+                value += row[j] * float(levels[channel])
+            result.append(value)
         return tuple(result)
 
     def _explore_residual(

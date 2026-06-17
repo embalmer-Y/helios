@@ -813,3 +813,252 @@ def test_feeling_dimensions_have_seven():
         "valence", "arousal", "tension", "comfort",
         "fatigue", "pain_like", "social_safety",
     }
+
+
+# --- R-PROTO-LEARN.9 hormone-feeling closure -----------------------
+
+
+def test_closure_hormone_adjustment_zero_residual_in_unclipped():
+    """Without strength or clip, the closed-loop residual is zero (W
+    exactly explains the target via the hormone adjustment)."""
+    from helios_v2.feeling.learning_path import (
+        _compute_hormone_adjustment,
+        _FIRST_VERSION_WEIGHTS,
+    )
+    hormone = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
+    target = (0.1, 0.9, 0.9, 0.1, 0.3, 0.2, 0.1)
+    # strength=1.0 clip=1.0 -> unconstrained (clip>=1.0 == no clip)
+    adj = _compute_hormone_adjustment(
+        W=_FIRST_VERSION_WEIGHTS,
+        current_hormone=hormone,
+        target_feeling=target,
+        strength=1.0,
+        clip=1.0,
+    )
+    # Compute the resulting feeling and check it matches target exactly.
+    from helios_v2.feeling.learning_path import _matvec
+    new_hormone = tuple(hormone[i] + adj[i] for i in range(9))
+    new_feeling = _matvec(_FIRST_VERSION_WEIGHTS, new_hormone)
+    for i in range(7):
+        # With clip=1.0 the helper leaves the adjustment unclamped,
+        # so the pseudo-inverse solution is exact (within numerical
+        # noise from the Gauss-Jordan elimination).
+        assert abs(new_feeling[i] - target[i]) < 0.01, (
+            f"closure reconstruction error at dim {i}: "
+            f"got {new_feeling[i]:.3f}, expected {target[i]:.3f}"
+        )
+
+
+def test_closure_disabled_returns_zero_adjustment():
+    """When strength=0.0, no adjustment is computed (caller's open-loop
+    path is preserved)."""
+    from helios_v2.feeling.learning_path import (
+        _compute_hormone_adjustment,
+        _FIRST_VERSION_WEIGHTS,
+    )
+    hormone = (0.5,) * 9
+    target = (0.5,) * 7
+    adj = _compute_hormone_adjustment(
+        W=_FIRST_VERSION_WEIGHTS,
+        current_hormone=hormone,
+        target_feeling=target,
+        strength=0.0,
+        clip=0.5,
+    )
+    assert adj == (0.0,) * 9
+
+
+def test_closure_clip_bounds_adjustment():
+    """Each channel of the adjustment is clipped to [-clip, +clip]."""
+    from helios_v2.feeling.learning_path import (
+        _compute_hormone_adjustment,
+        _FIRST_VERSION_WEIGHTS,
+    )
+    # Use an extreme target to force large adjustments
+    hormone = (0.5,) * 9
+    target = (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0)
+    adj = _compute_hormone_adjustment(
+        W=_FIRST_VERSION_WEIGHTS,
+        current_hormone=hormone,
+        target_feeling=target,
+        strength=1.0,
+        clip=0.3,
+    )
+    for i, value in enumerate(adj):
+        assert -0.3 <= value <= 0.3, (
+            f"adj[{i}] = {value} is outside [-0.3, +0.3]"
+        )
+
+
+def test_closure_update_reduces_residual_vs_open_loop():
+    """An update with closure enabled produces a smaller max-residual
+    than an update with closure disabled (same W, same inputs)."""
+    from helios_v2.feeling.learning_path import (
+        P5FeelLearningConfig,
+        P5FeelLearningPath,
+    )
+    target = (0.1, 0.9, 0.9, 0.1, 0.3, 0.2, 0.1)
+    state = _neuromod_state(cortisol=0.5, dopamine=0.5)
+    # Open loop
+    open_path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(hormone_closure_enabled=False)
+    )
+    open_path.update(state, target, novelty=0.1, tick_id=0)
+    open_res = open_path.last_residual()
+    open_max = max(abs(v) for v in open_res)
+    # Closed loop
+    closed_path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(hormone_closure_enabled=True)
+    )
+    closed_path.update(state, target, novelty=0.1, tick_id=0)
+    closed_res = closed_path.last_residual()
+    closed_max = max(abs(v) for v in closed_res)
+    # The closed-loop residual should be much smaller than the open-loop.
+    assert closed_max < open_max, (
+        f"closure did not reduce residual: open={open_max:.3f}, closed={closed_max:.3f}"
+    )
+
+
+def test_closure_config_validates_strength_range():
+    """Out-of-range hormone_closure_strength raises ValueError."""
+    from helios_v2.feeling.learning_path import P5FeelLearningConfig
+    import pytest
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_strength=-0.1)
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_strength=1.5)
+
+
+def test_closure_config_validates_clip_range():
+    """Out-of-range hormone_closure_clip raises ValueError."""
+    from helios_v2.feeling.learning_path import P5FeelLearningConfig
+    import pytest
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_clip=0.0)
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_clip=1.5)
+
+
+
+# --- R-PROTO-LEARN.9 hormone-feeling closure -----------------------
+
+
+def test_closure_hormone_adjustment_zero_residual_in_unclipped():
+    """Without strength or clip, the closed-loop residual is zero (W
+    exactly explains the target via the hormone adjustment)."""
+    from helios_v2.feeling.learning_path import (
+        _compute_hormone_adjustment,
+        _FIRST_VERSION_WEIGHTS,
+    )
+    hormone = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
+    target = (0.1, 0.9, 0.9, 0.1, 0.3, 0.2, 0.1)
+    # strength=1.0 clip=1.0 -> unconstrained (clip>=1.0 == no clip)
+    adj = _compute_hormone_adjustment(
+        W=_FIRST_VERSION_WEIGHTS,
+        current_hormone=hormone,
+        target_feeling=target,
+        strength=1.0,
+        clip=1.0,
+    )
+    # Compute the resulting feeling and check it matches target exactly.
+    from helios_v2.feeling.learning_path import _matvec
+    new_hormone = tuple(hormone[i] + adj[i] for i in range(9))
+    new_feeling = _matvec(_FIRST_VERSION_WEIGHTS, new_hormone)
+    for i in range(7):
+        # With clip=1.0 the helper leaves the adjustment unclamped,
+        # so the pseudo-inverse solution is exact (within numerical
+        # noise from the Gauss-Jordan elimination).
+        assert abs(new_feeling[i] - target[i]) < 0.01, (
+            f"closure reconstruction error at dim {i}: "
+            f"got {new_feeling[i]:.3f}, expected {target[i]:.3f}"
+        )
+
+
+def test_closure_disabled_returns_zero_adjustment():
+    """When strength=0.0, no adjustment is computed (caller's open-loop
+    path is preserved)."""
+    from helios_v2.feeling.learning_path import (
+        _compute_hormone_adjustment,
+        _FIRST_VERSION_WEIGHTS,
+    )
+    hormone = (0.5,) * 9
+    target = (0.5,) * 7
+    adj = _compute_hormone_adjustment(
+        W=_FIRST_VERSION_WEIGHTS,
+        current_hormone=hormone,
+        target_feeling=target,
+        strength=0.0,
+        clip=0.5,
+    )
+    assert adj == (0.0,) * 9
+
+
+def test_closure_clip_bounds_adjustment():
+    """Each channel of the adjustment is clipped to [-clip, +clip]."""
+    from helios_v2.feeling.learning_path import (
+        _compute_hormone_adjustment,
+        _FIRST_VERSION_WEIGHTS,
+    )
+    # Use an extreme target to force large adjustments
+    hormone = (0.5,) * 9
+    target = (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0)
+    adj = _compute_hormone_adjustment(
+        W=_FIRST_VERSION_WEIGHTS,
+        current_hormone=hormone,
+        target_feeling=target,
+        strength=1.0,
+        clip=0.3,
+    )
+    for i, value in enumerate(adj):
+        assert -0.3 <= value <= 0.3, (
+            f"adj[{i}] = {value} is outside [-0.3, +0.3]"
+        )
+
+
+def test_closure_update_reduces_residual_vs_open_loop():
+    """An update with closure enabled produces a smaller max-residual
+    than an update with closure disabled (same W, same inputs)."""
+    from helios_v2.feeling.learning_path import (
+        P5FeelLearningConfig,
+        P5FeelLearningPath,
+    )
+    target = (0.1, 0.9, 0.9, 0.1, 0.3, 0.2, 0.1)
+    state = _neuromod_state(cortisol=0.5, dopamine=0.5)
+    # Open loop
+    open_path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(hormone_closure_enabled=False)
+    )
+    open_path.update(state, target, novelty=0.1, tick_id=0)
+    open_res = open_path.last_residual()
+    open_max = max(abs(v) for v in open_res)
+    # Closed loop
+    closed_path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(hormone_closure_enabled=True)
+    )
+    closed_path.update(state, target, novelty=0.1, tick_id=0)
+    closed_res = closed_path.last_residual()
+    closed_max = max(abs(v) for v in closed_res)
+    # The closed-loop residual should be much smaller than the open-loop.
+    assert closed_max < open_max, (
+        f"closure did not reduce residual: open={open_max:.3f}, closed={closed_max:.3f}"
+    )
+
+
+def test_closure_config_validates_strength_range():
+    """Out-of-range hormone_closure_strength raises ValueError."""
+    from helios_v2.feeling.learning_path import P5FeelLearningConfig
+    import pytest
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_strength=-0.1)
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_strength=1.5)
+
+
+def test_closure_config_validates_clip_range():
+    """Out-of-range hormone_closure_clip raises ValueError."""
+    from helios_v2.feeling.learning_path import P5FeelLearningConfig
+    import pytest
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_clip=0.0)
+    with pytest.raises(ValueError):
+        P5FeelLearningConfig(hormone_closure_clip=1.5)
