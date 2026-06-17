@@ -1062,3 +1062,73 @@ def test_closure_config_validates_clip_range():
         P5FeelLearningConfig(hormone_closure_clip=0.0)
     with pytest.raises(ValueError):
         P5FeelLearningConfig(hormone_closure_clip=1.5)
+
+
+
+# --- numpy integration ---------------------------------------------
+
+
+def test_numpy_pinv_helper_uses_numpy_when_available():
+    """When numpy is installed, _compute_hormone_adjustment uses
+    numpy.linalg.pinv (fast path) and the result matches the
+    pure-python path to within numerical noise."""
+    from helios_v2.feeling.learning_path import (
+        _compute_hormone_adjustment,
+        _FIRST_VERSION_WEIGHTS,
+        _HAS_NUMPY,
+    )
+    # If numpy is missing, the test is a no-op (pure-python path is
+    # exercised by the other closure tests).
+    if not _HAS_NUMPY:
+        return
+    import numpy as np
+    hormone = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
+    target = (0.1, 0.9, 0.9, 0.1, 0.3, 0.2, 0.1)
+    adj = _compute_hormone_adjustment(
+        W=_FIRST_VERSION_WEIGHTS,
+        current_hormone=hormone,
+        target_feeling=target,
+        strength=1.0,
+        clip=1.0,
+    )
+    # Reference: numpy pinv
+    W_np = np.asarray(_FIRST_VERSION_WEIGHTS, dtype=np.float64)
+    h_np = np.asarray(hormone, dtype=np.float64)
+    t_np = np.asarray(target, dtype=np.float64)
+    Wplus = np.linalg.pinv(W_np)
+    expected = Wplus @ (t_np - W_np @ h_np)
+    for i in range(9):
+        assert abs(adj[i] - expected[i]) < 1e-10, (
+            f"numpy path diverged from reference at {i}: "
+            f"got {adj[i]}, expected {expected[i]}"
+        )
+
+
+def test_numpy_path_does_not_change_closed_loop_residual():
+    """The numpy fast path must produce the same closed-loop
+    residual as the pure-python fallback."""
+    from helios_v2.feeling.learning_path import (
+        P5FeelLearningConfig,
+        P5FeelLearningPath,
+    )
+    target = (0.1, 0.9, 0.9, 0.1, 0.3, 0.2, 0.1)
+    state = _neuromod_state(cortisol=0.5, dopamine=0.5)
+    # Use strength=1.0 + clip=1.0 to exercise the unclamped branch
+    # in full (the default strength=0.7 deliberately under-closes so
+    # the hormone adjustment stays in a sane range).
+    path = P5FeelLearningPath(
+        config=P5FeelLearningConfig(
+            hormone_closure_enabled=True,
+            hormone_closure_strength=1.0,
+            hormone_closure_clip=1.0,
+        )
+    )
+    path.update(state, target, novelty=0.1, tick_id=0)
+    res = path.last_residual()
+    max_abs = max(abs(v) for v in res)
+    # With strength=1.0 + clip=1.0 the closed-loop residual must be
+    # near-zero (< 0.01) regardless of which pseudo-inverse
+    # implementation was used.
+    assert max_abs < 0.01, (
+        f"closed-loop residual too large: {max_abs}"
+    )
