@@ -101,20 +101,21 @@ FEELING_DIMENSIONS: tuple[str, ...] = (
 #     semantics, matching the original subtract form). ------------------
 
 _FIRST_VERSION_WEIGHTS: tuple[tuple[float, ...], ...] = (
-    # valence: dopamine + opioid_tone + serotonin up, cortisol down
-    (0.30, 0.00, 0.15, 0.00, -0.30, 0.00, 0.15, 0.00, 0.00),
-    # arousal: norepinephrine + excitation up
-    (0.00, 0.40, 0.00, 0.00, 0.00, 0.00, 0.00, 0.20, 0.00),
-    # tension: cortisol + norepinephrine up
-    (0.00, 0.20, 0.00, 0.00, 0.40, 0.00, 0.00, 0.00, 0.00),
-    # comfort: opioid_tone + oxytocin + serotonin up, cortisol down
-    (0.00, 0.00, 0.15, 0.00, -0.30, 0.20, 0.30, 0.00, 0.00),
-    # fatigue: inhibition + excitation (weak first-version)
-    (0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.20, 0.20),
-    # pain_like: cortisol up, opioid_tone down
-    (0.00, 0.00, 0.00, 0.00, 0.40, 0.00, -0.35, 0.00, 0.00),
-    # social_safety: oxytocin + serotonin up, cortisol down
-    (0.00, 0.00, 0.15, 0.00, -0.25, 0.40, 0.00, 0.00, 0.00),
+    # valence: reward - punishment asymmetry (Panksepp SEEKING + opioid + 5-HT)
+    # |dopamine|norepinephrine|serotonin|acetylcholine|cortisol|oxytocin|opioid_tone|excitation|inhibition
+    ( 0.30,  0.10,  0.15,  0.05, -0.30,  0.20,  0.15,  0.05, -0.05),
+    # arousal: sympathetic activation (NE + DA + ACh up, 5-HT down, inhibition down)
+    ( 0.10,  0.40, -0.10,  0.10,  0.05,  0.00,  0.00,  0.20, -0.10),
+    # tension: threat vigilance (cortisol + NE + ACh up, oxytocin + opioid down)
+    ( 0.00,  0.20,  0.00,  0.10,  0.40, -0.10, -0.10,  0.10,  0.00),
+    # comfort: soothing (opioid + oxytocin + 5-HT up, cortisol + NE + ACh down)
+    ( 0.10, -0.10,  0.15, -0.10, -0.30,  0.20,  0.30, -0.05,  0.05),
+    # fatigue: depletion (cortisol + inhibition + excitation up, DA + 5-HT + opioid down)
+    (-0.30,  0.00, -0.20, -0.05,  0.30, -0.10, -0.15,  0.20,  0.20),
+    # pain_like: nociception (cortisol + NE + excitation up, DA + 5-HT + opioid down)
+    (-0.20,  0.20, -0.20,  0.00,  0.40,  0.00, -0.35,  0.10,  0.00),
+    # social_safety: attachment (oxytocin + 5-HT up, cortisol down, DA + opioid up)
+    ( 0.10,  0.00,  0.15,  0.05, -0.25,  0.40,  0.10,  0.00, -0.05),
 )
 
 
@@ -263,13 +264,13 @@ class P5FeelLearningConfig:
         `__post_init__`.
     """
 
-    learning_rate: float = 0.01
-    commit_threshold: float = 0.02
-    min_stable_ticks: int = 20
-    frozen_ticks_post_commit: int = 10
+    learning_rate: float = 0.05
+    commit_threshold: float = 0.3
+    min_stable_ticks: int = 8
+    frozen_ticks_post_commit: int = 5
     precision_floor: float = 0.1
     precision_ceiling: float = 1.0
-    flexibility_threshold: float = 0.4
+    flexibility_threshold: float = 0.3
     flexibility_floor: float = 0.1
     flexibility_ceiling: float = 1.0
     weight_clip_low: float = -2.0
@@ -277,10 +278,11 @@ class P5FeelLearningConfig:
     bias_clip_low: float = -1.0
     bias_clip_high: float = 1.0
     residual_history_size: int = 20
-    regime_hysteresis_ticks: int = 2
+    regime_hysteresis_ticks: int = 3
     exploratory_min_dopamine: float = 0.0  # ACh gates; dopamine does NOT gate in exploratory
-    habitual_recent_window: int = 5
+    habitual_recent_window: int = 3
     habitual_older_window: int = 20
+    habitual_residual_threshold: float = 0.5
 
     def __post_init__(self) -> None:
         if self.learning_rate <= 0.0 or self.learning_rate > 1.0:
@@ -327,6 +329,10 @@ class P5FeelLearningConfig:
             raise ValueError("habitual windows must be positive")
         if self.habitual_recent_window >= self.habitual_older_window:
             raise ValueError("habitual_recent_window must be < habitual_older_window")
+        if not (0.0 <= self.habitual_residual_threshold <= 1.0):
+            raise ValueError(
+                f"habitual_residual_threshold must be in [0, 1], got {self.habitual_residual_threshold}"
+            )
 
 
 @dataclass
@@ -523,13 +529,17 @@ class P5FeelLearningPath:
 
         if recent_residuals is not None:
             for r in recent_residuals:
-                if max(abs(v) for v in r) >= self.config.commit_threshold:
+                # R-PROTO-LEARN.8: strict `<` so residuals that land exactly
+                # on the threshold (e.g. 0.5 from clamp boundary) still
+                # commit; the previous `>=` was too strict and prevented
+                # commit when `_clamp` pinned residual to the boundary.
+                if max(abs(v) for v in r) > self.config.commit_threshold:
                     return False
             return len(recent_residuals) >= self.config.min_stable_ticks
         if len(self._residual_history) < self.config.min_stable_ticks:
             return False
         for r in list(self._residual_history)[-self.config.min_stable_ticks :]:
-            if max(abs(v) for v in r) >= self.config.commit_threshold:
+            if max(abs(v) for v in r) > self.config.commit_threshold:
                 return False
         return True
 
@@ -657,14 +667,17 @@ class P5FeelLearningPath:
         if recent_n < self.config.habitual_recent_window:
             return False
         recent = list(self._residual_history)[-recent_n:]
+        # R-PROTO-LEARN.8: use the looser habitual_residual_threshold
+        # (not commit_threshold) so HABITUAL is reachable under real LLM
+        # appraisal residuals (avg 0.5-0.7 vs commit_threshold=0.3).
         recent_mag = sum(max(abs(v) for v in r) for r in recent) / recent_n
-        if recent_mag >= self.config.commit_threshold:
+        if recent_mag >= self.config.habitual_residual_threshold:
             return False
         if older_n < self.config.habitual_recent_window:
             return True
         older = list(self._residual_history)[-self.config.habitual_older_window : -recent_n]
         older_mag = sum(max(abs(v) for v in r) for r in older) / older_n
-        return abs(recent_mag - older_mag) < 0.01
+        return abs(recent_mag - older_mag) < 0.05
 
     def _should_commit(self) -> bool:
         return self.commit_if_stable()

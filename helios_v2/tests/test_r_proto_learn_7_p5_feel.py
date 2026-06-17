@@ -219,7 +219,14 @@ def test_commit_oscillating_residuals_does_not_commit():
 
 
 def test_commit_threshold_boundary():
-    """Residual equal to threshold counts as not-stable (>=)."""
+    """R-PROTO-LEARN.8: residual at the threshold is stable (strict <).
+
+    Pre-fix this asserted `is False` because the boundary used `>=`.
+    Post-fix the boundary is inclusive (strict `<`) so residuals that land
+    exactly on the threshold (e.g. `_clamp` pinning to 0.5) still commit.
+    This avoids spurious no-commit results when the residual hits the
+    clamp boundary.
+    """
 
     path = P5FeelLearningPath(
         config=P5FeelLearningConfig(min_stable_ticks=5, commit_threshold=0.02)
@@ -227,7 +234,16 @@ def test_commit_threshold_boundary():
     path._residual_history.extend(
         [(0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)] * 5
     )
-    assert path.commit_if_stable() is False
+    assert path.commit_if_stable() is True
+
+    # Strictly above the threshold must still be rejected.
+    path2 = P5FeelLearningPath(
+        config=P5FeelLearningConfig(min_stable_ticks=5, commit_threshold=0.02)
+    )
+    path2._residual_history.extend(
+        [(0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)] * 5
+    )
+    assert path2.commit_if_stable() is False
 
 
 def test_commit_explicit_recent_residuals_arg():
@@ -402,10 +418,22 @@ def test_regime_stable_residuals_drive_habitual():
 
 
 def test_regime_default_is_model_based():
-    """Generic residuals -> MODEL_BASED."""
+    """Generic residuals -> MODEL_BASED.
+
+    R-PROTO-LEARN.8: under the new looser `habitual_residual_threshold=0.5`,
+    a 0.2-magnitude residual series is stable enough to enter HABITUAL
+    if recent matches older exactly. We therefore require a strict
+    `habitual_residual_threshold=0.05` and `habitual_recent_window=5` here
+    to validate the MODEL_BASED path on a generic (medium-magnitude)
+    residual series.
+    """
 
     path = P5FeelLearningPath(
-        config=P5FeelLearningConfig(regime_hysteresis_ticks=1)
+        config=P5FeelLearningConfig(
+            regime_hysteresis_ticks=1,
+            habitual_residual_threshold=0.05,
+            habitual_recent_window=5,
+        )
     )
     for _ in range(20):
         path._residual_history.append((0.2,) * 7)
@@ -729,18 +757,35 @@ def test_validate_bias_wrong_length_raises():
 
 
 def test_first_version_weights_match_r36_sparse():
-    """The dense first-version matrix should match the R36 sparse values
-    where the R36 had entries and be zero elsewhere."""
+    """R-PROTO-LEARN.8: the first-version matrix is now the full 7x9 dense
+    expansion of R36/R43 (49+ non-zero entries, 78% coverage) using
+    Panksepp 7-system + clinical priors. The R36 sparse roots are still
+    present at their original channels; the previously-zero cells now
+    carry small but non-zero weights.
 
-    # Row 0: valence from dopamine (0.30), opioid_tone (0.15),
-    # serotonin (0.15), cortisol (-0.30)
-    assert _FIRST_VERSION_WEIGHTS[0][0] == 0.30  # dopamine
-    assert _FIRST_VERSION_WEIGHTS[0][6] == 0.15  # opioid_tone
-    assert _FIRST_VERSION_WEIGHTS[0][2] == 0.15  # serotonin
-    assert _FIRST_VERSION_WEIGHTS[0][4] == -0.30  # cortisol
-    # Other entries should be 0
-    for j in (1, 3, 5, 7, 8):
-        assert _FIRST_VERSION_WEIGHTS[0][j] == 0.0
+    This test verifies the R36-sparse invariant still holds (the original
+    R36 entries are preserved) and that the expansion is dense (>= 49 of
+    63 entries are non-zero).
+    """
+
+    # Row 0: valence: dopamine (0.30), opioid_tone (0.15),
+    # serotonin (0.15), cortisol (-0.30) are the R36 roots.
+    assert _FIRST_VERSION_WEIGHTS[0][0] == 0.30  # dopamine (R36 root)
+    assert _FIRST_VERSION_WEIGHTS[0][6] == 0.15  # opioid_tone (R36 root)
+    assert _FIRST_VERSION_WEIGHTS[0][2] == 0.15  # serotonin (R36 root)
+    assert _FIRST_VERSION_WEIGHTS[0][4] == -0.30  # cortisol (R36 root)
+    # R-PROTO-LEARN.8: previously-zero cells now carry small non-zero
+    # Panksepp-informed weights (norepinephrine, acetylcholine, oxytocin,
+    # excitation, inhibition).
+    assert _FIRST_VERSION_WEIGHTS[0][1] == 0.10  # norepinephrine
+    assert _FIRST_VERSION_WEIGHTS[0][3] == 0.05  # acetylcholine
+    assert _FIRST_VERSION_WEIGHTS[0][5] == 0.20  # oxytocin
+    assert _FIRST_VERSION_WEIGHTS[0][7] == 0.05  # excitation
+    assert _FIRST_VERSION_WEIGHTS[0][8] == -0.05  # inhibition
+
+    # Density: at least 49 of 63 cells must be non-zero.
+    nonzero = sum(1 for row in _FIRST_VERSION_WEIGHTS for v in row if v != 0.0)
+    assert nonzero >= 49, f"expected dense W, got only {nonzero} non-zero entries"
 
 
 def test_first_version_bias_is_zero():
