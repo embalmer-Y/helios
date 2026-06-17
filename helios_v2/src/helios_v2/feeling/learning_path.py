@@ -49,6 +49,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Mapping
 
+import numpy as np
+
 from helios_v2.neuromodulation import NeuromodulatorState
 
 
@@ -195,99 +197,10 @@ def _validate_bias(bias: tuple[float, ...]) -> None:
 
 
 # --- R-PROTO-LEARN.9 hormone-feeling closure helpers -----------------
-# Moore-Penrose pseudo-inverse for the 7x9 weight matrix. We try numpy
-# first (faster, numerically robust) and fall back to a pure-python
-# Gauss-Jordan implementation on the small (7x7) (W W^T) matrix when
-# numpy is not available. The two implementations agree to within
-# 1e-14 in tests.
-
-
-def _numpy_available() -> bool:
-    try:
-        import numpy  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-_HAS_NUMPY = _numpy_available()
-
-
-def _matmul(A, B):
-    """Multiply A (m x k) by B (k x n), return m x n (pure python)."""
-    m = len(A)
-    k = len(A[0])
-    k2 = len(B)
-    n = len(B[0])
-    if k != k2:
-        raise ValueError(f"shape mismatch: A {m}x{k} * B {k2}x{n}")
-    return [
-        [sum(A[i][j] * B[j][l] for j in range(k)) for l in range(n)]
-        for i in range(m)
-    ]
-
-
-def _transpose(A):
-    m = len(A)
-    n = len(A[0])
-    return [[A[i][j] for i in range(m)] for j in range(n)]
-
-
-def _gauss_jordan_inverse(M):
-    """Invert a square matrix M (n x n) via Gauss-Jordan elimination.
-
-    Returns M^{-1} as n x n list of lists. Raises ValueError on singular
-    input.
-    """
-    n = len(M)
-    if any(len(row) != n for row in M):
-        raise ValueError("M must be square")
-    aug = [
-        [float(M[i][j]) for j in range(n)] + [1.0 if i == k else 0.0 for k in range(n)]
-        for i in range(n)
-    ]
-    for col in range(n):
-        pivot_row = None
-        for r in range(col, n):
-            if abs(aug[r][col]) > 1e-9:
-                pivot_row = r
-                break
-        if pivot_row is None:
-            raise ValueError("matrix is singular")
-        aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
-        piv = aug[col][col]
-        for j in range(2 * n):
-            aug[col][j] /= piv
-        for r in range(n):
-            if r == col:
-                continue
-            factor = aug[r][col]
-            if abs(factor) < 1e-12:
-                continue
-            for j in range(2 * n):
-                aug[r][j] -= factor * aug[col][j]
-    return [[aug[i][j + n] for j in range(n)] for i in range(n)]
-
-
-def _matvec(M, v):
-    """Multiply M (m x n) by v (length n) to get length m."""
-    return [sum(M[i][j] * v[j] for j in range(len(v))) for i in range(len(M))]
-
-
-def _pinv_tall(W):
-    """Moore-Penrose pseudo-inverse of a 7x9 (tall) matrix W.
-
-    Returns W^+ as 9x7. Uses W^+ = W^T (W W^T)^{-1}. Caller must ensure
-    W W^T is non-singular (the dense 7x9 R36+ weight matrix satisfies
-    this once at least 7 columns carry non-trivial values).
-    """
-    m_rows = len(W)
-    n_cols = len(W[0])
-    Wt = _transpose(W)
-    W_Wt = _matmul(W, Wt)
-    W_Wt_inv = _gauss_jordan_inverse(W_Wt)
-    return _matmul(Wt, W_Wt_inv)
+# Moore-Penrose pseudo-inverse for the 7x9 weight matrix. We use
+# numpy.linalg.pinv (SVD-based, numerically robust). numpy is a hard
+# runtime dependency of P5-feel, imported at the top of this module
+# and verified to be importable at first use.
 
 
 def _compute_hormone_adjustment(
@@ -302,7 +215,8 @@ def _compute_hormone_adjustment(
 
     1. Compute the current projection: current_feeling = W * hormone.
     2. Compute the residual in feeling space: r = target - current_feeling.
-    3. Compute the unconstrained hormone adjustment: adj0 = W^+ * r.
+    3. Compute the unconstrained hormone adjustment: adj0 = W^+ * r
+       via `numpy.linalg.pinv` (SVD-based, numerically robust).
     4. Scale by `strength` and (when clip < 1.0) clip per channel to +/- clip.
        When `clip >= 1.0` the adjustment is left unclamped so the linear
        least-squares solution can drive the closed-loop residual to ~0.
@@ -313,53 +227,27 @@ def _compute_hormone_adjustment(
     (= target - W * (hormone + adj)) is much smaller than the open-loop
     residual (= target - W * hormone).
 
-    Implementation:
-        Uses `numpy.linalg.pinv` when numpy is available (fast and
-        numerically robust via SVD). Falls back to a pure-python
-        Gauss-Jordan elimination on the 7x7 (W W^T) matrix when
-        numpy is not installed. The two paths agree to within 1e-14.
-
     Failure semantics:
-        If the pseudo-inverse cannot be computed (e.g. W W^T is
-        singular for the pure-python path), the helper returns an
-        all-zero adjustment (no closure that tick).
+        numpy is a hard dependency of P5-feel; if numpy is missing the
+        module fails fast at import time. Numerical errors from the
+        pseudo-inverse (e.g. NaN targets) propagate as numpy warnings
+        and are NOT silently swallowed; the caller can guard with
+        finite-checks on the LLM appraisal before invoking update().
     """
     if strength <= 0.0:
         return (0.0,) * len(current_hormone)
-    if _HAS_NUMPY:
-        try:
-            import numpy as np
-            W_np = np.asarray(W, dtype=np.float64)
-            hormone_np = np.asarray(current_hormone, dtype=np.float64)
-            target_np = np.asarray(target_feeling, dtype=np.float64)
-            Wplus_np = np.linalg.pinv(W_np)
-            current_feeling_np = W_np @ hormone_np
-            residual_np = target_np - current_feeling_np
-            adj0_np = Wplus_np @ residual_np
-            if clip >= 1.0:
-                return tuple(strength * float(x) for x in adj0_np)
-            return tuple(
-                _clamp(strength * float(adj0_np[i]), -clip, clip)
-                for i in range(len(adj0_np))
-            )
-        except Exception:
-            # Fall through to pure-python path on any numpy error.
-            pass
-    try:
-        Wplus = _pinv_tall(W)
-    except ValueError:
-        return (0.0,) * len(current_hormone)
-    current_feeling = _matvec(W, current_hormone)
-    residual = [
-        float(target_feeling[i]) - current_feeling[i]
-        for i in range(len(target_feeling))
-    ]
-    adj0 = _matvec(Wplus, residual)
+    W_np = np.asarray(W, dtype=np.float64)
+    hormone_np = np.asarray(current_hormone, dtype=np.float64)
+    target_np = np.asarray(target_feeling, dtype=np.float64)
+    Wplus_np = np.linalg.pinv(W_np)
+    current_feeling_np = W_np @ hormone_np
+    residual_np = target_np - current_feeling_np
+    adj0_np = Wplus_np @ residual_np
     if clip >= 1.0:
-        return tuple(strength * float(adj0[i]) for i in range(len(adj0)))
+        return tuple(strength * float(x) for x in adj0_np)
     return tuple(
-        _clamp(strength * float(adj0[i]), -clip, clip)
-        for i in range(len(adj0))
+        _clamp(strength * float(adj0_np[i]), -clip, clip)
+        for i in range(len(adj0_np))
     )
 
 

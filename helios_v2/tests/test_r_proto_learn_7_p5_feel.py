@@ -821,6 +821,7 @@ def test_feeling_dimensions_have_seven():
 def test_closure_hormone_adjustment_zero_residual_in_unclipped():
     """Without strength or clip, the closed-loop residual is zero (W
     exactly explains the target via the hormone adjustment)."""
+    import numpy as np
     from helios_v2.feeling.learning_path import (
         _compute_hormone_adjustment,
         _FIRST_VERSION_WEIGHTS,
@@ -835,15 +836,16 @@ def test_closure_hormone_adjustment_zero_residual_in_unclipped():
         strength=1.0,
         clip=1.0,
     )
-    # Compute the resulting feeling and check it matches target exactly.
-    from helios_v2.feeling.learning_path import _matvec
-    new_hormone = tuple(hormone[i] + adj[i] for i in range(9))
-    new_feeling = _matvec(_FIRST_VERSION_WEIGHTS, new_hormone)
+    # Compute the resulting feeling via numpy W * (hormone + adj).
+    W_np = np.asarray(_FIRST_VERSION_WEIGHTS, dtype=np.float64)
+    new_hormone = np.asarray(
+        [hormone[i] + adj[i] for i in range(9)], dtype=np.float64
+    )
+    new_feeling = W_np @ new_hormone
     for i in range(7):
         # With clip=1.0 the helper leaves the adjustment unclamped,
-        # so the pseudo-inverse solution is exact (within numerical
-        # noise from the Gauss-Jordan elimination).
-        assert abs(new_feeling[i] - target[i]) < 0.01, (
+        # so the numpy pinv solution is exact (within float64 noise).
+        assert abs(new_feeling[i] - target[i]) < 1e-9, (
             f"closure reconstruction error at dim {i}: "
             f"got {new_feeling[i]:.3f}, expected {target[i]:.3f}"
         )
@@ -946,6 +948,7 @@ def test_closure_config_validates_clip_range():
 def test_closure_hormone_adjustment_zero_residual_in_unclipped():
     """Without strength or clip, the closed-loop residual is zero (W
     exactly explains the target via the hormone adjustment)."""
+    import numpy as np
     from helios_v2.feeling.learning_path import (
         _compute_hormone_adjustment,
         _FIRST_VERSION_WEIGHTS,
@@ -960,15 +963,16 @@ def test_closure_hormone_adjustment_zero_residual_in_unclipped():
         strength=1.0,
         clip=1.0,
     )
-    # Compute the resulting feeling and check it matches target exactly.
-    from helios_v2.feeling.learning_path import _matvec
-    new_hormone = tuple(hormone[i] + adj[i] for i in range(9))
-    new_feeling = _matvec(_FIRST_VERSION_WEIGHTS, new_hormone)
+    # Compute the resulting feeling via numpy W * (hormone + adj).
+    W_np = np.asarray(_FIRST_VERSION_WEIGHTS, dtype=np.float64)
+    new_hormone = np.asarray(
+        [hormone[i] + adj[i] for i in range(9)], dtype=np.float64
+    )
+    new_feeling = W_np @ new_hormone
     for i in range(7):
         # With clip=1.0 the helper leaves the adjustment unclamped,
-        # so the pseudo-inverse solution is exact (within numerical
-        # noise from the Gauss-Jordan elimination).
-        assert abs(new_feeling[i] - target[i]) < 0.01, (
+        # so the numpy pinv solution is exact (within float64 noise).
+        assert abs(new_feeling[i] - target[i]) < 1e-9, (
             f"closure reconstruction error at dim {i}: "
             f"got {new_feeling[i]:.3f}, expected {target[i]:.3f}"
         )
@@ -1068,19 +1072,13 @@ def test_closure_config_validates_clip_range():
 # --- numpy integration ---------------------------------------------
 
 
-def test_numpy_pinv_helper_uses_numpy_when_available():
-    """When numpy is installed, _compute_hormone_adjustment uses
-    numpy.linalg.pinv (fast path) and the result matches the
-    pure-python path to within numerical noise."""
+def test_numpy_pinv_helper_uses_numpy():
+    """P5-feel uses numpy.linalg.pinv (SVD-based). The helper result
+    matches a reference numpy computation to within numerical noise."""
     from helios_v2.feeling.learning_path import (
         _compute_hormone_adjustment,
         _FIRST_VERSION_WEIGHTS,
-        _HAS_NUMPY,
     )
-    # If numpy is missing, the test is a no-op (pure-python path is
-    # exercised by the other closure tests).
-    if not _HAS_NUMPY:
-        return
     import numpy as np
     hormone = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
     target = (0.1, 0.9, 0.9, 0.1, 0.3, 0.2, 0.1)
@@ -1105,8 +1103,9 @@ def test_numpy_pinv_helper_uses_numpy_when_available():
 
 
 def test_numpy_path_does_not_change_closed_loop_residual():
-    """The numpy fast path must produce the same closed-loop
-    residual as the pure-python fallback."""
+    """With strength=1.0 + clip=1.0 the closed-loop residual must
+    be near-zero (< 0.01), verifying the closure is exact in the
+    unclamped regime."""
     from helios_v2.feeling.learning_path import (
         P5FeelLearningConfig,
         P5FeelLearningPath,
@@ -1126,9 +1125,20 @@ def test_numpy_path_does_not_change_closed_loop_residual():
     path.update(state, target, novelty=0.1, tick_id=0)
     res = path.last_residual()
     max_abs = max(abs(v) for v in res)
-    # With strength=1.0 + clip=1.0 the closed-loop residual must be
-    # near-zero (< 0.01) regardless of which pseudo-inverse
-    # implementation was used.
     assert max_abs < 0.01, (
         f"closed-loop residual too large: {max_abs}"
+    )
+
+
+def test_p5_feel_module_requires_numpy():
+    """P5-feel hard-couples to numpy. Verify the module imports
+    numpy at the top (no lazy import / no fallback path)."""
+    import helios_v2.feeling.learning_path as lp
+    import numpy as np
+    # The module must have numpy available as `np` in its namespace
+    # (the pinv call uses it). If a future refactor moves the
+    # import into a function, this test will fail loud.
+    assert lp.np is np, (
+        "learning_path.np is not the same as the imported numpy; "
+        "ensure numpy is imported at module top level."
     )
