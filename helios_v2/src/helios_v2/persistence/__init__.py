@@ -14,6 +14,7 @@ from .contracts import (
     SimilaritySearchResult,
     UNASSIGNED_SEQUENCE,
 )
+from helios_v2.memory.contracts import MemoryLayer, VALID_MEMORY_LAYERS
 from .engine import (
     ExperienceStore,
     InMemoryExperienceStoreBackend,

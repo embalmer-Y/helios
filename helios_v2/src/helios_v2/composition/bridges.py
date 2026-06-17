@@ -66,6 +66,8 @@ from helios_v2.memory import (
     MemoryContentPacket,
     MemoryFamily,
     MemoryFormationPath,
+    MemoryLayer,
+    MemoryRecord,
     MemoryReplayCandidate,
     PredictionMismatchEvidence,
     RecalledMemoryFact,
@@ -825,6 +827,7 @@ class ExperienceRecordBridge:
         writeback_stage_result,
         tick_id,
         tick_wall_seconds: float | None = None,
+        memory_records: tuple[MemoryRecord, ...] = (),    # R100: layer-assigned cognitive records from `06`
     ) -> tuple[PersistedExperienceRecord, ...]:
         """Owner: composition.
 
@@ -837,6 +840,10 @@ class ExperienceRecordBridge:
             `tick_wall_seconds` - R92: the kernel-seeded wall-time for this tick (`None` when no
                 `WallClock` was wired). Forwarded verbatim to each record's `created_at_wall`;
                 composition computes nothing.
+            `memory_records` - R100: the tick's `MemoryRecord`s from the `06` memory engine.
+                When a `MemoryRecord`'s `memory_id` matches a linkage key `source_memory_id`,
+                its `layer` and `memory_metadata` are projected onto the durable record.
+                When no match is found, `layer=None` and `memory_metadata=empty` (honest absence).
 
         Returns:
             One `PersistedExperienceRecord` per published writeback result, preserving
@@ -845,7 +852,13 @@ class ExperienceRecordBridge:
         Notes:
             Linkage is copied verbatim from each continuity packet's `source_provenance`; only
             string-valued linkage ids are kept (the record contract requires string ids).
+            The `layer` and `memory_metadata` projection is additive: when `memory_records` is
+            empty (the default), all durable records carry `layer=None` and empty `memory_metadata`,
+            which is the pre-R100 baseline unchanged.
         """
+
+        # R100: build lookup from MemoryRecords for layer/metadata projection
+        record_by_id = {r.memory_id: r for r in memory_records}
 
         records: list[PersistedExperienceRecord] = []
         for result in writeback_stage_result.results:
@@ -855,6 +868,9 @@ class ExperienceRecordBridge:
                 for key, value in packet.source_provenance.items()
                 if isinstance(value, str) and value
             }
+            # R100: look for a matching MemoryRecord by linkage key
+            source_memory_id = linkage.get("source_memory_id")
+            matching_memory_record = record_by_id.get(source_memory_id) if source_memory_id else None
             records.append(
                 PersistedExperienceRecord(
                     record_id=f"experience:{result.result_id}",
@@ -870,6 +886,9 @@ class ExperienceRecordBridge:
                     reason_trace=packet.reason_trace,
                     linkage=linkage,
                     created_at_wall=tick_wall_seconds,
+                    # R100: project layer and memory_metadata from matching MemoryRecord
+                    layer=matching_memory_record.layer if matching_memory_record else None,
+                    memory_metadata=dict(matching_memory_record.memory_metadata) if matching_memory_record else {},
                 )
             )
         return tuple(records)
@@ -930,11 +949,14 @@ class MemoryRecordBridge:
             for candidate in state.replay_candidates
             if candidate.forced_consolidation
         }
+        # R100: build lookup from memory_records for layer/metadata projection
+        memory_record_by_id = {r.memory_id: r for r in state.memory_records}
         records: list[PersistedExperienceRecord] = []
         for item in state.memory_items:
             candidate = worthy_candidates.get(item.memory_id)
             if candidate is None:
                 continue
+            matching_memory_record = memory_record_by_id.get(item.memory_id)
             linkage = {"source_feeling_state_id": item.source_feeling_state_id}
             if item.binding_context_id:
                 linkage["binding_context_id"] = item.binding_context_id
@@ -961,6 +983,9 @@ class MemoryRecordBridge:
                     record_kind="affect_memory",
                     metadata=metadata,
                     created_at_wall=tick_wall_seconds,
+                    # R100: project layer and memory_metadata from matching MemoryRecord
+                    layer=matching_memory_record.layer if matching_memory_record else None,
+                    memory_metadata=dict(matching_memory_record.memory_metadata) if matching_memory_record else {},
                 )
             )
         return tuple(records)
@@ -1063,6 +1088,10 @@ class StoreBackedRecalledMemoryProvider(RecalledMemoryProvider):
     store: ExperienceStore
     limit: int = 3
     max_scan: int = 256
+    # R100: optional layer preference forwarded to `search_similar(preferred_layers=...)`.
+    # When None, no preference boost is applied (pre-R100 behavior). When a non-empty tuple,
+    # the store's `search_similar` ranking boosts records whose `layer` is in the set.
+    preferred_layers: "tuple[MemoryLayer, ...] | None" = None
 
     def recall(
         self,
@@ -1076,7 +1105,10 @@ class StoreBackedRecalledMemoryProvider(RecalledMemoryProvider):
         if not query_text.strip():
             return ()
         query_vector = self.embed_text(query_text)
-        result = self.store.search_similar(query_vector, limit=self.limit, max_scan=self.max_scan)
+        result = self.store.search_similar(
+            query_vector, limit=self.limit, max_scan=self.max_scan,
+            preferred_layers=self.preferred_layers,
+        )
         facts: list[RecalledMemoryFact] = []
         for hit in result.hits:
             record = hit.record

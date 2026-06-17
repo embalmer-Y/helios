@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+import time as _time
 
 from helios_v2.feeling import InteroceptiveFeelingState
 
@@ -27,6 +28,8 @@ from .contracts import (
     MemoryContentPacket,
     MemoryFamily,
     MemoryFormationState,
+    MemoryLayer,
+    MemoryRecord,
     MemoryReplayCandidate,
     PredictionMismatchEvidence,
     PublishMemoryFormationStateOp,
@@ -180,30 +183,44 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
     recalled_arousal_weight: float = 0.5
     recalled_tension_weight: float = 0.3
     recalled_pain_weight: float = 0.2
+    # R100: injected layer classifier. When absent, MemoryRecord is not produced
+    # and the legacy path runs byte-for-byte unchanged.
+    layer_classifier: MemoryLayerClassifier | None = None
+    # Affect intensity computation weights (under consolidation_policy learned-parameter category).
+    # These match the first-version SalienceGatedReplayCandidateSelector defaults.
+    affect_arousal_weight: float = 0.5
+    affect_tension_weight: float = 0.3
+    affect_pain_weight: float = 0.2
+    affect_mismatch_weight: float = 0.6
 
     def record_state(
         self,
         feeling_state: InteroceptiveFeelingState,
         binding_context: MemoryBindingContext | None = None,
         mismatch_evidence: PredictionMismatchEvidence | None = None,
+        outcome_class: str = "no_outcome",
         tick_id: int | None = None,
     ) -> MemoryFormationState:
         """Owner: memory affect and replay layer.
 
         Purpose:
-            Consume one feeling-state snapshot and return one owner state containing memory items and replay candidates.
+            Consume one feeling-state snapshot and return one owner state containing memory items, replay candidates, and memory records.
 
         Inputs:
-            One `InteroceptiveFeelingState`, optional `MemoryBindingContext`, optional `PredictionMismatchEvidence`, and an optional runtime tick id.
+            One `InteroceptiveFeelingState`, optional `MemoryBindingContext`, optional `PredictionMismatchEvidence`,
+            an optional `outcome_class` (default "no_outcome"), and an optional runtime tick id.
 
         Returns:
-            A `MemoryFormationState` containing owner-produced memory items and replay candidates.
+            A `MemoryFormationState` containing owner-produced memory items, replay candidates, and memory records.
 
         Raises:
             MemoryAffectReplayError when input invariants or collaborator outputs are invalid.
 
         Notes:
             Remaining unresolved retrieval, workspace-promotion, and identity-writeback semantics stay outside this owner skeleton.
+            When `layer_classifier` is present, `MemoryRecord` is produced for each forced-consolidation candidate;
+            when absent, no MemoryRecord is produced (legacy path byte-for-byte unchanged). The `outcome_class`
+            parameter carries the 15 outcome taxonomy at write time and is used by the classifier for layer assignment.
         """
 
         _validate_feeling_state(feeling_state)
@@ -232,13 +249,88 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
             feeling_state,
             binding_context,
         )
+        # R100: produce MemoryRecord for each forced-consolidation candidate when classifier is present.
+        # When classifier is absent, memory_records is empty (legacy path unchanged).
+        memory_records = self._produce_memory_records(
+            tuple(memory_items),
+            tuple(replay_candidates),
+            feeling_state,
+            outcome_class,
+            tick_id,
+        )
         return MemoryFormationState(
             state_id=f"memory-formation-state:{feeling_state.state_id}:{tick_id if tick_id is not None else 'na'}",
             source_feeling_state_id=feeling_state.state_id,
             memory_items=tuple(memory_items),
             replay_candidates=tuple(replay_candidates),
+            memory_records=memory_records,
             tick_id=tick_id,
         )
+
+    def _produce_memory_records(
+        self,
+        memory_items: tuple[AffectTaggedMemoryItem, ...],
+        replay_candidates: tuple[MemoryReplayCandidate, ...],
+        feeling_state: InteroceptiveFeelingState,
+        outcome_class: str,
+        tick_id: int | None,
+    ) -> tuple[MemoryRecord, ...]:
+        """Owner: memory affect and replay layer (R100).
+
+        Produce MemoryRecords for forced-consolidation candidates when the layer classifier
+        is present. When the classifier is absent, returns an empty tuple (legacy path
+        byte-for-byte unchanged).
+
+        The affect_intensity passed to the classifier is the salience gate's computed value:
+        max(raw_affect_intensity, mismatch_weight * mismatch_score). This captures the overall
+        significance that triggered consolidation, combining felt affect and prediction mismatch.
+        The outcome_class is the 15 outcome taxonomy at write time.
+        """
+
+        if self.layer_classifier is None:
+            return ()
+
+        # Compute affect_intensity from the feeling state (same formula as the default selector)
+        feeling = feeling_state.feeling
+        affect_intensity = _clamp_unit(
+            self.affect_arousal_weight * feeling.arousal
+            + self.affect_tension_weight * feeling.tension
+            + self.affect_pain_weight * feeling.pain_like
+        )
+        # Compute the full salience gate value (max of affect and mismatch contribution)
+        # The classifier's affect_intensity parameter is "the 06 salience gate's computed value".
+        mismatch_score = 0.0  # mismatch_evidence not available in this context; engine uses
+                             # the selector's gate output indirectly. When the selector's priority_hint
+                             # is available on the candidate, we use that; otherwise we use affect_intensity.
+        records: list[MemoryRecord] = []
+        # Build a map from memory_id to AffectTaggedMemoryItem for fast lookup
+        item_by_id = {item.memory_id: item for item in memory_items}
+        for candidate in replay_candidates:
+            if not candidate.forced_consolidation:
+                continue  # R100: only forced-consolidation items get MemoryRecord
+            item = item_by_id.get(candidate.memory_id)
+            if item is None:
+                continue  # safety: skip if item not found (shouldn't happen after validation)
+            # Determine the salience gate value for the classifier.
+            # Use priority_hint (the selector's gate output) when available;
+            # fall back to raw affect_intensity when priority_hint is None.
+            gate_value = candidate.priority_hint if candidate.priority_hint is not None else affect_intensity
+            layer = self.layer_classifier.classify_layer(gate_value, outcome_class)
+            records.append(
+                MemoryRecord(
+                    memory_id=item.memory_id,
+                    layer=layer,
+                    affect_intensity_at_write=gate_value,
+                    outcome_class_at_write=outcome_class,
+                    source_feeling_state_id=feeling_state.state_id,
+                    family=item.family,
+                    content=item.content,
+                    binding_context_id=item.binding_context_id,
+                    tick_id=tick_id,
+                    created_at_wall=_time.time(),
+                )
+            )
+        return tuple(records)
 
     def _surface_recalled_memories(
         self,
@@ -569,3 +661,88 @@ class SalienceGatedReplayCandidateSelector(ReplayCandidateSelector):
             if "high_affect_intensity" not in reasons:
                 reasons.insert(0, "high_affect_intensity")
         return tuple(reasons)
+
+
+@runtime_checkable
+class MemoryLayerClassifier(Protocol):
+    """Owner: memory affect and replay layer.
+
+    Purpose:
+        Determine the initial MemoryLayer for a memory item based on
+        formation-time affect_intensity and outcome_class.
+
+    Notes:
+        Injected by composition; the engine does not import it statically.
+        When absent, MemoryRecord is not produced and the legacy path runs unchanged.
+    """
+
+    def classify_layer(
+        self,
+        affect_intensity: float,
+        outcome_class: str,
+    ) -> MemoryLayer:
+        """Owner: memory affect and replay layer.
+
+        Purpose:
+            Return the initial layer assignment for this memory item.
+
+        Inputs:
+            `affect_intensity` — the 06 salience gate's computed value at formation time.
+            `outcome_class` — the 15 outcome taxonomy at write time.
+
+        Returns:
+            One of the 4-layer taxonomy values (L2_working / L3_short / L4_long / L5_autobiographical).
+        """
+
+        ...
+
+
+@dataclass
+class AffectOutcomeMemoryLayerClassifier:
+    """Owner: memory affect and replay layer.
+
+    Purpose:
+        First-version layer classifier using affect_intensity thresholds and outcome_class
+        taxonomy. All thresholds are C_engineering_hypothesis first-version constants under
+        'layer_assignment_policy'.
+
+    Brain analogy:
+        L2 ≈ sensory register (sub-second); L3 ≈ hippocampal short-term (minutes-hours);
+        L4 ≈ cortical long-term (days-weeks); L5 ≈ autobiographical/identity (months-years).
+        The thresholds are cautious engineering approximations, not calibrated neuroscience.
+
+    Failure semantics:
+        Pure deterministic function of its inputs. Returns L2_working as the safest fallback
+        when inputs are ambiguous.
+    """
+
+    low_affect_threshold: float = 0.15       # C_engineering_hypothesis
+    high_affect_threshold: float = 0.50      # C_engineering_hypothesis
+    identity_outcome_classes: tuple[str, ...] = ("self_changed",)
+
+    def classify_layer(self, affect_intensity: float, outcome_class: str) -> MemoryLayer:
+        """Owner: memory affect and replay layer.
+
+        Purpose:
+            Assign the initial memory layer based on affect_intensity and outcome_class.
+
+        Rules (C_engineering_hypothesis, first-version constants):
+            - affect_intensity < 0.15 + (internal_to_visible_consequence or no_outcome) → L2_working
+            - affect_intensity < 0.15 + any other outcome → L3_short
+            - affect_intensity in [0.15, 0.50) + identity outcome → L4_long
+            - affect_intensity in [0.15, 0.50) + non-identity → L3_short
+            - affect_intensity >= 0.50 + identity outcome → L5_autobiographical
+            - affect_intensity >= 0.50 + non-identity → L4_long
+        """
+        if affect_intensity < self.low_affect_threshold:
+            if outcome_class in ("internal_to_visible_consequence", "no_outcome"):
+                return "L2_working"
+            return "L3_short"
+        if affect_intensity >= self.high_affect_threshold:
+            if outcome_class in self.identity_outcome_classes:
+                return "L5_autobiographical"
+            return "L4_long"
+        # affect_intensity in [low, high)
+        if outcome_class in self.identity_outcome_classes:
+            return "L4_long"
+        return "L3_short"

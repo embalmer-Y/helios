@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Mapping, cast
 
 from helios_v2.action_externalization import (
     ActionExternalizationConfig,
@@ -69,8 +69,10 @@ from helios_v2.llm import (
 )
 from helios_v2.memory import (
     AffectGroundedMemoryFormationPath,
+    AffectOutcomeMemoryLayerClassifier,
     MemoryAffectReplayConfig,
     MemoryAffectReplayEngine,
+    MemoryLayer,
     SalienceGatedReplayCandidateSelector,
 )
 from helios_v2.neuromodulation import (
@@ -1097,6 +1099,22 @@ class RuntimeProfile:
     # `default_signal_mode == "semantic"` (the appraisal + drive chain is active);
     # on `legacy_constant` the adjuster is never called.
     post_llm_hormone_adjuster: "object" = None
+    # R100: composition-side injection seam for the `06` memory owner's
+    # `MemoryLayerClassifier`. The default `None` means "the assembly builds a default
+    # `AffectOutcomeMemoryLayerClassifier()`" (R100 is on by default for the semantic
+    # assembly: write-time layer assignment, no cross-tick auto-promotion). Tests inject a
+    # custom classifier (e.g. a constant-layer fake) to verify the seam. When None and the
+    # semantic-memory path is OFF, the `06` engine runs byte-for-byte unchanged
+    # (MemoryRecord not produced). Only consumed when `default_signal_mode == "semantic"`.
+    memory_layer_classifier: "object" = None
+    # R100: composition-side injection seam for the `10` directed-retrieval owner's
+    # layer preference. The default `None` means "the semantic assembly wires
+    # `("L4_long", "L5_autobiographical")` (long-term tier preference); non-semantic keeps
+    # `None` (no preference boost)". Tests inject custom tuples to verify the seam. The
+    # value is forwarded to `search_similar(preferred_layers=...)` and
+    # `read_recent(layer_filter=...)` paths via the directed-retrieval candidate provider
+    # and the recalled-memory provider. Only consumed when `default_signal_mode == "semantic"`.
+    memory_layer_preference: "tuple[str, ...] | None" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1106,6 +1124,20 @@ class RuntimeProfile:
                 f"default_signal_mode must be 'semantic' or 'legacy_constant', "
                 f"got '{self.default_signal_mode}'"
             )
+        # R100: validate the layer-preference tuple. Each entry must be one of the 4-layer
+        # taxonomy values (or `None` to opt out of preference boost).
+        if self.memory_layer_preference is not None:
+            if not self.memory_layer_preference:
+                raise CompositionError(
+                    "memory_layer_preference must be either None (opt out) or a non-empty tuple of layer values"
+                )
+            valid_layers = {"L2_working", "L3_short", "L4_long", "L5_autobiographical"}
+            for layer_value in self.memory_layer_preference:
+                if layer_value not in valid_layers:
+                    raise CompositionError(
+                        f"memory_layer_preference entries must be one of {sorted(valid_layers)}, "
+                        f"got '{layer_value}'"
+                    )
         # Validate the embodied-prompt mode: v3 (owner-grounded, default) or v1 (legacy escape
         # hatch). An unknown mode is a composition error, not a silent fallback.
         if self.embodied_prompt_mode not in ("v1", "v3"):
@@ -1695,13 +1727,41 @@ def assemble_runtime(
     # memory from the real `05` feeling state and decides consolidation worth through an
     # owner-owned salience gate (replacing the constant first-version formation/selector). When
     # off, the deterministic first-version path is unchanged.
+    # R100: resolve the memory layer classifier and the layer preference tuple from the
+    # resolved profile. The semantic-memory assembly wires the default
+    # `AffectOutcomeMemoryLayerClassifier` and the long-term tier preference
+    # `("L4_long", "L5_autobiographical")`; the non-semantic path leaves both at `None`
+    # so the `06` engine runs byte-for-byte unchanged and the store sees no preference boost.
+    resolved_layer_classifier: object | None
+    resolved_layer_preference: tuple[MemoryLayer, ...] | None
+    if semantic_memory_enabled:
+        resolved_layer_classifier = (
+            resolved_profile.memory_layer_classifier
+            if resolved_profile.memory_layer_classifier is not None
+            else AffectOutcomeMemoryLayerClassifier()
+        )
+        resolved_layer_preference = (
+            tuple(cast("MemoryLayer", layer) for layer in resolved_profile.memory_layer_preference)
+            if resolved_profile.memory_layer_preference is not None
+            else ("L4_long", "L5_autobiographical")
+        )
+    else:
+        resolved_layer_classifier = None
+        resolved_layer_preference = None
     # `06` workspace-multiplicity source (R52): under the semantic-memory assembly, inject a
     # store-backed recalled-memory provider so `06` surfaces recalled prior affect-memories as
     # additional replay candidates, giving the `07` workspace a genuine multiplicity to arbitrate
     # (exercising R46/R47/R48 end to end). The owner owns the replay-priority mapping; this
     # provider supplies raw recalled facts only. Off when non-semantic (single-candidate path).
+    # R100: the recalled-memory provider now forwards `memory_layer_preference` into
+    # `store.search_similar(preferred_layers=...)` so long-term memories dominate the
+    # recalled set when the runtime enables the preference.
     recalled_memory_provider = (
-        StoreBackedRecalledMemoryProvider(embed_text=_embed_text, store=experience_store)
+        StoreBackedRecalledMemoryProvider(
+            embed_text=_embed_text,
+            store=experience_store,
+            preferred_layers=resolved_layer_preference,
+        )
         if semantic_memory_enabled
         else None
     )
@@ -1718,6 +1778,9 @@ def assemble_runtime(
             else FirstVersionReplayCandidateSelector()
         ),
         recalled_memory_provider=recalled_memory_provider,
+        # R100: write-time layer assignment. When `None` (non-semantic assembly), the engine
+        # produces no MemoryRecord (pre-R100 byte-for-byte path).
+        layer_classifier=cast("object | None", resolved_layer_classifier),
     )
     # `07` workspace de-shim (R46): under the semantic-memory assembly, `07` runs a real
     # competition (scoring each candidate from the real `06` priority_hint + the real `05`
@@ -1767,9 +1830,13 @@ def assemble_runtime(
             SemanticStoreBackedDirectedMemoryCandidateProvider(
                 store=experience_store,
                 embed_query=_embed_text,
+                preferred_layers=resolved_layer_preference,
             )
             if experience_store is not None and embedding_gateway is not None
-            else StoreBackedDirectedMemoryCandidateProvider(store=experience_store)
+            else StoreBackedDirectedMemoryCandidateProvider(
+                store=experience_store,
+                preferred_layers=resolved_layer_preference,
+            )
             if experience_store is not None
             else FirstVersionDirectedMemoryCandidateProvider()
         ),

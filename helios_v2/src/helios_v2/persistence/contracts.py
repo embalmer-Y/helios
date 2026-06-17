@@ -21,7 +21,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Mapping, Protocol, runtime_checkable
+from typing import Literal, Mapping, Protocol, runtime_checkable
+
+from helios_v2.memory.contracts import MemoryLayer, VALID_MEMORY_LAYERS
 
 
 class PersistenceError(RuntimeError):
@@ -72,6 +74,8 @@ class PersistedExperienceRecord:
     record_kind: str = "experience_writeback"
     metadata: Mapping[str, str] = field(default_factory=dict)
     created_at_wall: float | None = None
+    layer: MemoryLayer | None = None             # R100: honest absence for legacy records
+    memory_metadata: Mapping[str, str] = field(default_factory=dict)  # R100: opaque, 06-owned keys
 
     def __post_init__(self) -> None:
         for attr_name in (
@@ -113,6 +117,23 @@ class PersistedExperienceRecord:
                     "PersistedExperienceRecord embedding must be non-empty when present"
                 )
             object.__setattr__(self, "embedding", vector)
+        # R100: validate the optional `layer` field. None is honest absence (no classifier
+        # was wired when the record was written, or the runtime read it back from an old
+        # SQLite file written before R100). When present, it must be one of the 4-layer
+        # taxonomy values.
+        if self.layer is not None and self.layer not in VALID_MEMORY_LAYERS:
+            raise PersistenceError(
+                f"PersistedExperienceRecord.layer must be None or one of {sorted(VALID_MEMORY_LAYERS)}, got: {self.layer}"
+            )
+        # R100: validate and freeze `memory_metadata`. Same rule as `metadata` — non-empty
+        # keys to string values. `33` does not interpret the keys; `06` owns their semantics.
+        mem_meta = MappingProxyType(dict(self.memory_metadata))
+        for key, value in mem_meta.items():
+            if not key or not isinstance(value, str):
+                raise PersistenceError(
+                    "PersistedExperienceRecord memory_metadata must map non-empty keys to string values"
+                )
+        object.__setattr__(self, "memory_metadata", mem_meta)
         # R92: validate the optional `created_at_wall` field. None is honest absence (no
         # `WallClock` was wired when the record was written, or the runtime read it back from
         # an old SQLite file written before R92). When present, it must be a finite,
@@ -171,6 +192,8 @@ class PersistedExperienceRecord:
             record_kind=self.record_kind,
             metadata=dict(self.metadata),
             created_at_wall=self.created_at_wall,
+            layer=self.layer,
+            memory_metadata=dict(self.memory_metadata),
         )
 
     def with_embedding(self, vector: tuple[float, ...]) -> "PersistedExperienceRecord":
@@ -214,6 +237,8 @@ class PersistedExperienceRecord:
             record_kind=self.record_kind,
             metadata=dict(self.metadata),
             created_at_wall=self.created_at_wall,
+            layer=self.layer,
+            memory_metadata=dict(self.memory_metadata),
         )
 
 
@@ -343,18 +368,25 @@ class ExperienceStoreBackend(Protocol):
             Append-only. Backends must not mutate or delete prior records.
         """
 
-    def read_recent(self, limit: int) -> tuple[PersistedExperienceRecord, ...]:
+    def read_recent(
+        self,
+        limit: int,
+        layer_filter: MemoryLayer | None = None,
+    ) -> tuple[PersistedExperienceRecord, ...]:
         """Owner: durable experience store.
 
         Purpose:
             Return up to `limit` most-recent records, ordered ascending by sequence.
+            When `layer_filter` is provided, only records whose `layer` matches the filter
+            are returned. `layer=None` records (legacy / pre-R100) are excluded by a filter.
 
         Inputs:
             `limit` - a positive maximum record count.
+            `layer_filter` - optional MemoryLayer filter (R100). None means no filter.
 
         Returns:
             Up to `limit` records, oldest-first among the most-recent window. Empty when the
-            store is cold.
+            store is cold or no records match the filter.
 
         Raises:
             PersistenceError on `limit <= 0` or a read failure.
@@ -384,21 +416,27 @@ class ExperienceStoreBackend(Protocol):
         query_vector: tuple[float, ...],
         limit: int,
         max_scan: int,
+        preferred_layers: tuple[MemoryLayer, ...] | None = None,
     ) -> SimilaritySearchResult:
         """Owner: durable experience store.
 
         Purpose:
             Return up to `limit` embedded records most similar to `query_vector` by cosine
-            similarity, scanning at most the `max_scan` most-recent records.
+            similarity, scanning at most the `max_scan` most-recent records. When
+            `preferred_layers` is provided, records whose `layer` is in the preferred set
+            receive a boost via `layer_preference_weight` (R100, C_engineering_hypothesis).
 
         Inputs:
             `query_vector` - a non-empty query embedding.
             `limit` - a positive maximum number of hits to return.
             `max_scan` - a positive bound on the most-recent records examined.
+            `preferred_layers` - optional tuple of MemoryLayer values to boost (R100).
+                None means no boost (same as pre-R100 behavior).
 
         Returns:
-            A `SimilaritySearchResult` with hits ranked by descending similarity (tie-break:
-            descending sequence), plus the scanned and skipped-non-embedded counts.
+            A `SimilaritySearchResult` with hits ranked by descending effective similarity
+            (boosted for preferred layers, tie-break descending sequence), plus the scanned
+            and skipped-non-embedded counts.
 
         Raises:
             PersistenceError on an empty query vector, a non-positive `limit`/`max_scan`, a
@@ -407,5 +445,5 @@ class ExperienceStoreBackend(Protocol):
         Notes:
             Only records carrying an embedding are ranked; non-embedded records within the
             scan are excluded and counted. Cost is bounded by `max_scan`; no external vector
-            index is used.
+            index is used. `layer=None` records receive no boost (legacy / pre-R100).
         """

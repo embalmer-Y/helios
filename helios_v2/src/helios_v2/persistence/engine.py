@@ -24,6 +24,8 @@ from helios_v2.directed_retrieval import (
     ThoughtWindowTier,
 )
 
+from helios_v2.memory.contracts import MemoryLayer, VALID_MEMORY_LAYERS
+
 from .contracts import (
     ExperienceStoreBackend,
     PersistedExperienceRecord,
@@ -96,30 +98,41 @@ def _rank_similar(
     records: Sequence[PersistedExperienceRecord],
     query_vector: tuple[float, ...],
     limit: int,
+    preferred_layers: tuple[MemoryLayer, ...] | None = None,
+    layer_preference_weight: float = 1.5,  # C_engineering_hypothesis (R100)
 ) -> SimilaritySearchResult:
     """Owner: durable experience store.
 
     Rank the embedded records in `records` by cosine similarity to `query_vector`, returning
     the top `limit`. Records without an embedding are excluded and counted. Tie-break is
-    descending similarity then descending sequence (more-recent wins ties). `records` is the
-    already-bounded scan window the backend selected.
+    descending effective similarity then descending sequence (more-recent wins ties).
+    `records` is the already-bounded scan window the backend selected.
+
+    R100: when `preferred_layers` is provided, records whose `layer` is in the preferred set
+    receive a boost: their effective similarity for ranking is `similarity * weight`. Records
+    with `layer=None` (legacy / pre-R100) receive no boost. The boost is a ranking heuristic
+    only; the stored `SimilarityHit.similarity` still carries the raw cosine value.
     """
 
     if not query_vector:
         raise PersistenceError("search_similar requires a non-empty query_vector")
     if not isinstance(limit, int) or limit <= 0:
         raise PersistenceError("search_similar limit must be a positive integer")
+    preferred_set = frozenset(preferred_layers) if preferred_layers else frozenset()
     skipped = 0
-    scored: list[SimilarityHit] = []
+    scored: list[tuple[float, SimilarityHit]] = []  # (effective_similarity, hit)
     for record in records:
         if record.embedding is None:
             skipped += 1
             continue
         similarity = cosine_similarity(query_vector, record.embedding)
-        scored.append(SimilarityHit(record=record, similarity=similarity))
-    scored.sort(key=lambda hit: (hit.similarity, hit.record.sequence), reverse=True)
+        hit = SimilarityHit(record=record, similarity=similarity)
+        # R100: boost effective similarity for preferred-layer records.
+        effective = similarity * layer_preference_weight if record.layer in preferred_set else similarity
+        scored.append((effective, hit))
+    scored.sort(key=lambda pair: (pair[0], pair[1].record.sequence), reverse=True)
     return SimilaritySearchResult(
-        hits=tuple(scored[:limit]),
+        hits=tuple(hit for _, hit in scored[:limit]),
         scanned_count=len(records),
         skipped_non_embedded_count=skipped,
     )
@@ -162,13 +175,25 @@ class InMemoryExperienceStoreBackend(ExperienceStoreBackend):
             stamped.append(stamped_record)
         return tuple(stamped)
 
-    def read_recent(self, limit: int) -> tuple[PersistedExperienceRecord, ...]:
-        """Owner: durable experience store. Return the most-recent `limit` records, ascending."""
+    def read_recent(
+        self,
+        limit: int,
+        layer_filter: MemoryLayer | None = None,
+    ) -> tuple[PersistedExperienceRecord, ...]:
+        """Owner: durable experience store. Return the most-recent `limit` records, ascending.
+
+        R100: when `layer_filter` is provided, only records whose `layer` matches the filter
+        are returned. `layer=None` records (legacy) are excluded by any filter.
+        """
 
         if not isinstance(limit, int) or limit <= 0:
             raise PersistenceError("read_recent limit must be a positive integer")
         if not self._records:
             return ()
+        if layer_filter is not None:
+            filtered = [r for r in self._records if r.layer == layer_filter]
+            window = filtered[-limit:] if filtered else []
+            return tuple(window)
         window = self._records[-limit:]
         return tuple(window)
 
@@ -182,13 +207,18 @@ class InMemoryExperienceStoreBackend(ExperienceStoreBackend):
         query_vector: tuple[float, ...],
         limit: int,
         max_scan: int,
+        preferred_layers: tuple[MemoryLayer, ...] | None = None,
     ) -> SimilaritySearchResult:
-        """Owner: durable experience store. Rank the most-recent embedded records by cosine."""
+        """Owner: durable experience store. Rank the most-recent embedded records by cosine.
+
+        R100: when `preferred_layers` is provided, records in those layers receive a
+        `layer_preference_weight` boost in ranking.
+        """
 
         if not isinstance(max_scan, int) or max_scan <= 0:
             raise PersistenceError("search_similar max_scan must be a positive integer")
         window = self._records[-max_scan:] if self._records else []
-        return _rank_similar(window, query_vector, limit)
+        return _rank_similar(window, query_vector, limit, preferred_layers)
 
 
 @dataclass
@@ -264,6 +294,10 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                 self._ensure_column(connection, "record_kind", "TEXT")
                 self._ensure_column(connection, "metadata", "TEXT")
                 self._ensure_column(connection, "created_at_wall", "REAL")
+                # R100: PRAGMA-guarded idempotent ALTER TABLE for layer and memory_metadata
+                # Same pattern as R45 (metadata) and R92 (created_at_wall).
+                self._ensure_column(connection, "layer", "TEXT")
+                self._ensure_column(connection, "memory_metadata", "TEXT")
                 connection.commit()
             self._initialized = True
         except sqlite3.Error as error:
@@ -304,8 +338,8 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             source_outcome_kind, source_outcome_id, writeback_status,
                             summary, requested_effect_summary, applied_effect_summary,
                             reason_trace, linkage, embedding, record_kind, metadata,
-                            created_at_wall
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            created_at_wall, layer, memory_metadata
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             record.record_id,
@@ -324,6 +358,8 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             record.record_kind,
                             json.dumps(dict(record.metadata)) if record.metadata else None,
                             record.created_at_wall,
+                            record.layer,  # R100: MemoryLayer literal or None
+                            json.dumps(dict(record.memory_metadata)) if record.memory_metadata else None,  # R100
                         ),
                     )
                     assigned = cursor.lastrowid
@@ -339,8 +375,16 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             ) from error
         return tuple(stamped)
 
-    def read_recent(self, limit: int) -> tuple[PersistedExperienceRecord, ...]:
-        """Owner: durable experience store. Read the most-recent `limit` records, ascending."""
+    def read_recent(
+        self,
+        limit: int,
+        layer_filter: MemoryLayer | None = None,
+    ) -> tuple[PersistedExperienceRecord, ...]:
+        """Owner: durable experience store. Read the most-recent `limit` records, ascending.
+
+        R100: when `layer_filter` is provided, only records matching the filter are returned.
+        `layer=None` (legacy) records are excluded by any filter.
+        """
 
         if not isinstance(limit, int) or limit <= 0:
             raise PersistenceError("read_recent limit must be a positive integer")
@@ -348,18 +392,34 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             self.initialize()
         try:
             with self._connect() as connection:
-                rows = connection.execute(
-                    f"""
-                    SELECT sequence, record_id, tick_id, continuity_kind, outcome_class,
-                           source_outcome_kind, source_outcome_id, writeback_status, summary,
-                           requested_effect_summary, applied_effect_summary, reason_trace, linkage,
-                           embedding, record_kind, metadata, created_at_wall
-                    FROM {self._TABLE}
-                    ORDER BY sequence DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
+                if layer_filter is not None:
+                    # R100: filter by layer. NULL layer never matches a non-None filter.
+                    rows = connection.execute(
+                        f"""
+                        SELECT sequence, record_id, tick_id, continuity_kind, outcome_class,
+                               source_outcome_kind, source_outcome_id, writeback_status, summary,
+                               requested_effect_summary, applied_effect_summary, reason_trace, linkage,
+                               embedding, record_kind, metadata, created_at_wall, layer, memory_metadata
+                        FROM {self._TABLE}
+                        WHERE layer = ?
+                        ORDER BY sequence DESC
+                        LIMIT ?
+                        """,
+                        (layer_filter, limit),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        f"""
+                        SELECT sequence, record_id, tick_id, continuity_kind, outcome_class,
+                               source_outcome_kind, source_outcome_id, writeback_status, summary,
+                               requested_effect_summary, applied_effect_summary, reason_trace, linkage,
+                               embedding, record_kind, metadata, created_at_wall, layer, memory_metadata
+                        FROM {self._TABLE}
+                        ORDER BY sequence DESC
+                        LIMIT ?
+                        """,
+                        (limit,),
+                    ).fetchall()
         except sqlite3.Error as error:
             raise PersistenceError(
                 f"SqliteExperienceStoreBackend read failed for '{self.db_path}': {error}"
@@ -386,16 +446,45 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
         query_vector: tuple[float, ...],
         limit: int,
         max_scan: int,
+        preferred_layers: tuple[MemoryLayer, ...] | None = None,
     ) -> SimilaritySearchResult:
-        """Owner: durable experience store. Rank the most-recent embedded rows by cosine."""
+        """Owner: durable experience store. Rank the most-recent embedded rows by cosine.
+
+        R100: when `preferred_layers` is provided, records in those layers receive a
+        `layer_preference_weight` boost in ranking.
+        """
 
         if not isinstance(max_scan, int) or max_scan <= 0:
             raise PersistenceError("search_similar max_scan must be a positive integer")
         # Bounded scan: read the most-recent max_scan records (ascending), then rank in Python.
         window = self.read_recent(max_scan)
-        return _rank_similar(window, query_vector, limit)
+        return _rank_similar(window, query_vector, limit, preferred_layers)
 
     def _row_to_record(self, row: Sequence[object]) -> PersistedExperienceRecord:
+        """Owner: durable experience store. Map one SQLite row to a PersistedExperienceRecord.
+
+        R100: read layer and memory_metadata from extended columns.
+        Forward-compatible: `len(row) > 18` guard for pre-R100 databases that lack these columns.
+        """
+        # R100: read layer (index 17) and memory_metadata (index 18) from extended columns.
+        # A NULL/absent layer reads back as None (honest absence — legacy or pre-R100).
+        # A NULL/absent memory_metadata reads back as empty dict.
+        layer: MemoryLayer | None = None
+        if len(row) > 17 and row[17] is not None:
+            layer_val = str(row[17])
+            if layer_val not in VALID_MEMORY_LAYERS:
+                raise PersistenceError(
+                    f"SqliteExperienceStoreBackend: invalid layer value in row: {layer_val}"
+                )
+            layer = layer_val
+        memory_metadata: dict[str, str] = {}
+        if len(row) > 18 and row[18] is not None:
+            try:
+                memory_metadata = dict(json.loads(row[18]))
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise PersistenceError(
+                    f"SqliteExperienceStoreBackend: corrupt memory_metadata in row: {error}"
+                ) from error
         try:
             reason_trace = tuple(json.loads(row[11]))
             linkage = dict(json.loads(row[12]))
@@ -433,6 +522,8 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             record_kind=record_kind,
             metadata=metadata,
             created_at_wall=created_at_wall,
+            layer=layer,                # R100
+            memory_metadata=memory_metadata,  # R100
         )
 
 
@@ -492,7 +583,11 @@ class ExperienceStore:
             return ()
         return self.backend.append(records)
 
-    def read_recent(self, limit: int) -> tuple[PersistedExperienceRecord, ...]:
+    def read_recent(
+        self,
+        limit: int,
+        layer_filter: MemoryLayer | None = None,
+    ) -> tuple[PersistedExperienceRecord, ...]:
         """Owner: durable experience store.
 
         Purpose:
@@ -500,9 +595,10 @@ class ExperienceStore:
 
         Inputs:
             `limit` - a positive maximum record count.
+            `layer_filter` - optional MemoryLayer filter (R100). None means no filter.
 
         Returns:
-            Up to `limit` records; empty when the store is cold.
+            Up to `limit` records; empty when the store is cold or no records match the filter.
 
         Raises:
             PersistenceError on a non-positive limit or a read failure.
@@ -510,13 +606,14 @@ class ExperienceStore:
 
         if not isinstance(limit, int) or limit <= 0:
             raise PersistenceError("ExperienceStore.read_recent limit must be a positive integer")
-        return self.backend.read_recent(limit)
+        return self.backend.read_recent(limit, layer_filter)
 
     def search_similar(
         self,
         query_vector: tuple[float, ...],
         limit: int,
         max_scan: int = _DEFAULT_MAX_SCAN,
+        preferred_layers: tuple[MemoryLayer, ...] | None = None,
     ) -> SimilaritySearchResult:
         """Owner: durable experience store.
 
@@ -528,10 +625,13 @@ class ExperienceStore:
             `query_vector` - a non-empty query embedding.
             `limit` - a positive maximum number of hits.
             `max_scan` - a positive bound on the most-recent records examined.
+            `preferred_layers` - optional tuple of MemoryLayer values to boost (R100).
+                None means no boost (same as pre-R100 behavior).
 
         Returns:
-            A `SimilaritySearchResult` ranked by descending similarity (tie-break descending
-            sequence), with scanned and skipped-non-embedded counts.
+            A `SimilaritySearchResult` ranked by descending effective similarity
+            (boosted for preferred layers, tie-break descending sequence), with scanned and
+            skipped-non-embedded counts.
 
         Raises:
             PersistenceError on an empty query vector, a non-positive limit/max_scan, a
@@ -544,7 +644,7 @@ class ExperienceStore:
             raise PersistenceError("ExperienceStore.search_similar limit must be a positive integer")
         if not isinstance(max_scan, int) or max_scan <= 0:
             raise PersistenceError("ExperienceStore.search_similar max_scan must be a positive integer")
-        return self.backend.search_similar(query_vector, limit, max_scan)
+        return self.backend.search_similar(query_vector, limit, max_scan, preferred_layers)
 
     def count(self) -> int:
         """Owner: durable experience store.
@@ -625,6 +725,11 @@ class StoreBackedDirectedMemoryCandidateProvider(DirectedMemoryCandidateProvider
 
     store: ExperienceStore
     limit: int = _DEFAULT_PROVIDER_LIMIT
+    # R100: optional multi-layer preference tuple. When None, no filter is applied
+    # (pre-R100 behavior). When a non-empty tuple, only records whose `layer` is in
+    # this set are surfaced as candidates; legacy records (`layer=None`) are excluded
+    # from the filter, which is the expected honest absence.
+    preferred_layers: "tuple[MemoryLayer, ...] | None" = None
 
     def collect_candidates(self, plan: RetrievalQueryPlan) -> tuple[MemoryRetrievalCandidate, ...]:
         """Owner: durable experience store.
@@ -646,7 +751,14 @@ class StoreBackedDirectedMemoryCandidateProvider(DirectedMemoryCandidateProvider
             supplies the candidate set, replacing the fabricating shim when persistence is on.
         """
 
+        # R100: when `preferred_layers` is set, fetch a slightly wider window then
+        # filter in-process. This keeps the `read_recent` layer_filter contract (single
+        # layer) unchanged for backends; provider-level filter honours the multi-layer
+        # preference tuple.
         records = self.store.read_recent(self.limit)
+        if self.preferred_layers is not None:
+            preferred_set = set(self.preferred_layers)
+            records = tuple(r for r in records if r.layer in preferred_set)
         if not records:
             return ()
         candidates: list[MemoryRetrievalCandidate] = []
@@ -714,6 +826,11 @@ class SemanticStoreBackedDirectedMemoryCandidateProvider(DirectedMemoryCandidate
     embed_query: Callable[[str], tuple[float, ...]]
     limit: int = _DEFAULT_PROVIDER_LIMIT
     max_scan: int = _DEFAULT_MAX_SCAN
+    # R100: optional layer preference forwarded to `search_similar(preferred_layers=...)`.
+    # When None, no preference boost is applied (pre-R100 behavior). When a non-empty tuple,
+    # records whose `layer` is in the set receive a `layer_preference_weight` boost in the
+    # store's similarity ranking. The `10` owner still owns the final selection.
+    preferred_layers: "tuple[MemoryLayer, ...] | None" = None
 
     def collect_candidates(self, plan: RetrievalQueryPlan) -> tuple[MemoryRetrievalCandidate, ...]:
         """Owner: durable experience store.
@@ -739,7 +856,10 @@ class SemanticStoreBackedDirectedMemoryCandidateProvider(DirectedMemoryCandidate
         """
 
         query_vector = self.embed_query(plan.query_text)
-        result = self.store.search_similar(query_vector, self.limit, self.max_scan)
+        result = self.store.search_similar(
+            query_vector, self.limit, self.max_scan,
+            preferred_layers=self.preferred_layers,
+        )
         if not result.hits:
             return ()
         candidates: list[MemoryRetrievalCandidate] = []

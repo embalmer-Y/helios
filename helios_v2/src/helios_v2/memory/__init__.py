@@ -21,6 +21,8 @@ from .contracts import (
     MemoryFamily,
     MemoryFormationState,
     MemoryLearnedParameterCategory,
+    MemoryLayer,
+    MemoryRecord,
     MemoryReplayCandidate,
     PredictionMismatchEvidence,
     PublishMemoryFormationStateOp,
@@ -29,18 +31,22 @@ from .contracts import (
     RecalledMemoryProvider,
     RecordMemoryOp,
     ReplayReason,
+    VALID_MEMORY_LAYERS,
     validate_prediction_mismatch_evidence,
 )
 from .engine import (
     AffectGroundedMemoryFormationPath,
+    AffectOutcomeMemoryLayerClassifier,
     MemoryAffectReplayEngine,
     MemoryFormationPath,
+    MemoryLayerClassifier,
     ReplayCandidateSelector,
     SalienceGatedReplayCandidateSelector,
 )
 
 __all__ = [
     "AffectGroundedMemoryFormationPath",
+    "AffectOutcomeMemoryLayerClassifier",
     "AffectTaggedMemoryItem",
     "MemoryAffectReplayAPI",
     "MemoryAffectReplayConfig",
@@ -52,6 +58,9 @@ __all__ = [
     "MemoryFormationPath",
     "MemoryFormationState",
     "MemoryLearnedParameterCategory",
+    "MemoryLayer",
+    "MemoryLayerClassifier",
+    "MemoryRecord",
     "MemoryReplayCandidate",
     "PredictionMismatchEvidence",
     "PublishMemoryFormationStateOp",
@@ -62,5 +71,6 @@ __all__ = [
     "ReplayCandidateSelector",
     "ReplayReason",
     "SalienceGatedReplayCandidateSelector",
+    "VALID_MEMORY_LAYERS",
     "validate_prediction_mismatch_evidence",
 ]

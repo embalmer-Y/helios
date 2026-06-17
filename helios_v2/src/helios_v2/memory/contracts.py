@@ -13,8 +13,9 @@ Does not own:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Literal, Mapping, Protocol, runtime_checkable
 
 from helios_v2.feeling import InteroceptiveFeelingState, InteroceptiveFeelingVector
 
@@ -34,7 +35,12 @@ MemoryLearnedParameterCategory = Literal[
     "memory_family_write_policy",
     "replay_priority_policy",
     "consolidation_policy",
+    "layer_assignment_policy",
 ]
+
+MemoryLayer = Literal["L2_working", "L3_short", "L4_long", "L5_autobiographical"]
+
+VALID_MEMORY_LAYERS = frozenset({"L2_working", "L3_short", "L4_long", "L5_autobiographical"})
 
 
 @dataclass(frozen=True)
@@ -132,12 +138,14 @@ class MemoryAffectReplayConfig:
     mandatory_learned_parameters: tuple[MemoryLearnedParameterCategory, ...]
 
     def __post_init__(self) -> None:
-        expected = {
+        expected_base = {
             "memory_family_write_policy",
             "replay_priority_policy",
             "consolidation_policy",
         }
-        if set(self.mandatory_learned_parameters) != expected:
+        expected_with_layer = expected_base | {"layer_assignment_policy"}
+        actual = set(self.mandatory_learned_parameters)
+        if actual not in (expected_base, expected_with_layer):
             raise MemoryAffectReplayError(
                 "Memory config must declare the confirmed mandatory learned-parameter categories"
             )
@@ -255,7 +263,7 @@ class MemoryFormationState:
     """Owner: memory affect and replay layer.
 
     Purpose:
-        Represent one immutable memory-owner snapshot containing memory items and replay candidates.
+        Represent one immutable memory-owner snapshot containing memory items, replay candidates, and memory records.
 
     Failure semantics:
         Missing provenance or malformed state identity raise `MemoryAffectReplayError`.
@@ -266,6 +274,7 @@ class MemoryFormationState:
     memory_items: tuple[AffectTaggedMemoryItem, ...]
     replay_candidates: tuple[MemoryReplayCandidate, ...]
     tick_id: int | None
+    memory_records: tuple[MemoryRecord, ...] = ()   # R100 additive: layer-assigned cognitive records
 
     def __post_init__(self) -> None:
         if not self.state_id:
@@ -284,6 +293,65 @@ class MemoryFormationState:
                 raise MemoryAffectReplayError(
                     "MemoryFormationState replay candidates must preserve the source_feeling_state_id of the owner state"
                 )
+        # R100: memory_records provenance and referential integrity
+        for record in self.memory_records:
+            if record.source_feeling_state_id != self.source_feeling_state_id:
+                raise MemoryAffectReplayError(
+                    "MemoryFormationState memory records must preserve the source_feeling_state_id of the owner state"
+                )
+            if record.memory_id not in memory_ids:
+                raise MemoryAffectReplayError(
+                    "MemoryFormationState memory records must reference published memory_items"
+                )
+
+
+@dataclass(frozen=True)
+class MemoryRecord:
+    """Owner: memory affect and replay layer.
+
+    Purpose:
+        One immutable cognitive memory record carrying the layer assignment
+        determined at write time by the injected classifier. This is the `06`
+        cognitive contract; `33` stores its projection on PersistedExperienceRecord.
+
+    Failure semantics:
+        Construction raises MemoryAffectReplayError on empty required fields,
+        out-of-range affect_intensity, or invalid MemoryLayer.
+    """
+
+    memory_id: str
+    layer: MemoryLayer
+    affect_intensity_at_write: float          # frozen fact, [0, 1]
+    outcome_class_at_write: str               # the 15 outcome taxonomy
+    source_feeling_state_id: str
+    family: MemoryFamily
+    content: MemoryContentPacket
+    binding_context_id: str | None
+    tick_id: int | None
+    created_at_wall: float | None             # R92 wall-time at write
+    memory_metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.memory_id:
+            raise MemoryAffectReplayError("MemoryRecord must declare a non-empty memory_id")
+        if not self.source_feeling_state_id:
+            raise MemoryAffectReplayError(
+                "MemoryRecord must declare a non-empty source_feeling_state_id"
+            )
+        if self.layer not in VALID_MEMORY_LAYERS:
+            raise MemoryAffectReplayError(
+                f"MemoryRecord layer must use the 4-layer taxonomy, got: {self.layer}"
+            )
+        _validate_unit_interval("MemoryRecord.affect_intensity_at_write", self.affect_intensity_at_write)
+        if not self.outcome_class_at_write:
+            raise MemoryAffectReplayError("MemoryRecord must declare a non-empty outcome_class_at_write")
+        metadata = dict(self.memory_metadata)
+        for key, value in metadata.items():
+            if not key or not isinstance(value, str):
+                raise MemoryAffectReplayError(
+                    "MemoryRecord memory_metadata must map non-empty keys to string values"
+                )
+        object.__setattr__(self, "memory_metadata", MappingProxyType(metadata))
 
 
 @dataclass(frozen=True)
@@ -419,6 +487,7 @@ class MemoryAffectReplayAPI(Protocol):
         feeling_state: InteroceptiveFeelingState,
         binding_context: MemoryBindingContext | None = None,
         mismatch_evidence: PredictionMismatchEvidence | None = None,
+        outcome_class: str = "no_outcome",         # R100: 15 outcome taxonomy at write time
         tick_id: int | None = None,
     ) -> MemoryFormationState:
         """Owner: memory affect and replay layer.
@@ -427,7 +496,8 @@ class MemoryAffectReplayAPI(Protocol):
             Consume one feeling-state snapshot plus explicit optional evidence and return one memory-formation state snapshot.
 
         Inputs:
-            One `InteroceptiveFeelingState`, optional `MemoryBindingContext`, optional `PredictionMismatchEvidence`, and an optional runtime tick id.
+            One `InteroceptiveFeelingState`, optional `MemoryBindingContext`, optional `PredictionMismatchEvidence`,
+            an optional `outcome_class` (default "no_outcome"), and an optional runtime tick id.
 
         Returns:
             A `MemoryFormationState` owned by the memory affect and replay layer.
@@ -437,6 +507,9 @@ class MemoryAffectReplayAPI(Protocol):
 
         Notes:
             The returned state exposes candidate memory items only and does not claim conscious workspace promotion or identity writeback ownership.
+            The `outcome_class` parameter carries the 15 outcome taxonomy at write time; it is used by the injected
+            `MemoryLayerClassifier` (if present) to determine the initial layer assignment. When the classifier is
+            absent, `outcome_class` is ignored and the legacy path runs byte-for-byte unchanged.
         """
 
         ...
