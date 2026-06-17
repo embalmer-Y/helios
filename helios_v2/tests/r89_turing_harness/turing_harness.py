@@ -124,6 +124,7 @@ class TuringVerdict:
     stubbed_axes: tuple[str, ...] = ()
     pass_threshold: float = 0.80
     reason: str | None = None
+    emotion_validation_probe_usable: bool | None = None  # R99 additive
 
     @property
     def passes(self) -> bool:
@@ -319,6 +320,43 @@ def _memory_fidelity_axis(probe, config: TuringConfig) -> AxisScore:
     )
 
 
+def _emotion_probe_or_drift_bio_axis(
+    emotion_validation_probe,
+    long_run_report,
+    drift_report,
+    config: TuringConfig,
+) -> AxisScore:
+    """Owner: R99. A usable emotion validation probe upgrades bio_responsiveness from
+    drift-only reconstruction to emotion-probe reconstruction; else the original drift path
+    byte-for-byte unchanged.
+
+    `emotion_validation_probe` is duck-typed (R99 `EmotionValidationReport`): it exposes
+    `report_usable` and `cortisol_valence_separation`. When a usable probe is supplied,
+    `bio_responsiveness` is scored from `cortisol_valence_separation` mapped to `[0,1]`:
+    `score = clamp(separation * 10, 0, 1)`. The mapping factor 10 ensures a separation of
+    0.10 (the B3 stricter threshold) maps to 1.0 (full score), while the B2 threshold 0.05
+    maps to 0.50 (half score) — a reasonable calibration for the anti-theatrical rubric.
+    """
+
+    if emotion_validation_probe is None or not getattr(emotion_validation_probe, "report_usable", False):
+        return _score_bio_responsiveness(long_run_report, drift_report, config)
+
+    separation = getattr(emotion_validation_probe, "cortisol_valence_separation", None)
+    if separation is None:
+        # Usable report but no separation metric — honest absence, fall back to drift.
+        return _score_bio_responsiveness(long_run_report, drift_report, config)
+
+    score = max(0.0, min(1.0, separation * 10))
+    return AxisScore(
+        axis=BIO_RESPONSIVENESS,
+        dimension=DIMENSION_INTERNAL,
+        score=score,
+        availability=AVAILABLE,
+        judge_track=RECONSTRUCTED,
+        provenance=f"R99 emotion validation probe: cortisol_valence_separation={separation:.4f}",
+    )
+
+
 def _unavailable_axis(axis: str, why: str) -> AxisScore:
     return AxisScore(
         axis=axis,
@@ -367,6 +405,7 @@ def evaluate_turing(
     config: TuringConfig = TuringConfig(),
     injected_scores: Mapping[str, InjectedAxisScore] | None = None,
     memory_fidelity_probe=None,
+    emotion_validation_probe=None,
 ) -> TuringVerdict:
     """Score the six §13.4 rubric axes into a `TuringVerdict` (read-only, deterministic, offline).
 
@@ -374,6 +413,12 @@ def evaluate_turing(
     `fidelity_score: float | None`. When a usable report is supplied, the `memory_fidelity` axis becomes
     a real `AVAILABLE` reconstructed axis scored at its `fidelity_score`; otherwise the axis keeps the
     R89 stub path byte-for-byte.
+
+    `emotion_validation_probe` (R99) is an optional duck-typed report exposing `report_usable: bool`
+    and `cortisol_valence_separation: float | None`. When a usable report is supplied, the
+    `bio_responsiveness` axis is scored from `cortisol_valence_separation` (mapped:
+    `clamp(separation * 10, 0, 1)`) with provenance `"R99 emotion validation probe"`; otherwise
+    the axis keeps the original drift-reconstruction path byte-for-byte unchanged.
     """
 
     injected = dict(injected_scores or {})
@@ -399,7 +444,9 @@ def evaluate_turing(
             axis_scores[axis] = _injected_axis(axis, injected[axis])
             continue
         if axis == BIO_RESPONSIVENESS:
-            axis_scores[axis] = _score_bio_responsiveness(long_run_report, drift_report, config)
+            axis_scores[axis] = _emotion_probe_or_drift_bio_axis(
+                emotion_validation_probe, long_run_report, drift_report, config,
+            )
         elif axis == CROSS_TICK_CONTINUITY:
             axis_scores[axis] = _score_cross_tick_continuity(long_run_report, drift_report, config)
         elif axis == AGENCY_LOCKING:
@@ -411,10 +458,14 @@ def evaluate_turing(
                 axis, "needs real afferent + calibrated human/LLM judge"
             )
 
-    return _finalize_verdict(axis_scores, config)
+    return _finalize_verdict(axis_scores, config, emotion_validation_probe=emotion_validation_probe)
 
 
-def _finalize_verdict(axis_scores: dict[str, AxisScore], config: TuringConfig) -> TuringVerdict:
+def _finalize_verdict(
+    axis_scores: dict[str, AxisScore],
+    config: TuringConfig,
+    emotion_validation_probe=None,
+) -> TuringVerdict:
     behavior_available = [
         s.score
         for s in axis_scores.values()
@@ -450,6 +501,11 @@ def _finalize_verdict(axis_scores: dict[str, AxisScore], config: TuringConfig) -
     stubbed = tuple(axis for axis in _ALL_AXES if axis_scores[axis].availability == STUBBED)
     completeness = "complete" if not unavailable and not stubbed else "incomplete"
 
+    # R99 additive: set emotion_validation_probe_usable from the probe, or None when absent.
+    emotion_probe_usable: bool | None = None
+    if emotion_validation_probe is not None:
+        emotion_probe_usable = getattr(emotion_validation_probe, "report_usable", False)
+
     return TuringVerdict(
         axis_scores=axis_scores,
         behavior_dimension_score=behavior_score,
@@ -461,4 +517,5 @@ def _finalize_verdict(axis_scores: dict[str, AxisScore], config: TuringConfig) -
         stubbed_axes=stubbed,
         pass_threshold=config.pass_threshold,
         reason=None,
+        emotion_validation_probe_usable=emotion_probe_usable,
     )
