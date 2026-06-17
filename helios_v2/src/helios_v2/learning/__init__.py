@@ -1,4 +1,4 @@
-"""Owner: learning framework (R-PROTO-LEARN.Tier1+2+3).
+"""Owner: learning framework (R-PROTO-LEARN.Tier1+2+3+4).
 
 Unified learning contract + framework for owner-specific P5 learners.
 """
@@ -17,14 +17,26 @@ from helios_v2.learning.autonomy_learner import (
     AutonomyLearner,
     AutonomyLearnerConfig,
 )
+from helios_v2.learning.consciousness_learner import (
+    ConsciousnessLearner,
+    ConsciousnessLearnerConfig,
+)
 from helios_v2.learning.evaluation_learner import (
     EvaluationLearner,
     EvaluationLearnerConfig,
+)
+from helios_v2.learning.experience_writeback_learner import (
+    ExperienceWritebackLearner,
+    ExperienceWritebackLearnerConfig,
 )
 from helios_v2.learning.framework import (
     LearnerABC,
     _compute_closure_adjustment,
     _numpy_pseudo_inverse,
+)
+from helios_v2.learning.identity_governance_learner import (
+    IdentityGovernanceLearner,
+    IdentityGovernanceLearnerConfig,
 )
 from helios_v2.learning.internal_thought_learner import (
     InternalThoughtLearner,
@@ -41,6 +53,10 @@ from helios_v2.learning.outward_expression_externalization_learner import (
 from helios_v2.learning.outward_expression_learner import (
     OutwardExpressionLearner,
     OutwardExpressionLearnerConfig,
+)
+from helios_v2.learning.planner_bridge_learner import (
+    PlannerBridgeLearner,
+    PlannerBridgeLearnerConfig,
 )
 from helios_v2.learning.prompt_contract_learner import (
     PromptContractLearner,
@@ -65,8 +81,14 @@ __all__ = [
     "ActionExternalizationLearnerConfig",
     "AutonomyLearner",
     "AutonomyLearnerConfig",
+    "ConsciousnessLearner",
+    "ConsciousnessLearnerConfig",
     "EvaluationLearner",
     "EvaluationLearnerConfig",
+    "ExperienceWritebackLearner",
+    "ExperienceWritebackLearnerConfig",
+    "IdentityGovernanceLearner",
+    "IdentityGovernanceLearnerConfig",
     "InternalThoughtLearner",
     "InternalThoughtLearnerConfig",
     "Learner",
@@ -78,6 +100,8 @@ __all__ = [
     "OutwardExpressionExternalizationLearnerConfig",
     "OutwardExpressionLearner",
     "OutwardExpressionLearnerConfig",
+    "PlannerBridgeLearner",
+    "PlannerBridgeLearnerConfig",
     "PromptContractLearner",
     "PromptContractLearnerConfig",
     "Regime",
