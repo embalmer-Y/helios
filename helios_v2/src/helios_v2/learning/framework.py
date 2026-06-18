@@ -28,6 +28,7 @@ from helios_v2.learning.contracts import (
     Regime,
     _LearningSnapshot,
     _validate_7d_signal,
+    _validate_4d_rpe,
 )
 
 
@@ -188,6 +189,75 @@ class LearnerABC:
             f"{type(self).__name__}._llm_signal_to_target_vec not implemented"
         )
 
+    def _rpe_to_output_additions(
+        self,
+        dopamine: float,
+        norepinephrine: float,
+        serotonin: float,
+        cortisol: float,
+    ) -> np.ndarray:
+        """R-PROTO-LEARN.P5-A.2: Map 4 RPE channels to output dim additions.
+
+        Default mapping: 4 channels fill output dim 0-3 directly.
+        Subclasses MAY override for owner-specific mapping.
+
+        RPE 4 channel (already clipped to [0, 1]):
+          - dopamine (RPE)         -> output dim 0 (confidence)
+          - norepinephrine (effort) -> output dim 1 (effort)
+          - serotonin (stability)   -> output dim 2 (stability)
+          - cortisol (threat)       -> output dim 3 (threat)
+        """
+        additions = np.zeros(self.output_dim)
+        if self.output_dim >= 1:
+            additions[0] = dopamine
+        if self.output_dim >= 2:
+            additions[1] = norepinephrine
+        if self.output_dim >= 3:
+            additions[2] = serotonin
+        if self.output_dim >= 4:
+            additions[3] = cortisol
+        return additions
+
+    def _signals_to_target_vec(
+        self,
+        llm_signal: tuple[float, ...] | None,
+        rpe_signal: tuple[float, ...] | None,
+        novelty: float,
+    ) -> np.ndarray:
+        """R-PROTO-LEARN.P5-A.2: Combine LLM appraisal + RPE -> target vec.
+
+        Fall-back chain:
+          1. If rpe_signal is None OR rpe_signal_enabled=False:
+               return _llm_signal_to_target_vec(llm_signal, novelty)
+               (P5-A.1 compatible behavior)
+          2. If llm_signal is None:
+               target = _rpe_to_output_additions(...)
+          3. Else: target = (1 - rpe_weight) * llm_target + rpe_weight * rpe_additions
+        """
+        if rpe_signal is None or not self._config.rpe_signal_enabled:
+            # P5-A.1 compatible path
+            if llm_signal is not None:
+                _validate_7d_signal("llm_signal", llm_signal)
+                return self._llm_signal_to_target_vec(llm_signal, novelty)
+            return self._project_unclamped(self._state_to_vec(None))
+
+        _validate_4d_rpe("rpe_signal", rpe_signal)
+        # Clip RPE dopamine (signed [-1, 1]) to [0, 1]
+        rpe_dopamine = max(0.0, min(1.0, (rpe_signal[0] + 1.0) / 2.0))
+        rpe_ne = max(0.0, min(1.0, rpe_signal[1]))
+        rpe_ser = max(0.0, min(1.0, rpe_signal[2]))
+        rpe_cor = max(0.0, min(1.0, rpe_signal[3]))
+        rpe_additions = self._rpe_to_output_additions(
+            rpe_dopamine, rpe_ne, rpe_ser, rpe_cor
+        )
+
+        if llm_signal is None:
+            return rpe_additions
+        _validate_7d_signal("llm_signal", llm_signal)
+        llm_target = self._llm_signal_to_target_vec(llm_signal, novelty)
+        w = self._config.rpe_weight
+        return (1.0 - w) * llm_target + w * rpe_additions
+
     def _project_unclamped(self, vec: np.ndarray) -> np.ndarray:
         """Project from input vec to output vec (no clamp)."""
         return self._W @ vec + self._bias
@@ -303,6 +373,7 @@ class LearnerABC:
         llm_signal: tuple[float, ...] | None,
         novelty: float,
         tick_id: int | None,
+        rpe_signal: tuple[float, ...] | None = None,
     ) -> _LearningSnapshot:
         """One tick of P5 learning (5 algorithms + 3-regime + numpy closure).
 
@@ -316,6 +387,11 @@ class LearnerABC:
             hysteresis.
         Algorithm 5 (commit): min_stable_ticks consecutive low residual
             -> write to config; freeze for frozen_ticks_post_commit.
+
+        R-PROTO-LEARN.P5-A.2: rpe_signal (4-dim) is an explicit real-
+        consequence signal. When provided AND rpe_signal_enabled=True,
+        the target_vec is blended with RPE-driven output additions
+        (dopamine / NE / serotonin / cortisol mapped to output dim 0-3).
         """
         self._tick_id = tick_id
         if novelty is None:
@@ -333,13 +409,9 @@ class LearnerABC:
                 f"got {state_vec.shape}"
             )
 
-        # Compute target output vector (from LLM signal)
-        if llm_signal is not None:
-            _validate_7d_signal("llm_signal", llm_signal)
-            target_vec = self._llm_signal_to_target_vec(llm_signal, novelty)
-        else:
-            # No signal -> use current output as target (identity)
-            target_vec = self._project_unclamped(state_vec)
+        # Compute target output vector
+        # P5-A.2: route through _signals_to_target_vec(llm, rpe, novelty)
+        target_vec = self._signals_to_target_vec(llm_signal, rpe_signal, novelty)
 
         # R-PROTO-LEARN.9 closure: compute sidecar adjustment
         adj, closed_residual, open_residual = _compute_closure_adjustment(

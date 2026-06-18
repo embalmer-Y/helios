@@ -44,6 +44,12 @@ class LearnerConfig:
 
     All 11 hyperparameters are the same defaults across owners,
     matching the P5-feel R-PROTO-LEARN.8/9 calibration.
+
+    R-PROTO-LEARN.P5-A.2: 2 new fields for RPE hard-coupling.
+      - rpe_signal_enabled: when True, _signals_to_target_vec accepts
+        rpe_signal (4-dim) and maps RPE channels explicitly to output dims.
+      - rpe_weight: blend factor between LLM appraisal and RPE
+        (0.0 = pure LLM = P5-A.1 behavior, 1.0 = pure RPE).
     """
     # 1. Learning rate
     learning_rate: float = 0.05
@@ -67,6 +73,10 @@ class LearnerConfig:
     frozen_commit: bool = True
     # 11. Habitual residual threshold
     habitual_residual_threshold: float = 0.5
+    # 12. RPE signal enabled (R-PROTO-LEARN.P5-A.2)
+    rpe_signal_enabled: bool = True
+    # 13. RPE blend weight (0.0 = pure LLM, 1.0 = pure RPE)
+    rpe_weight: float = 0.5
 
     def __post_init__(self) -> None:
         # Defensive validation (fail-fast, no silent degradation)
@@ -92,6 +102,10 @@ class LearnerConfig:
                 f"flexibility_floor < flexibility_ceiling <= 1.0 required, "
                 f"got {self.flexibility_floor} < {self.flexibility_ceiling}"
             )
+        if not 0.0 <= self.rpe_weight <= 1.0:
+            raise ValueError(
+                f"rpe_weight must be in [0, 1], got {self.rpe_weight}"
+            )
 
 
 @runtime_checkable
@@ -107,6 +121,7 @@ class Learner(Protocol):
         llm_signal: tuple[float, ...] | None,
         novelty: float,
         tick_id: int | None,
+        rpe_signal: tuple[float, ...] | None = None,
     ) -> "_LearningSnapshot":
         """One tick of P5 learning.
 
@@ -115,6 +130,9 @@ class Learner(Protocol):
             llm_signal: 7-dim LLM appraisal or owner-specific signal.
             novelty: [0, 1] novelty value (drives ACh flexibility).
             tick_id: Current tick id (or None).
+            rpe_signal: 4-dim RPE signal (R-PROTO-LEARN.P5-A.2) —
+                dopamine (signed) / NE / serotonin / cortisol.
+                None = no RPE coupling (P5-A.1 behavior).
 
         Returns:
             _LearningSnapshot with W/bias/regime/residual/commit.
@@ -165,4 +183,30 @@ def _validate_7d_signal(name: str, signal: tuple[float, ...] | None) -> None:
         if not 0.0 <= v <= 1.0:
             raise ValueError(
                 f"{name}[{i}] must be in [0, 1], got {v}"
+            )
+
+
+def _validate_4d_rpe(name: str, signal: tuple[float, ...] | None) -> None:
+    """R-PROTO-LEARN.P5-A.2: Defensive validation for 4-dim RPE signal.
+
+    RPE channels (in order): dopamine, norepinephrine, serotonin, cortisol.
+    - dopamine: signed [-1, 1] (RPE)
+    - norepinephrine / serotonin / cortisol: [0, 1]
+    """
+    if signal is None:
+        return
+    if len(signal) != 4:
+        raise ValueError(
+            f"{name} must be 4-dim, got {len(signal)}"
+        )
+    # dopamine (channel 0) is signed
+    if not -1.0 <= signal[0] <= 1.0:
+        raise ValueError(
+            f"{name}[0] (dopamine) must be in [-1, 1], got {signal[0]}"
+        )
+    # channels 1-3 are [0, 1]
+    for i in (1, 2, 3):
+        if not 0.0 <= signal[i] <= 1.0:
+            raise ValueError(
+                f"{name}[{i}] must be in [0, 1], got {signal[i]}"
             )
