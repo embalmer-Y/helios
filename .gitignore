@@ -20,3 +20,12 @@ heliosd.pid
 *.bak[0-9]
 *.bak[0-9][0-9]
 
+# 本地IDE配置（含Python环境路径，不上传git）
+.vscode/
+
+# 本地临时测试输出文件
+test_output.txt
+test_result.txt
+test_out.txt
+*.test_output.*
+
