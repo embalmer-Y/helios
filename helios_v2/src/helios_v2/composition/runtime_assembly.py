@@ -70,9 +70,14 @@ from helios_v2.llm import (
 from helios_v2.memory import (
     AffectGroundedMemoryFormationPath,
     AffectOutcomeMemoryLayerClassifier,
+    ConvexWeightedObjectiveAggregator,
+    FirstVersionDoubleConfirmationGate,
+    FirstVersionObjectiveImportanceEstimator,
+    FirstVersionRecallUtilityTracker,
     MemoryAffectReplayConfig,
     MemoryAffectReplayEngine,
     MemoryLayer,
+    ObjectiveImportanceLayerResolver,
     SalienceGatedReplayCandidateSelector,
 )
 from helios_v2.neuromodulation import (
@@ -1115,6 +1120,24 @@ class RuntimeProfile:
     # `read_recent(layer_filter=...)` paths via the directed-retrieval candidate provider
     # and the recalled-memory provider. Only consumed when `default_signal_mode == "semantic"`.
     memory_layer_preference: "tuple[str, ...] | None" = None
+    # R101: composition-side injection seam for the `06` memory owner's six R101
+    # capability seams (objective importance estimator, objective aggregator, double
+    # confirmation gate, layer resolver, recall utility tracker, training dataset
+    # extractor). The default `None` for all six means "the semantic assembly wires
+    # the first-version implementations of each seam"; the non-semantic path leaves
+    # all six at `None` so the `06` engine runs the byte-for-byte legacy R100 path
+    # (no 6-dim vector, no double-confirmation classification, no promotion resolver,
+    # no recall utility EMA, no P5 training-dataset extraction). Tests inject custom
+    # implementations to verify each seam independently. The seams are wired
+    # all-or-nothing (all six present or all six absent) to keep the engine's
+    # branchless path predictable. Only consumed when
+    # `default_signal_mode == "semantic"`.
+    objective_importance_estimator: "object" = None
+    objective_aggregator: "object" = None
+    double_confirmation_gate: "object" = None
+    objective_layer_resolver: "object" = None
+    recall_utility_tracker: "object" = None
+    training_dataset_extractor: "object" = None
 
     def __post_init__(self) -> None:
         # Validate the signal mode is a known value; unknown modes are a composition error
@@ -1173,6 +1196,42 @@ class RuntimeProfile:
             raise CompositionError(
                 "external_signal_source and a channel-bound assembly (channel_cli or "
                 "channel_drivers) both own the external afferent: pass only one"
+            )
+        # R101: validate the six-seam all-or-nothing rule. The R101 path is only meaningful
+        # when ALL six R101 capability seams are present (objective importance estimator,
+        # aggregator, double-confirmation gate, layer resolver, recall utility tracker,
+        # training dataset extractor). A partial set would leave the engine in a state
+        # where some R101 fields are computed and others are not, which produces
+        # non-deterministic MemoryRecord shapes. The clean rule: all six None (legacy R100
+        # path) or all six non-None (full R101 path).
+        r101_seam_values = (
+            self.objective_importance_estimator,
+            self.objective_aggregator,
+            self.double_confirmation_gate,
+            self.objective_layer_resolver,
+            self.recall_utility_tracker,
+            self.training_dataset_extractor,
+        )
+        r101_none_count = sum(1 for v in r101_seam_values if v is None)
+        if 0 < r101_none_count < len(r101_seam_values):
+            missing = [
+                name
+                for name, value in zip(
+                    (
+                        "objective_importance_estimator",
+                        "objective_aggregator",
+                        "double_confirmation_gate",
+                        "objective_layer_resolver",
+                        "recall_utility_tracker",
+                        "training_dataset_extractor",
+                    ),
+                    r101_seam_values,
+                )
+                if value is None
+            ]
+            raise CompositionError(
+                "R101 memory seams are all-or-nothing: pass all six or none. "
+                f"Missing: {missing}"
             )
 
     @property
@@ -1781,6 +1840,40 @@ def assemble_runtime(
         # R100: write-time layer assignment. When `None` (non-semantic assembly), the engine
         # produces no MemoryRecord (pre-R100 byte-for-byte path).
         layer_classifier=cast("object | None", resolved_layer_classifier),
+        # R101: six capability seams, all-or-nothing. When ALL six are non-None the engine
+        # runs the R101 dual-confirmation path; when ALL six are None the engine falls back
+        # to the byte-for-byte R100 path. The `__post_init__` rule already rejects partial
+        # sets, so this branch is a clean ternary.
+        objective_importance_estimator=cast(
+            "object | None",
+            resolved_profile.objective_importance_estimator
+            if resolved_profile.objective_importance_estimator is not None
+            else (FirstVersionObjectiveImportanceEstimator() if semantic_memory_enabled else None),
+        ),
+        objective_aggregator=cast(
+            "object | None",
+            resolved_profile.objective_aggregator
+            if resolved_profile.objective_aggregator is not None
+            else (ConvexWeightedObjectiveAggregator() if semantic_memory_enabled else None),
+        ),
+        double_confirmation_gate=cast(
+            "object | None",
+            resolved_profile.double_confirmation_gate
+            if resolved_profile.double_confirmation_gate is not None
+            else (FirstVersionDoubleConfirmationGate() if semantic_memory_enabled else None),
+        ),
+        objective_layer_resolver=cast(
+            "object | None",
+            resolved_profile.objective_layer_resolver
+            if resolved_profile.objective_layer_resolver is not None
+            else (ObjectiveImportanceLayerResolver() if semantic_memory_enabled else None),
+        ),
+        recall_utility_tracker=cast(
+            "object | None",
+            resolved_profile.recall_utility_tracker
+            if resolved_profile.recall_utility_tracker is not None
+            else (FirstVersionRecallUtilityTracker() if semantic_memory_enabled else None),
+        ),
     )
     # `07` workspace de-shim (R46): under the semantic-memory assembly, `07` runs a real
     # competition (scoring each candidate from the real `06` priority_hint + the real `05`

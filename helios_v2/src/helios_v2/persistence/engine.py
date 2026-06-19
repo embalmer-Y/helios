@@ -298,6 +298,16 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                 # Same pattern as R45 (metadata) and R92 (created_at_wall).
                 self._ensure_column(connection, "layer", "TEXT")
                 self._ensure_column(connection, "memory_metadata", "TEXT")
+                # R101: P5-ready hybrid storage (1 JSON + 4 indexed + 3 utility columns)
+                # Same idempotent pattern as R45 / R92 / R100.
+                self._ensure_column(connection, "objective_importance_json", "TEXT")
+                self._ensure_column(connection, "objective_score", "REAL")
+                self._ensure_column(connection, "subjective_score", "REAL")
+                self._ensure_column(connection, "double_confirmation_class", "TEXT")
+                self._ensure_column(connection, "recall_count", "INTEGER")
+                self._ensure_column(connection, "recall_utility_score", "REAL")
+                self._ensure_column(connection, "last_updated_at_wall", "REAL")
+                self._ensure_column(connection, "promotion_history_json", "TEXT")
                 connection.commit()
             self._initialized = True
         except sqlite3.Error as error:
@@ -338,8 +348,11 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             source_outcome_kind, source_outcome_id, writeback_status,
                             summary, requested_effect_summary, applied_effect_summary,
                             reason_trace, linkage, embedding, record_kind, metadata,
-                            created_at_wall, layer, memory_metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            created_at_wall, layer, memory_metadata,
+                            objective_importance_json, objective_score, subjective_score,
+                            double_confirmation_class, recall_count, recall_utility_score,
+                            last_updated_at_wall, promotion_history_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             record.record_id,
@@ -360,6 +373,14 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                             record.created_at_wall,
                             record.layer,  # R100: MemoryLayer literal or None
                             json.dumps(dict(record.memory_metadata)) if record.memory_metadata else None,  # R100
+                            record.objective_importance_json,  # R101
+                            record.objective_score,  # R101
+                            record.subjective_score,  # R101
+                            record.double_confirmation_class,  # R101
+                            record.recall_count,  # R101
+                            record.recall_utility_score,  # R101
+                            record.last_updated_at_wall,  # R101
+                            record.promotion_history_json,  # R101
                         ),
                     )
                     assigned = cursor.lastrowid
@@ -399,7 +420,10 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                         SELECT sequence, record_id, tick_id, continuity_kind, outcome_class,
                                source_outcome_kind, source_outcome_id, writeback_status, summary,
                                requested_effect_summary, applied_effect_summary, reason_trace, linkage,
-                               embedding, record_kind, metadata, created_at_wall, layer, memory_metadata
+                               embedding, record_kind, metadata, created_at_wall, layer, memory_metadata,
+                               objective_importance_json, objective_score, subjective_score,
+                               double_confirmation_class, recall_count, recall_utility_score,
+                               last_updated_at_wall, promotion_history_json
                         FROM {self._TABLE}
                         WHERE layer = ?
                         ORDER BY sequence DESC
@@ -413,7 +437,10 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                         SELECT sequence, record_id, tick_id, continuity_kind, outcome_class,
                                source_outcome_kind, source_outcome_id, writeback_status, summary,
                                requested_effect_summary, applied_effect_summary, reason_trace, linkage,
-                               embedding, record_kind, metadata, created_at_wall, layer, memory_metadata
+                               embedding, record_kind, metadata, created_at_wall, layer, memory_metadata,
+                               objective_importance_json, objective_score, subjective_score,
+                               double_confirmation_class, recall_count, recall_utility_score,
+                               last_updated_at_wall, promotion_history_json
                         FROM {self._TABLE}
                         ORDER BY sequence DESC
                         LIMIT ?
@@ -464,7 +491,8 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
         """Owner: durable experience store. Map one SQLite row to a PersistedExperienceRecord.
 
         R100: read layer and memory_metadata from extended columns.
-        Forward-compatible: `len(row) > 18` guard for pre-R100 databases that lack these columns.
+        R101: read 8 P5-ready hybrid-storage columns (1 JSON + 4 indexed + 3 utility).
+        Forward-compatible: `len(row) > N` guards for pre-R100 / pre-R101 databases.
         """
         # R100: read layer (index 17) and memory_metadata (index 18) from extended columns.
         # A NULL/absent layer reads back as None (honest absence — legacy or pre-R100).
@@ -485,9 +513,34 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
                 raise PersistenceError(
                     f"SqliteExperienceStoreBackend: corrupt memory_metadata in row: {error}"
                 ) from error
+        # R101: read 8 P5-ready columns (indices 19-26). Pre-R101 rows read None (honest absence).
+        objective_importance_json: str | None = (
+            str(row[19]) if len(row) > 19 and row[19] is not None else None
+        )
+        objective_score: float | None = (
+            float(row[20]) if len(row) > 20 and row[20] is not None else None
+        )
+        subjective_score: float | None = (
+            float(row[21]) if len(row) > 21 and row[21] is not None else None
+        )
+        double_confirmation_class: str | None = (
+            str(row[22]) if len(row) > 22 and row[22] is not None else None
+        )
+        recall_count: int | None = (
+            int(row[23]) if len(row) > 23 and row[23] is not None else None
+        )
+        recall_utility_score: float | None = (
+            float(row[24]) if len(row) > 24 and row[24] is not None else None
+        )
+        last_updated_at_wall: float | None = (
+            float(row[25]) if len(row) > 25 and row[25] is not None else None
+        )
+        promotion_history_json: str | None = (
+            str(row[26]) if len(row) > 26 and row[26] is not None else None
+        )
         try:
-            reason_trace = tuple(json.loads(row[11]))
-            linkage = dict(json.loads(row[12]))
+            reason_trace = tuple(json.loads(row[11])) if row[11] is not None else ()
+            linkage = dict(json.loads(row[12])) if row[12] is not None else {}
             embedding = tuple(json.loads(row[13])) if row[13] is not None else None
             metadata = dict(json.loads(row[15])) if len(row) > 15 and row[15] is not None else {}
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -524,6 +577,14 @@ class SqliteExperienceStoreBackend(ExperienceStoreBackend):
             created_at_wall=created_at_wall,
             layer=layer,                # R100
             memory_metadata=memory_metadata,  # R100
+            objective_importance_json=objective_importance_json,  # R101
+            objective_score=objective_score,  # R101
+            subjective_score=subjective_score,  # R101
+            double_confirmation_class=double_confirmation_class,  # R101
+            recall_count=recall_count,  # R101
+            recall_utility_score=recall_utility_score,  # R101
+            last_updated_at_wall=last_updated_at_wall,  # R101
+            promotion_history_json=promotion_history_json,  # R101
         )
 
 

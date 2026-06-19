@@ -4,6 +4,7 @@ Owns:
 - affect-linked memory-state contracts
 - replay-candidate contracts
 - feeling-to-memory API boundary
+- R101: objective importance aggregation + double-confirmation gate + cross-tick utility tracking + P5 extraction seam
 
 Does not own:
 - conscious workspace promotion
@@ -12,7 +13,11 @@ Does not own:
 """
 
 from .contracts import (
+    OUTCOME_CLASS_WEIGHTS,
+    OUTCOME_CLASS_WEIGHTS_NEUTRAL_DEFAULT,
     AffectTaggedMemoryItem,
+    DoubleConfirmationClass,
+    DoubleConfirmationResult,
     MemoryAffectReplayAPI,
     MemoryAffectReplayConfig,
     MemoryAffectReplayError,
@@ -24,7 +29,9 @@ from .contracts import (
     MemoryLayer,
     MemoryRecord,
     MemoryReplayCandidate,
+    ObjectiveImportanceVector,
     PredictionMismatchEvidence,
+    PromotionEvent,
     PublishMemoryFormationStateOp,
     PublishReplayCandidatesOp,
     RecalledMemoryFact,
@@ -43,11 +50,42 @@ from .engine import (
     ReplayCandidateSelector,
     SalienceGatedReplayCandidateSelector,
 )
+from .objective_importance import (
+    DEFAULT_OBJECTIVE_WEIGHTS,
+    DEMOTE_THRESHOLD,
+    OBJECTIVE_PASS_THRESHOLD,
+    PROMOTE_THRESHOLD,
+    RECALL_EMA_ALPHA,
+    SUBJECTIVE_PASS_THRESHOLD,
+    ConvexWeightedObjectiveAggregator,
+    DoubleConfirmationGate,
+    FirstVersionDoubleConfirmationGate,
+    FirstVersionObjectiveImportanceEstimator,
+    FirstVersionRecallUtilityTracker,
+    MemoryImportanceLoss,
+    MemoryTrainingDatasetExtractor,
+    MiningRecord,
+    ObjectiveAggregator,
+    ObjectiveImportanceEstimator,
+    ObjectiveImportanceLayerResolver,
+    RecallUtilityTracker,
+    SqlBackedTrainingDatasetExtractor,
+)
 
 __all__ = [
+    # R100 + earlier
     "AffectGroundedMemoryFormationPath",
     "AffectOutcomeMemoryLayerClassifier",
     "AffectTaggedMemoryItem",
+    "ConvexWeightedObjectiveAggregator",
+    "DEFAULT_OBJECTIVE_WEIGHTS",
+    "DEMOTE_THRESHOLD",
+    "DoubleConfirmationClass",
+    "DoubleConfirmationGate",
+    "DoubleConfirmationResult",
+    "FirstVersionDoubleConfirmationGate",
+    "FirstVersionObjectiveImportanceEstimator",
+    "FirstVersionRecallUtilityTracker",
     "MemoryAffectReplayAPI",
     "MemoryAffectReplayConfig",
     "MemoryAffectReplayEngine",
@@ -57,20 +95,36 @@ __all__ = [
     "MemoryFamily",
     "MemoryFormationPath",
     "MemoryFormationState",
+    "MemoryImportanceLoss",
     "MemoryLearnedParameterCategory",
     "MemoryLayer",
     "MemoryLayerClassifier",
     "MemoryRecord",
     "MemoryReplayCandidate",
+    "MemoryTrainingDatasetExtractor",
+    "MiningRecord",
+    "OBJECTIVE_PASS_THRESHOLD",
+    "ObjectiveAggregator",
+    "ObjectiveImportanceEstimator",
+    "ObjectiveImportanceLayerResolver",
+    "ObjectiveImportanceVector",
+    "OUTCOME_CLASS_WEIGHTS",
+    "OUTCOME_CLASS_WEIGHTS_NEUTRAL_DEFAULT",
     "PredictionMismatchEvidence",
+    "PROMOTE_THRESHOLD",
+    "PromotionEvent",
     "PublishMemoryFormationStateOp",
     "PublishReplayCandidatesOp",
+    "RECALL_EMA_ALPHA",
+    "RecallUtilityTracker",
     "RecalledMemoryFact",
     "RecalledMemoryProvider",
     "RecordMemoryOp",
     "ReplayCandidateSelector",
     "ReplayReason",
     "SalienceGatedReplayCandidateSelector",
+    "SqlBackedTrainingDatasetExtractor",
+    "SUBJECTIVE_PASS_THRESHOLD",
     "VALID_MEMORY_LAYERS",
     "validate_prediction_mismatch_evidence",
 ]

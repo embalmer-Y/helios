@@ -4,6 +4,7 @@ Owns:
 - the durable persisted-experience record contract
 - the prior-existence snapshot contract
 - the durable backend protocol boundary
+- R101: hybrid storage of 6-dim objective importance + double-confirmation + cross-tick utility fields
 
 Does not own:
 - continuity classification (owned by `15` experience writeback)
@@ -11,6 +12,8 @@ Does not own:
 - any cognitive runtime decision or salience judgment
 - semantic similarity, embeddings, or vector ranking (requirement `34`)
 - authoritative inter-owner state transport
+- objective importance aggregation (R101; projection only)
+- loss function implementations (R101; declared interface only, P5 owns)
 
 This owner is infrastructure, like observability. It durably stores already-public owner
 outputs and returns them in deterministic order. It never interprets the meaning of what it
@@ -23,7 +26,11 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Mapping, Protocol, runtime_checkable
 
-from helios_v2.memory.contracts import MemoryLayer, VALID_MEMORY_LAYERS
+from helios_v2.memory.contracts import (
+    DoubleConfirmationClass,
+    MemoryLayer,
+    VALID_MEMORY_LAYERS,
+)
 
 
 class PersistenceError(RuntimeError):
@@ -76,6 +83,15 @@ class PersistedExperienceRecord:
     created_at_wall: float | None = None
     layer: MemoryLayer | None = None             # R100: honest absence for legacy records
     memory_metadata: Mapping[str, str] = field(default_factory=dict)  # R100: opaque, 06-owned keys
+    # R101: P5-ready hybrid storage (1 JSON + 4 indexed + 3 utility columns)
+    objective_importance_json: str | None = None   # full 6-dim JSON (P5 extraction)
+    objective_score: float | None = None          # indexed: aggregator output
+    subjective_score: float | None = None         # indexed: R81 max hormone_pred
+    double_confirmation_class: DoubleConfirmationClass | None = None  # indexed
+    recall_count: int | None = None               # indexed (default 0; P5 training feature)
+    recall_utility_score: float | None = None      # P5 ground truth signal (EMA)
+    last_updated_at_wall: float | None = None      # R102 decay + P5 decay learning
+    promotion_history_json: str | None = None      # R102 writes promotion log
 
     def __post_init__(self) -> None:
         for attr_name in (
@@ -152,6 +168,72 @@ class PersistedExperienceRecord:
                     "PersistedExperienceRecord.created_at_wall must be finite and non-negative"
                 )
             object.__setattr__(self, "created_at_wall", value)
+        # R101: validate the 8 new additive fields
+        if self.objective_score is not None:
+            if not isinstance(self.objective_score, (int, float)):
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.objective_score must be a real number, got: {type(self.objective_score).__name__}"
+                )
+            if self.objective_score < 0.0 or self.objective_score > 1.0:
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.objective_score must be in [0, 1], got: {self.objective_score}"
+                )
+        if self.subjective_score is not None:
+            if not isinstance(self.subjective_score, (int, float)):
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.subjective_score must be a real number, got: {type(self.subjective_score).__name__}"
+                )
+            if self.subjective_score < 0.0 or self.subjective_score > 1.0:
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.subjective_score must be in [0, 1], got: {self.subjective_score}"
+                )
+        if self.recall_count is not None:
+            if not isinstance(self.recall_count, int):
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.recall_count must be an int, got: {type(self.recall_count).__name__}"
+                )
+            if self.recall_count < 0:
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.recall_count must be >= 0, got: {self.recall_count}"
+                )
+        if self.recall_utility_score is not None:
+            if not isinstance(self.recall_utility_score, (int, float)):
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.recall_utility_score must be a real number, got: {type(self.recall_utility_score).__name__}"
+                )
+            if self.recall_utility_score < 0.0 or self.recall_utility_score > 1.0:
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.recall_utility_score must be in [0, 1], got: {self.recall_utility_score}"
+                )
+        if self.last_updated_at_wall is not None:
+            import math as _math2
+
+            value = self.last_updated_at_wall
+            if not isinstance(value, (int, float)):
+                raise PersistenceError(
+                    "PersistedExperienceRecord.last_updated_at_wall must be a real number when present"
+                )
+            value = float(value)
+            if _math2.isnan(value) or _math2.isinf(value) or value < 0.0:
+                raise PersistenceError(
+                    "PersistedExperienceRecord.last_updated_at_wall must be finite and non-negative"
+                )
+            object.__setattr__(self, "last_updated_at_wall", value)
+        if self.double_confirmation_class is not None:
+            valid = ("both_pass", "objective_only", "subjective_only", "skip")
+            if self.double_confirmation_class not in valid:
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.double_confirmation_class must be one of {valid}, got: {self.double_confirmation_class}"
+                )
+        if self.objective_importance_json is not None and self.objective_importance_json != "":
+            # Validate JSON parses correctly via ObjectiveImportanceVector.from_json
+            from helios_v2.memory.contracts import ObjectiveImportanceVector
+            try:
+                ObjectiveImportanceVector.from_json(self.objective_importance_json)
+            except Exception as exc:
+                raise PersistenceError(
+                    f"PersistedExperienceRecord.objective_importance_json is not a valid ObjectiveImportanceVector JSON: {exc}"
+                ) from exc
 
     def with_sequence(self, sequence: int) -> "PersistedExperienceRecord":
         """Owner: durable experience store.
@@ -194,6 +276,14 @@ class PersistedExperienceRecord:
             created_at_wall=self.created_at_wall,
             layer=self.layer,
             memory_metadata=dict(self.memory_metadata),
+            objective_importance_json=self.objective_importance_json,
+            objective_score=self.objective_score,
+            subjective_score=self.subjective_score,
+            double_confirmation_class=self.double_confirmation_class,
+            recall_count=self.recall_count,
+            recall_utility_score=self.recall_utility_score,
+            last_updated_at_wall=self.last_updated_at_wall,
+            promotion_history_json=self.promotion_history_json,
         )
 
     def with_embedding(self, vector: tuple[float, ...]) -> "PersistedExperienceRecord":

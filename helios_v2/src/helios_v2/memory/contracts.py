@@ -4,15 +4,20 @@ Owns:
 - affect-linked memory contracts
 - replay-candidate contracts
 - memory record and publication ops contracts
+- R101: 6-dim objective importance vector + double-confirmation gate result
+- R101: cross-tick utility tracking fields + promotion event log
 
 Does not own:
 - feeling construction
 - conscious workspace promotion
 - identity writeback
+- objective importance aggregation (R101 protocol owned separately)
+- loss function implementations (R101 protocol declared, P5 owns)
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Mapping, Protocol, runtime_checkable
@@ -36,11 +41,217 @@ MemoryLearnedParameterCategory = Literal[
     "replay_priority_policy",
     "consolidation_policy",
     "layer_assignment_policy",
+    "objective_importance_weights",   # R101: aggregator weights + gate thresholds + resolver thresholds
 ]
 
 MemoryLayer = Literal["L2_working", "L3_short", "L4_long", "L5_autobiographical"]
 
 VALID_MEMORY_LAYERS = frozenset({"L2_working", "L3_short", "L4_long", "L5_autobiographical"})
+
+# R101: outcome-class weights for 6-dim objective importance vector.
+# Covers the full `15` outcome taxonomy at write time.
+# Unknown outcome_class falls back to 0.5 (neutral; honest absence).
+OUTCOME_CLASS_WEIGHTS: Mapping[str, float] = MappingProxyType({
+    "self_changed": 0.95,
+    "world_changed": 0.80,
+    "continuity_written": 0.70,
+    "executed": 0.55,
+    "rejected": 0.40,
+    "blocked": 0.35,
+    "internal_only_decision": 0.25,
+    "no_outcome": 0.20,
+})
+
+OUTCOME_CLASS_WEIGHTS_NEUTRAL_DEFAULT = 0.5
+
+
+# =============================================================================
+# R101: Double-confirmation gate taxonomy (objective vs subjective AND-gate)
+# =============================================================================
+
+DoubleConfirmationClass = Literal["both_pass", "objective_only", "subjective_only", "skip"]
+
+
+# =============================================================================
+# R101: 6-dimensional objective importance vector + JSON serialization
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class ObjectiveImportanceVector:
+    """Owner: memory affect and replay layer (R101).
+
+    Purpose:
+        One immutable 6-dimensional objective importance vector capturing
+        independent cognitive signals that determine whether a memory should be
+        persisted as L4_long / L5_autobiographical or demoted to L2_working.
+
+    Fields:
+        stimulus_intensity: text/stimulus length + complexity proxy (0..1)
+        cortisol_response: HPA axis response (R80 neuromodulator cortisol, [0, 1])
+        arousal_response: felt arousal (R44 feeling, [0, 1])
+        outcome_class_weight: mapped from OUTCOME_CLASS_WEIGHTS ([0.20, 0.95])
+        novelty_score: 1 - max cosine to stored memory (R96 embedding, [0, 1])
+        relationship_risk: 1 - social_safety ([0, 1])
+
+    Failure semantics:
+        Construction raises MemoryAffectReplayError on any field outside [0, 1].
+
+    P5 hook:
+        Aggregation is via ObjectiveAggregator protocol (NOT a method here).
+        JSON serialization enables P5 SQL extraction via SqlBackedTrainingDatasetExtractor.
+    """
+
+    stimulus_intensity: float
+    cortisol_response: float
+    arousal_response: float
+    outcome_class_weight: float
+    novelty_score: float
+    relationship_risk: float
+
+    def __post_init__(self) -> None:
+        for name in (
+            "stimulus_intensity",
+            "cortisol_response",
+            "arousal_response",
+            "outcome_class_weight",
+            "novelty_score",
+            "relationship_risk",
+        ):
+            _validate_unit_interval(f"ObjectiveImportanceVector.{name}", getattr(self, name))
+
+    def to_json(self) -> str:
+        """Deterministic JSON serialization for SQLite persistence."""
+        return json.dumps(
+            {
+                "stimulus_intensity": self.stimulus_intensity,
+                "cortisol_response": self.cortisol_response,
+                "arousal_response": self.arousal_response,
+                "outcome_class_weight": self.outcome_class_weight,
+                "novelty_score": self.novelty_score,
+                "relationship_risk": self.relationship_risk,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def from_json(s: str) -> ObjectiveImportanceVector:
+        """Deserialize from JSON. Raises MemoryAffectReplayError on malformed input."""
+        try:
+            d = json.loads(s)
+        except (TypeError, ValueError) as exc:
+            raise MemoryAffectReplayError(
+                f"ObjectiveImportanceVector.from_json: malformed JSON: {exc}"
+            ) from exc
+        required = {
+            "stimulus_intensity",
+            "cortisol_response",
+            "arousal_response",
+            "outcome_class_weight",
+            "novelty_score",
+            "relationship_risk",
+        }
+        missing = required - set(d.keys())
+        if missing:
+            raise MemoryAffectReplayError(
+                f"ObjectiveImportanceVector.from_json: missing fields: {sorted(missing)}"
+            )
+        return ObjectiveImportanceVector(
+            stimulus_intensity=float(d["stimulus_intensity"]),
+            cortisol_response=float(d["cortisol_response"]),
+            arousal_response=float(d["arousal_response"]),
+            outcome_class_weight=float(d["outcome_class_weight"]),
+            novelty_score=float(d["novelty_score"]),
+            relationship_risk=float(d["relationship_risk"]),
+        )
+
+
+# =============================================================================
+# R101: Double-confirmation gate result
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class DoubleConfirmationResult:
+    """Owner: memory affect and replay layer (R101).
+
+    Purpose:
+        Immutable outcome of a DoubleConfirmationGate evaluation: the joint verdict
+        of the 6-dim objective score and the R81 hormone-prediction subjective signal.
+
+    Fields:
+        classification: one of four AND-gate outcomes (both_pass / objective_only /
+                       subjective_only / skip).
+        objective_score: aggregator.aggregate(vector) ∈ [0, 1].
+        subjective_score: max R81 hormone_prediction value ∈ [0, 1]; 0.0 when absent.
+        confidence: subjective signal confidence ∈ [0, 1]; 0.0 when subjective absent.
+
+    Failure semantics:
+        Construction raises MemoryAffectReplayError on out-of-range scores or
+        invalid classification.
+    """
+
+    classification: DoubleConfirmationClass
+    objective_score: float
+    subjective_score: float
+    confidence: float
+
+    def __post_init__(self) -> None:
+        if self.classification not in ("both_pass", "objective_only", "subjective_only", "skip"):
+            raise MemoryAffectReplayError(
+                f"DoubleConfirmationResult.classification must be a DoubleConfirmationClass literal, got: {self.classification}"
+            )
+        _validate_unit_interval("DoubleConfirmationResult.objective_score", self.objective_score)
+        _validate_unit_interval("DoubleConfirmationResult.subjective_score", self.subjective_score)
+        _validate_unit_interval("DoubleConfirmationResult.confidence", self.confidence)
+
+
+# =============================================================================
+# R101: Promotion event log entry (used by R102; declared in R101 for schema readiness)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class PromotionEvent:
+    """Owner: memory affect and replay layer (R101).
+
+    Purpose:
+        One immutable log entry recording a layer promotion (L3→L4, L4→L5, etc.)
+        that R102 will append. Declared in R101 so the schema is stable; logic
+        arrives in R102.
+
+    Fields:
+        event_id: unique identifier.
+        from_layer: layer before promotion.
+        to_layer: layer after promotion.
+        tick_id: tick of promotion.
+        wall_seconds: R92 wall-time at promotion.
+        reason: short string identifying the trigger ("recall_count_threshold",
+                "objective_score_threshold", "decay_rebalance", ...).
+    """
+
+    event_id: str
+    from_layer: MemoryLayer
+    to_layer: MemoryLayer
+    tick_id: int
+    wall_seconds: float | None
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.event_id:
+            raise MemoryAffectReplayError("PromotionEvent must declare a non-empty event_id")
+        if self.from_layer not in VALID_MEMORY_LAYERS:
+            raise MemoryAffectReplayError(
+                f"PromotionEvent.from_layer must use the 4-layer taxonomy, got: {self.from_layer}"
+            )
+        if self.to_layer not in VALID_MEMORY_LAYERS:
+            raise MemoryAffectReplayError(
+                f"PromotionEvent.to_layer must use the 4-layer taxonomy, got: {self.to_layer}"
+            )
+        if not self.reason:
+            raise MemoryAffectReplayError("PromotionEvent must declare a non-empty reason")
 
 
 @dataclass(frozen=True)
@@ -314,9 +525,19 @@ class MemoryRecord:
         determined at write time by the injected classifier. This is the `06`
         cognitive contract; `33` stores its projection on PersistedExperienceRecord.
 
+    R101 P5-ready extensions:
+        The 9 additive fields below (objective_importance / objective_score /
+        subjective_score / double_confirmation / recall_count /
+        last_recall_at_tick / recall_utility_score / last_updated_at_wall /
+        promotion_history) provide the cross-tick utility tracking + objective 6-dim
+        vector + double-confirmation verdict that the P5 learning loop will consume.
+        All fields are additive and default to safe values so legacy callers
+        (R100 path) see byte-for-byte unchanged behavior.
+
     Failure semantics:
         Construction raises MemoryAffectReplayError on empty required fields,
-        out-of-range affect_intensity, or invalid MemoryLayer.
+        out-of-range affect_intensity, invalid MemoryLayer, or invalid R101
+        field values.
     """
 
     memory_id: str
@@ -330,6 +551,17 @@ class MemoryRecord:
     tick_id: int | None
     created_at_wall: float | None             # R92 wall-time at write
     memory_metadata: Mapping[str, str] = field(default_factory=dict)
+
+    # R101: P5-ready additive fields (all default-safe; legacy path unaffected)
+    objective_importance: ObjectiveImportanceVector | None = None
+    objective_score: float | None = None
+    subjective_score: float | None = None
+    double_confirmation: DoubleConfirmationResult | None = None
+    recall_count: int = 0
+    last_recall_at_tick: int | None = None
+    recall_utility_score: float | None = None
+    last_updated_at_wall: float | None = None
+    promotion_history: tuple[PromotionEvent, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.memory_id:
@@ -352,6 +584,20 @@ class MemoryRecord:
                     "MemoryRecord memory_metadata must map non-empty keys to string values"
                 )
         object.__setattr__(self, "memory_metadata", MappingProxyType(metadata))
+
+        # R101: validate additive fields (None-allowed + range checks when present)
+        if self.objective_score is not None:
+            _validate_unit_interval("MemoryRecord.objective_score", self.objective_score)
+        if self.subjective_score is not None:
+            _validate_unit_interval("MemoryRecord.subjective_score", self.subjective_score)
+        if self.recall_count < 0:
+            raise MemoryAffectReplayError(
+                f"MemoryRecord.recall_count must be >= 0, got: {self.recall_count}"
+            )
+        if self.recall_utility_score is not None:
+            _validate_unit_interval(
+                "MemoryRecord.recall_utility_score", self.recall_utility_score
+            )
 
 
 @dataclass(frozen=True)

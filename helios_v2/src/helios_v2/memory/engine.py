@@ -13,8 +13,8 @@ Does not own:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass, replace
+from typing import Callable, Mapping, Protocol, runtime_checkable
 import time as _time
 
 from helios_v2.feeling import InteroceptiveFeelingState
@@ -46,6 +46,57 @@ def _clamp_unit(value: float) -> float:
     """Owner: memory affect and replay layer. Clamp a value into [0.0, 1.0], rounded for determinism."""
 
     return round(min(1.0, max(0.0, value)), 4)
+
+
+# =============================================================================
+# R101 helpers (objective_importance + subjective signal extraction)
+# =============================================================================
+
+
+def _feeling_snapshot_as_dict(feeling: object) -> Mapping[str, float]:
+    """Owner: memory affect and replay layer (R101).
+
+    Convert the InteroceptiveFeelingVector to a bounded Mapping[str, float] for the
+    ObjectiveImportanceEstimator. The 7 feeling dimensions (R44) are projected.
+
+    Failure semantics:
+        Coerces non-numeric / out-of-range values to the bounded default (0.5).
+    """
+
+    out: dict[str, float] = {}
+    for name in (
+        "valence", "arousal", "tension", "comfort", "fatigue", "pain_like", "social_safety",
+    ):
+        try:
+            v = float(getattr(feeling, name, 0.5))
+        except (TypeError, ValueError):
+            v = 0.5
+        out[name] = min(1.0, max(0.0, v))
+    return out
+
+
+def _extract_subjective_signal(
+    hormone_prediction: Mapping[str, float] | None,
+) -> tuple[float, float]:
+    """Owner: memory affect and replay layer (R101).
+
+    Extract subjective score + confidence from the R81 hormone prediction Mapping.
+    Score = max of all 9-channel predictions (bounded [0, 1]).
+    Confidence = 1.0 when prediction is non-empty; 0.0 when absent.
+
+    Failure semantics:
+        Non-numeric values are skipped; missing prediction yields (0.0, 0.0).
+    """
+
+    if not hormone_prediction:
+        return 0.0, 0.0
+    vals: list[float] = []
+    for v in hormone_prediction.values():
+        if isinstance(v, (int, float)):
+            vals.append(min(1.0, max(0.0, float(v))))
+    if not vals:
+        return 0.0, 0.0
+    return max(vals), 1.0
 
 
 def _validate_feeling_state(state: InteroceptiveFeelingState) -> None:
@@ -192,6 +243,14 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
     affect_tension_weight: float = 0.3
     affect_pain_weight: float = 0.2
     affect_mismatch_weight: float = 0.6
+    # R101: P5-ready foundation inject points. ALL six must be present (or all None) for the
+    # R101 path to activate. When any is None, the legacy R100 path runs byte-for-byte.
+    objective_importance_estimator: "ObjectiveImportanceEstimator | None" = None
+    objective_aggregator: "ObjectiveAggregator | None" = None
+    double_confirmation_gate: "DoubleConfirmationGate | None" = None
+    objective_layer_resolver: "ObjectiveImportanceLayerResolver | None" = None
+    recall_utility_tracker: "RecallUtilityTracker | None" = None
+    hormone_prediction_provider: "Callable[[], Mapping[str, float] | None] | None" = None
 
     def record_state(
         self,
@@ -275,20 +334,31 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
         outcome_class: str,
         tick_id: int | None,
     ) -> tuple[MemoryRecord, ...]:
-        """Owner: memory affect and replay layer (R100).
+        """Owner: memory affect and replay layer (R100 + R101).
 
         Produce MemoryRecords for forced-consolidation candidates when the layer classifier
         is present. When the classifier is absent, returns an empty tuple (legacy path
         byte-for-byte unchanged).
 
-        The affect_intensity passed to the classifier is the salience gate's computed value:
-        max(raw_affect_intensity, mismatch_weight * mismatch_score). This captures the overall
-        significance that triggered consolidation, combining felt affect and prediction mismatch.
-        The outcome_class is the 15 outcome taxonomy at write time.
+        R101 enrichment: when ALL 6 R101 inject points are present on this engine,
+        each base MemoryRecord is enriched with the 6-dim objective vector + double
+        confirmation gate + resolver-adjusted layer. The base R100 record is preserved
+        structurally (same `memory_id` / `affect_intensity_at_write` / `family` /
+        `content` etc.); only R101 additive fields are added. When any of the 6 R101
+        injects is None, the engine returns the base record unchanged (R100 path).
         """
 
         if self.layer_classifier is None:
             return ()
+
+        # R101: detect full R101 path activation
+        r101_active = (
+            self.objective_importance_estimator is not None
+            and self.objective_aggregator is not None
+            and self.double_confirmation_gate is not None
+            and self.objective_layer_resolver is not None
+            and self.hormone_prediction_provider is not None
+        )
 
         # Compute affect_intensity from the feeling state (same formula as the default selector)
         feeling = feeling_state.feeling
@@ -316,8 +386,7 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
             # fall back to raw affect_intensity when priority_hint is None.
             gate_value = candidate.priority_hint if candidate.priority_hint is not None else affect_intensity
             layer = self.layer_classifier.classify_layer(gate_value, outcome_class)
-            records.append(
-                MemoryRecord(
+            base_record = MemoryRecord(
                     memory_id=item.memory_id,
                     layer=layer,
                     affect_intensity_at_write=gate_value,
@@ -329,8 +398,92 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
                     tick_id=tick_id,
                     created_at_wall=_time.time(),
                 )
-            )
+            # R101: enrich with 6-dim + double-confirmation + resolver if all injects present
+            if r101_active:
+                base_record = self._r101_enrich_memory_record(
+                    base_record, feeling_state, outcome_class, tick_id,
+                )
+            records.append(base_record)
         return tuple(records)
+
+    def _r101_enrich_memory_record(
+        self,
+        base_record: MemoryRecord,
+        feeling_state: InteroceptiveFeelingState,
+        outcome_class: str,
+        tick_id: int | None,
+    ) -> MemoryRecord:
+        """Owner: memory affect and replay layer (R101).
+
+        Enrich a base MemoryRecord with the R101 6-dim objective importance + double
+        confirmation gate + layer resolver fields. Called only when all 6 R101 inject
+        points are present on the engine. The base record's `layer` may be upgraded
+        or downgraded by the resolver.
+
+        Failure semantics:
+            Collaborator (estimator / aggregator / gate / resolver / hormone prediction)
+            errors propagate as explicit owner failures.
+
+        P5 hook:
+            All 6 collaborators are Protocol-typed so P5 can plug in learned
+            implementations without changing this method.
+        """
+        # All 6 R101 injects must be present (caller checks); assert defensively.
+        if (
+            self.objective_importance_estimator is None
+            or self.objective_aggregator is None
+            or self.double_confirmation_gate is None
+            or self.objective_layer_resolver is None
+            or self.hormone_prediction_provider is None
+        ):
+            return base_record  # defensive: caller should have checked
+
+        # Extract stimulus text from salient_tokens (best-effort)
+        stimulus_text = " ".join(base_record.content.salient_tokens) if base_record.content.salient_tokens else ""
+
+        # Compute objective 6-dim vector
+        objective_vector = self.objective_importance_estimator.estimate(
+            stimulus_text=stimulus_text,
+            hormone_snapshot=None,   # R80 hormone snapshot not threaded into engine; future work
+            feeling_snapshot=_feeling_snapshot_as_dict(feeling_state.feeling),
+            outcome_class=outcome_class,
+            recent_summaries=(),
+            embed_callable=None,    # novelty uses 0.5 neutral (no embed here)
+        )
+
+        # Compute objective aggregate score
+        objective_score = self.objective_aggregator.aggregate(objective_vector)
+
+        # Compute subjective score from R81 hormone prediction (cross-tick carry)
+        hormone_pred = self.hormone_prediction_provider()
+        subjective_score, subjective_confidence = _extract_subjective_signal(hormone_pred)
+
+        # Compute double confirmation
+        dc_result = self.double_confirmation_gate.evaluate(
+            objective_score=objective_score,
+            subjective_score=subjective_score,
+            subjective_confidence=subjective_confidence,
+            outcome_class=outcome_class,
+        )
+
+        # Resolve final layer (may upgrade/downgrade R100 base)
+        final_layer = self.objective_layer_resolver.resolve(
+            initial_layer=base_record.layer,
+            objective_score=objective_score,
+            double_confirmation_class=dc_result.classification,
+            outcome_class=outcome_class,
+        )
+
+        # Build enriched record (all 9 R101 fields populated)
+        return replace(
+            base_record,
+            layer=final_layer,
+            objective_importance=objective_vector,
+            objective_score=objective_score,
+            subjective_score=subjective_score,
+            double_confirmation=dc_result,
+            last_updated_at_wall=_time.time(),
+        )
 
     def _surface_recalled_memories(
         self,
