@@ -205,7 +205,7 @@ class _DeferredContinuitySnapshot:
     expired_record_count: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class FirstVersionAutonomyPath:
     """First shipped autonomy path integrating pressure into a bounded disposition.
 
@@ -223,6 +223,11 @@ class FirstVersionAutonomyPath:
     # (default 600s = 10min; P5 surface under continuity_carry_policy).
     half_life_seconds: float = 600.0
     continuous_state_owner: object | None = None
+    # R-PROTO-LEARN.P-TEMPORAL: per-tick observed cumulative wall-elapsed
+    # seconds from the bound continuous_state_owner. Used to derive
+    # per-tick delta_seconds automatically. Updated internally by
+    # `assemble_result`; do not set from outside.
+    _last_observed_wall_elapsed: float | None = field(default=None, init=False, repr=False)
     # R-PROTO-LEARN.P-TEMPORAL: P5 surface mapping
     p5_parameter_mapping: dict[str, str] = field(default_factory=lambda: {
         "decay_factor": "continuity_carry_policy",
@@ -508,9 +513,26 @@ class FirstVersionAutonomyPath:
         outward_drive = continuation_pressure + temporal_pressure + identity_unresolved
         combined_pressure = continuation_pressure + retrieval_pull + temporal_pressure + identity_unresolved
         proactive_action_requested = outward_drive >= OUTWARD_ACTION_THRESHOLD
+        # R-PROTO-LEARN.P-TEMPORAL: auto-derive delta_seconds from the
+        # bound `continuous_state_owner` (mirrors neuromodulation /
+        # feeling paths). When None bound or cold start, falls through
+        # to the legacy per-tick `decay_factor` path.
+        delta_seconds: float | None = None
+        if self.continuous_state_owner is not None:
+            try:
+                reading = self.continuous_state_owner.sample()
+                if reading.wall_clock_present and reading.wall_clock_elapsed_seconds > 0.0:
+                    if self._last_observed_wall_elapsed is not None:
+                        candidate = reading.wall_clock_elapsed_seconds - self._last_observed_wall_elapsed
+                        if candidate > 0.0:
+                            delta_seconds = float(candidate)
+                    self._last_observed_wall_elapsed = reading.wall_clock_elapsed_seconds
+            except Exception:
+                delta_seconds = None
         carry_snapshot = self._carry_forward_records(
             request.prior_deferred_records,
             request_id=request.request_id,
+            delta_seconds=delta_seconds,
         )
         carried_records = carry_snapshot.active_records
         merged_record_count = carry_snapshot.merged_record_count

@@ -294,6 +294,11 @@ class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
     # used, preserving P-PROTO-LEARN pre-temporal behaviour for tests
     # that don't bind a clock.
     continuous_state_owner: object | None = None
+    # R-PROTO-LEARN.P-TEMPORAL: per-tick observed cumulative wall-elapsed
+    # seconds from the bound continuous_state_owner. Used to derive
+    # per-tick delta_seconds when caller does not supply one. Updated
+    # internally by `update_levels`; do not set from outside.
+    _last_observed_wall_elapsed: float | None = field(default=None, init=False, repr=False)
 
     # R-PROTO-LEARN.P-TEMPORAL: P5 surface. Maps hardcoded field -> LearnedParameterCategory.
     p5_parameter_mapping: dict[str, str] = field(default_factory=lambda: {
@@ -336,10 +341,32 @@ class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
         architecture lacked: hormone levels now decay in real seconds,
         not in tick-count units.
 
+        Auto-wire from `continuous_state_owner`: when the caller does not
+        supply `delta_seconds` but a `continuous_state_owner` is bound,
+        the per-tick delta is derived from the difference between the
+        current `sample().wall_clock_elapsed_seconds` and the
+        previously-observed value. Cold start (no prior observation)
+        yields `delta_seconds = None` and the legacy tick-step path runs.
+
         The inner drive path produces the instantaneous appraisal-derived target; this method
         moves the prior levels a phasic step toward that drive and a tonic step toward the
         baseline, clamping each channel. `prior_levels is None` is a cold start (prior = baseline).
         """
+
+        # R-PROTO-LEARN.P-TEMPORAL: auto-derive delta_seconds from
+        # `continuous_state_owner` when caller didn't supply one.
+        if delta_seconds is None and self.continuous_state_owner is not None:
+            try:
+                reading = self.continuous_state_owner.sample()
+                if reading.wall_clock_present and reading.wall_clock_elapsed_seconds > 0.0:
+                    if self._last_observed_wall_elapsed is not None:
+                        candidate = reading.wall_clock_elapsed_seconds - self._last_observed_wall_elapsed
+                        if candidate > 0.0:
+                            delta_seconds = float(candidate)
+                    self._last_observed_wall_elapsed = reading.wall_clock_elapsed_seconds
+            except Exception:
+                # Wall-clock read failure is non-fatal; fall through to legacy tick-step.
+                delta_seconds = None
 
         drive = self.drive_path.update_levels(batch, config, tick_id, None)
         prior = prior_levels if prior_levels is not None else config.tonic_baseline

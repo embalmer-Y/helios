@@ -1666,13 +1666,14 @@ def assemble_runtime(
         ),
         active_channel_reporter=FirstVersionActiveChannelReporter(),
     )
-    # R-PROTO-LEARN.P-TEMPORAL: wire ContinuousStateOwner to the 04 path
-    # (when semantic memory is on) so per-channel half-life decay runs in
-    # real seconds between ticks. The wire-in is a one-line pass of the
-    # wall_clock to the path's continuous_state_owner field; the path's
-    # update_levels reads it to apply wall-clock decay. Skipped under the
-    # constant first-version path so its semantics are byte-for-byte
-    # unchanged when P-TEMPORAL is disabled.
+    # R-PROTO-LEARN.P-TEMPORAL: wire ContinuousStateOwner is centralised
+    # in a single block at the END of assembly (after 04/05/06/08 are all
+    # created). Defer the wire-in: see `wire_continuous_state_owner(...)`
+    # call below, right after `autonomy = AutonomyEngine(...)` is built.
+    # The previous 04-only wire-in was relocated to that block to avoid
+    # NameError on `feeling_construction_path` / `memory.replay_selector` /
+    # `autonomy.autonomy_path` (none of those names exist at this point in
+    # the assembly).
     # `05` feeling de-shim (R38) + dual-timescale persistence (R44) + interoceptive shaping (R51):
     # when the semantic feeling path is enabled, the instantaneous target is derived from the real
     # `04` state (R38); when an interoceptive sampler is also wired (R50 producer), the R51 path
@@ -1689,7 +1690,7 @@ def assemble_runtime(
                 target_path=feeling_target_path
             )
         feeling_construction_path: FeelingConstructionPath = PersistentFeelingConstructionPath(
-            target_path=feeling_target_path
+            target_path=feeling_target_path,
         )
     else:
         feeling_construction_path = FirstVersionFeelingConstructionPath()
@@ -1843,6 +1844,32 @@ def assemble_runtime(
         config=resolved_config.autonomy,
         autonomy_path=FirstVersionAutonomyPath(),
     )
+
+    # R-PROTO-LEARN.P-TEMPORAL: centralised wire of the shared
+    # ContinuousStateOwner to the four P-TEMPORAL-aware consumer paths.
+    # Each consumer holds a `continuous_state_owner` field; binding the
+    # same instance lets the four owners' half-life decays be driven by
+    # the same wall-clock (episode-aware, gap-aware). When
+    # `semantic_memory_enabled` is False the constant first-version
+    # paths run and the field stays None (legacy behaviour preserved).
+    # NOTE: this block runs AFTER all four engines (04/05/06/08) are
+    # constructed, so the binding is safe (no NameError).
+    if semantic_memory_enabled:
+        from helios_v2.temporal_continuous_state import FirstVersionContinuousStateOwner
+        _continuous_state_owner = FirstVersionContinuousStateOwner(wall_clock=wall_clock)
+        if isinstance(neuromodulator.update_path, DualTimescaleNeuromodulatorUpdatePath):
+            neuromodulator.update_path.continuous_state_owner = _continuous_state_owner
+        if isinstance(
+            feeling_construction_path, PersistentFeelingConstructionPath
+        ):
+            feeling_construction_path.continuous_state_owner = _continuous_state_owner
+        if isinstance(memory.replay_selector, SalienceGatedReplayCandidateSelector):
+            memory.replay_selector.continuous_state_owner = _continuous_state_owner
+        if isinstance(autonomy.autonomy_path, FirstVersionAutonomyPath):
+            autonomy.autonomy_path.continuous_state_owner = _continuous_state_owner
+    else:
+        _continuous_state_owner = None
+
     evaluation = EvaluationEngine(
         config=resolved_config.evaluation,
         evaluation_path=FirstVersionEvaluationPath(),

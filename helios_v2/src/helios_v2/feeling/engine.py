@@ -454,6 +454,11 @@ class PersistentFeelingConstructionPath(FeelingConstructionPath):
     # persistence (default 1800s = 30min; P5 surface under feeling_persistence).
     half_life_seconds: float = 1800.0
     continuous_state_owner: object | None = None
+    # R-PROTO-LEARN.P-TEMPORAL: per-tick observed cumulative wall-elapsed
+    # seconds from the bound continuous_state_owner. Used to derive
+    # per-tick delta_seconds automatically when caller does not supply
+    # one. Updated internally by `construct_feeling`; do not set.
+    _last_observed_wall_elapsed: float | None = field(default=None, init=False, repr=False)
     # R-PROTO-LEARN.P-TEMPORAL: P5 surface mapping
     p5_parameter_mapping: dict[str, str] = field(default_factory=lambda: {
         "alpha_phasic": "feeling_persistence",
@@ -494,9 +499,16 @@ class PersistentFeelingConstructionPath(FeelingConstructionPath):
     ) -> InteroceptiveFeelingVector:
         """Return the next feeling as one leaky-integrator step from the prior toward the target.
 
-        The inner target path produces the instantaneous neuromodulator-derived feeling; this
-        method moves the prior feeling a phasic step toward that target and a tonic step toward the
-        baseline, clamping each dimension. `prior_feeling is None` is a cold start (prior = baseline).
+        R-PROTO-LEARN.P-TEMPORAL: when `continuous_state_owner` is bound,
+        a wall-clock half-life decay is applied first: each dimension is
+        pulled toward its baseline by `1 - exp(-delta / hl)` before the
+        phasic step. The per-tick delta is derived from the bound
+        continuous_state_owner.sample() difference (or None on cold
+        start). The inner target path produces the instantaneous
+        neuromodulator-derived feeling; this method moves the prior
+        feeling a phasic step toward that target and a tonic step toward
+        the baseline, clamping each dimension. `prior_feeling is None` is
+        a cold start (prior = baseline).
         """
 
         target = self.target_path.construct_feeling(
@@ -506,11 +518,29 @@ class PersistentFeelingConstructionPath(FeelingConstructionPath):
         baseline = config.baseline_feeling
         low = config.legal_min
         high = config.legal_max
+        # R-PROTO-LEARN.P-TEMPORAL: auto-derive delta_seconds from
+        # `continuous_state_owner` (mirrors neuromodulation's path).
+        delta_seconds: float | None = None
+        if self.continuous_state_owner is not None:
+            try:
+                reading = self.continuous_state_owner.sample()
+                if reading.wall_clock_present and reading.wall_clock_elapsed_seconds > 0.0:
+                    if self._last_observed_wall_elapsed is not None:
+                        candidate = reading.wall_clock_elapsed_seconds - self._last_observed_wall_elapsed
+                        if candidate > 0.0:
+                            delta_seconds = float(candidate)
+                    self._last_observed_wall_elapsed = reading.wall_clock_elapsed_seconds
+            except Exception:
+                delta_seconds = None
         next_values: dict[str, float] = {}
         for dimension in _FEELING_DIMENSIONS:
             prior_value = getattr(prior, dimension)
             target_value = getattr(target, dimension)
             baseline_value = getattr(baseline, dimension)
+            # P-TEMPORAL: wall-clock half-life decay (skipped when delta_seconds None)
+            if delta_seconds is not None and delta_seconds > 0.0:
+                decay = 1.0 - pow(2.718281828459045, -delta_seconds / self.half_life_seconds)
+                prior_value = prior_value + decay * (baseline_value - prior_value)
             stepped = (
                 prior_value
                 + self.alpha_phasic * (target_value - prior_value)
