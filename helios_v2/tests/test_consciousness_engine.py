@@ -261,18 +261,21 @@ class RecordingDecisionPolicy:
     recorded_candidate_set: WorkspaceCandidateSet | None = None
     recorded_working_state: WorkingStateSnapshot | None = None
     recorded_material_keys: tuple[str, ...] = ()
+    recorded_config: "ConsciousnessConfig | None" = None
 
     def decide(
         self,
         candidate_set: WorkspaceCandidateSet,
         working_state: WorkingStateSnapshot,
         material_map: dict[str, ConsciousContentMaterial],
+        config: "ConsciousnessConfig | None" = None,
     ):
         from helios_v2.consciousness.engine import _FocalSelectionOutcome
 
         self.recorded_candidate_set = candidate_set
         self.recorded_working_state = working_state
         self.recorded_material_keys = tuple(material_map)
+        self.recorded_config = config  # R-PROTO-LEARN.P-TEMPORAL
         return _FocalSelectionOutcome(
             commit_status="committed",
             focal_material=material_map["workspace-candidate:001"],

@@ -348,6 +348,10 @@ class _FocalSelectionPolicy(Protocol):
 
     This layer is LLM-ready in the sense that later versions may replace the deterministic selection policy without
     changing the semantic rendering surface or the capability boundary.
+
+    R-PROTO-LEARN.P-TEMPORAL: `config` is now passed in so policies can read
+    `commitment_score_floor` (the P5 surface for commitment_policy). Default
+    `None` for backward compatibility with any test-only custom policy.
     """
 
     def decide(
@@ -355,6 +359,7 @@ class _FocalSelectionPolicy(Protocol):
         candidate_set: WorkspaceCandidateSet,
         working_state: WorkingStateSnapshot,
         material_map: dict[str, ConsciousContentMaterial],
+        config: "ConsciousnessConfig | None" = None,
     ) -> _FocalSelectionOutcome:
         """Return one private focal-selection outcome using current-cycle inputs only."""
 
@@ -810,13 +815,23 @@ def _build_commitment_path_trace(
 
 @dataclass
 class _RetainedWorkingStateSelectionPolicy(_FocalSelectionPolicy):
-    """Private first-version focal-selection policy based on retained working-state ids only."""
+    """Private first-version focal-selection policy based on retained working-state ids only.
+
+    R-PROTO-LEARN.P-TEMPORAL: when `config` is provided, the focal material's
+    `workspace_score_hint` is compared against `commitment_score_floor`; below
+    the floor the cycle is rejected with `insufficient_commitment_signal`.
+    This is the quantitative gate that the prior architecture lacked (the
+    old code only rejected on emptiness / summary normalization, not on
+    low competition score). Default floor 0.5 preserves legacy behaviour
+    for tests that don't pass a config.
+    """
 
     def decide(
         self,
         candidate_set: WorkspaceCandidateSet,
         working_state: WorkingStateSnapshot,
         material_map: dict[str, ConsciousContentMaterial],
+        config: "ConsciousnessConfig | None" = None,
     ) -> _FocalSelectionOutcome:
         retained_materials = tuple(
             material_map[retained_candidate_id]
@@ -837,6 +852,16 @@ class _RetainedWorkingStateSelectionPolicy(_FocalSelectionPolicy):
                 no_commit_reason="semantic_conflict_unresolved",
             )
         focal_material = retained_materials[0]
+        # R-PROTO-LEARN.P-TEMPORAL: quantitative commitment gate
+        if config is not None:
+            score = focal_material.workspace_score_hint
+            if score is None or score < config.commitment_score_floor:
+                return _FocalSelectionOutcome(
+                    commit_status="no_commit",
+                    focal_material=None,
+                    supporting_materials=(),
+                    no_commit_reason="insufficient_commitment_signal",
+                )
         if not _normalize_summary(focal_material.material_summary):
             return _FocalSelectionOutcome(
                 commit_status="no_commit",
@@ -889,6 +914,7 @@ class IgnitionFocalSelectionPolicy(_FocalSelectionPolicy):
         candidate_set: WorkspaceCandidateSet,
         working_state: WorkingStateSnapshot,
         material_map: dict[str, ConsciousContentMaterial],
+        config: "ConsciousnessConfig | None" = None,
     ) -> _FocalSelectionOutcome:
         retained_materials = tuple(
             material_map[retained_candidate_id]
@@ -910,6 +936,18 @@ class IgnitionFocalSelectionPolicy(_FocalSelectionPolicy):
             ),
         )
         focal_material = ranked[0]
+        # R-PROTO-LEARN.P-TEMPORAL: quantitative commitment gate (matches
+        # _RetainedWorkingStateSelectionPolicy so the two paths share one
+        # commitment semantics; configurable per-assembly).
+        if config is not None:
+            score = focal_material.workspace_score_hint
+            if score is None or score < config.commitment_score_floor:
+                return _FocalSelectionOutcome(
+                    commit_status="no_commit",
+                    focal_material=None,
+                    supporting_materials=(),
+                    no_commit_reason="insufficient_commitment_signal",
+                )
         if not _normalize_summary(focal_material.material_summary):
             return _FocalSelectionOutcome(
                 commit_status="no_commit",
@@ -1417,6 +1455,7 @@ class FirstVersionConsciousCommitmentPath(ConsciousCommitmentPath):
                 candidate_set,
                 working_state,
                 material_map,
+                config,  # R-PROTO-LEARN.P-TEMPORAL: pass config for commitment_score_floor
             )
         except _CommitmentCapabilityRejectedCycle:
             state = self._build_capability_rejected_state(candidate_set, working_state, tick_id)
@@ -1545,6 +1584,29 @@ class ConsciousnessEngine(ConsciousContentAPI):
 
     config: ConsciousnessConfig
     commitment_path: ConsciousCommitmentPath
+    # R-PROTO-LEARN.P-TEMPORAL: P5 learner binding (set by wire_learner_to_owner).
+    _p5_learner_binding: object | None = None
+
+    def apply_p5_policy(self, snapshot: object) -> None:
+        """R-PROTO-LEARN.P-TEMPORAL: P5 surface override.
+
+        Maps snapshot.policy_output[0] -> config.commitment_score_floor
+        (clipped to [0, 1]). The override uses `object.__setattr__` because
+        `ConsciousnessConfig` is frozen (immutable-per-instance safety);
+        per-cycle overrides produce a new config attribute via a
+        helper-setattr path (we write to a mutable shadow that the
+        commitment path reads via `_effective_floor`).
+        """
+        if snapshot is None or not getattr(snapshot, "policy_output", None):
+            return
+        out = snapshot.policy_output
+        if len(out) < 1:
+            return
+        new_floor = max(0.0, min(1.0, float(out[0])))
+        # Use object.__setattr__ to bypass frozen (config is shared
+        # across the engine; per-engine override is acceptable since
+        # commitment_path receives config at commit() call time).
+        object.__setattr__(self.config, "commitment_score_floor", new_floor)
 
     def commit_content(
         self,

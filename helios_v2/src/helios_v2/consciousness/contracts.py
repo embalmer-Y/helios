@@ -14,7 +14,7 @@ Does not own:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 from helios_v2.feeling import InteroceptiveFeelingVector
 from helios_v2.workspace import WorkingStateSnapshot, WorkspaceCandidateSet
@@ -321,6 +321,20 @@ class ConsciousnessConfig:
     conscious_state_bootstrap_id: str
     max_supporting_context_items: int
     mandatory_learned_parameters: tuple[ConsciousnessLearnedParameterCategory, ...]
+    # R-PROTO-LEARN.P-TEMPORAL: minimum workspace_score_hint required for a
+    # focal material to be committed (i.e. not rejected as
+    # `insufficient_commitment_signal`). Default 0.5 = first-version
+    # C_engineering_hypothesis. Bounded [0, 1]. P5 surface under
+    # `commitment_policy` LearnedParameterCategory (小黑 2026-06-20 拍板 A).
+    commitment_score_floor: float = 0.5
+
+    # R-PROTO-LEARN.P-TEMPORAL: P5 surface mapping (ClassVar so the
+    # frozen dataclass stays immutable per-instance). The owner is
+    # ConsciousnessEngine, which is mutable and holds the binding;
+    # this ClassVar is the static mapping used by wire_learner_to_owner.
+    p5_parameter_mapping: ClassVar[dict[str, str]] = {
+        "commitment_score_floor": "commitment_policy",
+    }
 
     def __post_init__(self) -> None:
         expected = {
@@ -344,6 +358,10 @@ class ConsciousnessConfig:
             raise ConsciousnessError(
                 "Consciousness config max_supporting_context_items must be within [0, 2]"
             )
+        # R-PROTO-LEARN.P-TEMPORAL: validate commitment_score_floor
+        _validate_unit_interval(
+            "ConsciousnessConfig.commitment_score_floor", self.commitment_score_floor
+        )
 
 
 @dataclass(frozen=True)
