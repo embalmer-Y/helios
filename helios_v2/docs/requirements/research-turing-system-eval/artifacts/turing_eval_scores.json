@@ -1,0 +1,95 @@
+{
+  "scores": {
+    "D2": {
+      "score": 0.008,
+      "per_dim_std": {
+        "dopamine": 0.0034,
+        "norepinephrine": 0.0041,
+        "serotonin": 0.0,
+        "acetylcholine": 0.0015,
+        "cortisol": 0.0037,
+        "oxytocin": 0.0,
+        "opioid_tone": 0.0021,
+        "excitation": 0.0,
+        "inhibition": 0.0
+      }
+    },
+    "D3": {
+      "score": 1.0,
+      "evidence": {
+        "memory_active_ratio": 0.603,
+        "consequence_recorded_ratio": 1.0
+      }
+    },
+    "D4": {
+      "score": 1.0,
+      "evidence": {
+        "disposition_diversity": 4,
+        "activity_mode_diversity": 4,
+        "most_common_disp": "defer"
+      }
+    },
+    "D5": {
+      "score": 0.521,
+      "evidence": {
+        "avg_pair_jaccard": 0.3396
+      }
+    },
+    "D8": {
+      "score": 0.184,
+      "evidence": {
+        "self_ref_ratio": 0.184
+      }
+    },
+    "D10": {
+      "score": 0.0,
+      "evidence": {
+        "pre_max_cortisol": 0.6928,
+        "post_min_cortisol": 0.6928,
+        "drop": 0.0
+      }
+    },
+    "D1": {
+      "score": 0.668,
+      "evidence": {
+        "judged": 30,
+        "mode": "llm_judge"
+      }
+    },
+    "D6": {
+      "score": 0.74,
+      "evidence": {
+        "judged": 30,
+        "mode": "llm_judge"
+      }
+    },
+    "D7": {
+      "score": 0.5,
+      "evidence": {
+        "judged": 20,
+        "mode": "llm_judge"
+      }
+    },
+    "D9": {
+      "score": 0.91,
+      "evidence": {
+        "judged": 20,
+        "mode": "llm_judge"
+      }
+    }
+  },
+  "aggregate": {
+    "internal_mean": 0.452,
+    "behavior_mean": 0.705,
+    "overall": 0.387,
+    "pass_line": 0.8,
+    "passed": false,
+    "weak_dims": [
+      "D2",
+      "D8",
+      "D10"
+    ],
+    "risk_factor": 0.7
+  },
+  "trace_size": 1129
+}
