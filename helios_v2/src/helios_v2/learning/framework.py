@@ -456,6 +456,14 @@ class LearnerABC:
         # Check commit
         commit = self.commit_if_stable()
 
+        # R-PROTO-LEARN.P-TEMPORAL: compute policy_output = W @ state_vec + bias,
+        # clipped to [0, 1]. This is the canonical signal that
+        # owner.apply_p5_policy consumes to override its hardcoded defaults.
+        raw_output = self._W @ state_vec + self._bias
+        policy_output = tuple(
+            float(max(0.0, min(1.0, v))) for v in raw_output
+        )
+
         return _LearningSnapshot(
             weights=self.weights_snapshot(),
             bias=self.bias_snapshot(),
@@ -463,4 +471,5 @@ class LearnerABC:
             residual=residual,
             commit=commit,
             tick_id=tick_id,
+            policy_output=policy_output,
         )

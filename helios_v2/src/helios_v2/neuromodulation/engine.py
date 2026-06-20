@@ -13,7 +13,7 @@ Does not own:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from helios_v2.appraisal import RapidAppraisalBatch
@@ -271,12 +271,53 @@ class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
     drive_path: NeuromodulatorUpdatePath
     alpha_phasic: float = 0.6
     alpha_tonic: float = 0.1
+    # R-PROTO-LEARN.P-TEMPORAL: per-channel wall-clock half-life seconds.
+    # Default values are first-version C_engineering_hypothesis constants
+    # (cortisol ~60min, dopamine ~30s, NE/serotonin/OXT/opioid ~5min, ACh ~2min,
+    # excitation/inhibition tracked via damped integrator).
+    # These are P5 surfaces under LearnedParameterCategory "decay_speed_persistence".
+    half_life_seconds: tuple[float, ...] = (
+        30.0,    # dopamine
+        300.0,   # norepinephrine
+        300.0,   # serotonin
+        120.0,   # acetylcholine
+        3600.0,  # cortisol
+        300.0,   # oxytocin
+        300.0,   # opioid_tone
+        60.0,    # excitation
+        60.0,    # inhibition
+    )
+    # R-PROTO-LEARN.P-TEMPORAL: optional ContinuousStateOwner binding.
+    # When set, the integrator applies wall-clock half-life decay between
+    # ticks (delta_seconds read from ContinuousStateReading). When None,
+    # the legacy tick-step integrator (alpha_phasic + alpha_tonic only) is
+    # used, preserving P-PROTO-LEARN pre-temporal behaviour for tests
+    # that don't bind a clock.
+    continuous_state_owner: object | None = None
+
+    # R-PROTO-LEARN.P-TEMPORAL: P5 surface. Maps hardcoded field -> LearnedParameterCategory.
+    p5_parameter_mapping: dict[str, str] = field(default_factory=lambda: {
+        "alpha_phasic": "decay_speed_persistence",
+        "alpha_tonic": "decay_speed_persistence",
+    })
+    _p5_learner_binding: object | None = None
 
     def __post_init__(self) -> None:
         if not (0.0 < self.alpha_tonic < self.alpha_phasic <= 1.0):
             raise NeuromodulatorError(
                 "DualTimescaleNeuromodulatorUpdatePath requires 0 < alpha_tonic < alpha_phasic <= 1"
             )
+        if len(self.half_life_seconds) != len(_NEUROMODULATOR_CHANNELS):
+            raise NeuromodulatorError(
+                f"half_life_seconds must have {len(_NEUROMODULATOR_CHANNELS)} entries "
+                f"(one per channel), got {len(self.half_life_seconds)}"
+            )
+        for i, hl in enumerate(self.half_life_seconds):
+            if hl <= 0.0:
+                raise NeuromodulatorError(
+                    f"half_life_seconds[{i}] ({_NEUROMODULATOR_CHANNELS[i]}) "
+                    f"must be > 0, got {hl}"
+                )
 
     def update_levels(
         self,
@@ -284,8 +325,16 @@ class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
         config: NeuromodulatorConfig,
         tick_id: int | None,
         prior_levels: NeuromodulatorLevels | None = None,
+        delta_seconds: float | None = None,
     ) -> NeuromodulatorLevels:
         """Return the next levels as one leaky-integrator step from the prior toward the drive.
+
+        R-PROTO-LEARN.P-TEMPORAL: when `delta_seconds` is provided (read from
+        `ContinuousStateReading`), a wall-clock half-life decay is applied
+        first: each channel is pulled toward its baseline by `1 - exp(-delta / hl)`
+        before the phasic step. This is the time dimension the prior
+        architecture lacked: hormone levels now decay in real seconds,
+        not in tick-count units.
 
         The inner drive path produces the instantaneous appraisal-derived target; this method
         moves the prior levels a phasic step toward that drive and a tonic step toward the
@@ -298,10 +347,15 @@ class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
         low = config.legal_min
         high = config.legal_max
         next_values: dict[str, float] = {}
-        for channel in _NEUROMODULATOR_CHANNELS:
+        for idx, channel in enumerate(_NEUROMODULATOR_CHANNELS):
             prior_value = getattr(prior, channel)
             drive_value = getattr(drive, channel)
             baseline_value = getattr(baseline, channel)
+            # P-TEMPORAL: wall-clock half-life decay (skipped when delta_seconds None)
+            if delta_seconds is not None and delta_seconds > 0.0:
+                hl = self.half_life_seconds[idx]
+                decay = 1.0 - pow(2.718281828459045, -delta_seconds / hl)
+                prior_value = prior_value + decay * (baseline_value - prior_value)
             stepped = (
                 prior_value
                 + self.alpha_phasic * (drive_value - prior_value)
@@ -309,6 +363,28 @@ class DualTimescaleNeuromodulatorUpdatePath(NeuromodulatorUpdatePath):
             )
             next_values[channel] = _clamp(stepped, getattr(low, channel), getattr(high, channel))
         return NeuromodulatorLevels(**next_values)
+
+    def apply_p5_policy(self, snapshot: object) -> None:
+        """R-PROTO-LEARN.P-TEMPORAL: P5 surface override.
+
+        Maps snapshot.policy_output[0] (decay_speed_persistence index) to
+        `alpha_phasic` (clipped to (alpha_tonic, 1.0]) and policy_output[1]
+        to `alpha_tonic` (clipped to (0, alpha_phasic)). This is a
+        non-default mapping (one category -> two fields with non-trivial
+        relationship), so we override the default 1-to-1 helper.
+        """
+
+        if snapshot is None or not getattr(snapshot, "policy_output", None):
+            return
+        out = snapshot.policy_output
+        if len(out) < 1:
+            return
+        # P5 surface: alpha_phasic (decay_speed_persistence)
+        new_phasic = max(self.alpha_tonic + 1e-6, min(1.0, float(out[0])))
+        self.alpha_phasic = new_phasic
+        if len(out) >= 2:
+            new_tonic = max(1e-6, min(self.alpha_phasic - 1e-6, float(out[1])))
+            self.alpha_tonic = new_tonic
 
 
 @dataclass(frozen=True)

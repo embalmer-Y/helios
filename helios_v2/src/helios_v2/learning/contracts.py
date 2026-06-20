@@ -146,13 +146,21 @@ class Learner(Protocol):
 
 @dataclass(frozen=True)
 class _LearningSnapshot:
-    """Frozen snapshot of a learner tick (for introspection / tests)."""
+    """Frozen snapshot of a learner tick (for introspection / tests).
+
+    R-PROTO-LEARN.P-TEMPORAL: policy_output is the canonical 1-dim
+    flattened output vector that canonical owner apply_p5_policy consumes.
+    It is computed as `W @ state_vec + bias`, clipped to [0, 1] per-dim.
+    Length matches the owner's `output_dim` (one entry per
+    `LearnedParameterCategory` in the owner).
+    """
     weights: tuple[tuple[float, ...], ...]
     bias: tuple[float, ...]
     regime: Regime
     residual: tuple[float, ...]
     commit: bool
     tick_id: int | None
+    policy_output: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
