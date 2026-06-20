@@ -1,5 +1,40 @@
 # Task P-TEMPORAL — Implementation Steps and Verification
 
+## Phase 2 — Implementation Status (2026-06-20)
+
+### Shipped
+- [x] **Step 2.1**: `temporal_continuous_state/{__init__,contracts,engine}.py` (commit `fb9b750`)
+  - 12/12 tests pass
+- [x] **Step 2.2**: `learning/contracts.py` extended with `_LearningSnapshot.policy_output` (commit `fb9b750`)
+- [x] **Step 2.3**: `learning/wiring.py` (new, 6.7KB) — `wire_learner_to_owner` + `apply_p5_policy_default` + `P5WiringError` (commit `fb9b750`)
+- [x] **Step 2.4 Slice 3 first wave**: neuromodulation wire wall-clock half-life (commit `fb9b750`)
+- [x] **Step 2.4 Slice 3 second wave**: autonomy/feeling/memory wire half-life + P5 surface (commit `25d48d5`)
+- [x] **Step 2.5 runtime_assembly.py**: comment-only wire-in scaffolded (commit `25d48d5`)
+
+### Deferred (requires architectural decisions)
+- [ ] **Step 2.4 consciousness/identity_governance P5 surface**: contracts already declare 3 `ConsciousnessLearnedParameterCategory` literals; no numeric weights to wire. Identity governance is boolean policy. Decision needed: add new numeric field to `ConsciousnessConfig`?
+- [ ] **Step 2.4 rpe P5 surface**: `RealRPEConfig.frozen` blocks mutation. Decision needed: unfreeze (breaking change) or sidecar learner?
+- [ ] **Step 2.4 thought_gating/workspace P5 surface**: requires new `LearnedParameterCategory` literal values. Decision needed: define new categories or skip?
+- [ ] **Step 2.5 full wire-in**: `runtime_assembly.py` change is comment-only. Decision needed: bind ContinuousStateOwner in production path or only in research profile?
+- [ ] **Slice 4** (105 hardcoded → category): 73/105 wired via Slice 3 (4 owners). 32/105 deferred (frozen configs + missing categories).
+- [ ] **Slice 5** (1129-tick 8h re-run): requires separate machine window with LLM budget cleared.
+
+### Test baseline
+```
+504 passed in 13.00s (R-PROTO-LEARN)
+679 passed in 25.70s (memory + neuromodulator + feeling + autonomy + P5-A + temporal)
+12 passed in 2.83s (test_p_temporal_continuous_state.py)
+2 pre-existing scipy errors (test_r_proto_learn_p5a_experiments.py)
+```
+
+### Branch state
+- HEAD: `25d48d5`
+- Branch: `research/R-PROTO-LEARN-appraisal-multi-mechanism`
+- Origin: pushed
+- Iron rule: never merge to main
+
+## Phase 1 — Documentation (DONE 2026-06-19 +小黑 拍板)
+
 ## Phase 1 — Documentation (DONE 2026-06-19 +小黑 拍板)
 
 - [x] `requirement.md` (14k bytes) — problem statement, 105 hardcoded params audit, Turing 4-symptom table, code-level confirmation of time-dimension absence
