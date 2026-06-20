@@ -1,0 +1,65 @@
+[runner] repo_root=/root/project/helios
+[runner] stimuli=/root/project/helios/helios_v2/scripts/turing_eval_2026_06_18_stimuli.jsonl
+[runner] output=/tmp/helios_turing_ptemporal_trace_1129.jsonl
+[runner] loaded 1129 stimuli from /root/project/helios/helios_v2/scripts/turing_eval_2026_06_18_stimuli.jsonl
+[runner] running startup (fail-fast LLM readiness gate)...
+[runner] startup OK
+[runner] running 1129 ticks (streaming)...
+[runner] 20/1129 ticks, errors=0, elapsed=159.7s, rate=450.9/h, eta=2.5h
+[runner] 40/1129 ticks, errors=0, elapsed=379.4s, rate=379.5/h, eta=2.9h
+[runner] 60/1129 ticks, errors=0, elapsed=624.0s, rate=346.2/h, eta=3.1h
+[runner] 80/1129 ticks, errors=0, elapsed=926.8s, rate=310.8/h, eta=3.4h
+[runner] 100/1129 ticks, errors=0, elapsed=1279.7s, rate=281.3/h, eta=3.7h
+[runner] 120/1129 ticks, errors=0, elapsed=1676.0s, rate=257.8/h, eta=3.9h
+[runner] 140/1129 ticks, errors=0, elapsed=2082.5s, rate=242.0/h, eta=4.1h
+[runner] 160/1129 ticks, errors=0, elapsed=2465.1s, rate=233.7/h, eta=4.1h
+[runner] 180/1129 ticks, errors=0, elapsed=2877.0s, rate=225.2/h, eta=4.2h
+[runner] 200/1129 ticks, errors=0, elapsed=3313.4s, rate=217.3/h, eta=4.3h
+[runner] 220/1129 ticks, errors=0, elapsed=3707.4s, rate=213.6/h, eta=4.3h
+[runner] 240/1129 ticks, errors=0, elapsed=4142.8s, rate=208.6/h, eta=4.3h
+[runner] 260/1129 ticks, errors=0, elapsed=4552.8s, rate=205.6/h, eta=4.2h
+[runner] 280/1129 ticks, errors=0, elapsed=4982.6s, rate=202.3/h, eta=4.2h
+[runner] 300/1129 ticks, errors=0, elapsed=5389.8s, rate=200.4/h, eta=4.1h
+[runner] 320/1129 ticks, errors=0, elapsed=5805.4s, rate=198.4/h, eta=4.1h
+[runner] 340/1129 ticks, errors=0, elapsed=6235.6s, rate=196.3/h, eta=4.0h
+[runner] 360/1129 ticks, errors=0, elapsed=6662.1s, rate=194.5/h, eta=4.0h
+[runner] 380/1129 ticks, errors=0, elapsed=7082.3s, rate=193.2/h, eta=3.9h
+[runner] 400/1129 ticks, errors=0, elapsed=7498.1s, rate=192.0/h, eta=3.8h
+[runner] 420/1129 ticks, errors=0, elapsed=7930.4s, rate=190.7/h, eta=3.7h
+[runner] 440/1129 ticks, errors=0, elapsed=8338.8s, rate=190.0/h, eta=3.6h
+[runner] 460/1129 ticks, errors=0, elapsed=8757.3s, rate=189.1/h, eta=3.5h
+[runner] 480/1129 ticks, errors=0, elapsed=9192.4s, rate=188.0/h, eta=3.5h
+[runner] 500/1129 ticks, errors=0, elapsed=9611.8s, rate=187.3/h, eta=3.4h
+[runner] 520/1129 ticks, errors=0, elapsed=10029.1s, rate=186.7/h, eta=3.3h
+[runner] 540/1129 ticks, errors=0, elapsed=10455.8s, rate=185.9/h, eta=3.2h
+[runner] 560/1129 ticks, errors=0, elapsed=10898.6s, rate=185.0/h, eta=3.1h
+[runner] 580/1129 ticks, errors=0, elapsed=11330.2s, rate=184.3/h, eta=3.0h
+[runner] 600/1129 ticks, errors=0, elapsed=11763.3s, rate=183.6/h, eta=2.9h
+[runner] 620/1129 ticks, errors=0, elapsed=12194.0s, rate=183.0/h, eta=2.8h
+[runner] 640/1129 ticks, errors=0, elapsed=12617.6s, rate=182.6/h, eta=2.7h
+[runner] 660/1129 ticks, errors=0, elapsed=13040.5s, rate=182.2/h, eta=2.6h
+[runner] 680/1129 ticks, errors=0, elapsed=13457.4s, rate=181.9/h, eta=2.5h
+[runner] 700/1129 ticks, errors=0, elapsed=13904.7s, rate=181.2/h, eta=2.4h
+[runner] 720/1129 ticks, errors=0, elapsed=14337.7s, rate=180.8/h, eta=2.3h
+[runner] 740/1129 ticks, errors=0, elapsed=14750.8s, rate=180.6/h, eta=2.2h
+[runner] 760/1129 ticks, errors=0, elapsed=15206.4s, rate=179.9/h, eta=2.1h
+[runner] 780/1129 ticks, errors=0, elapsed=15631.4s, rate=179.6/h, eta=1.9h
+[runner] 800/1129 ticks, errors=0, elapsed=16090.8s, rate=179.0/h, eta=1.8h
+[runner] 820/1129 ticks, errors=0, elapsed=16498.3s, rate=178.9/h, eta=1.7h
+[runner] 840/1129 ticks, errors=0, elapsed=16935.4s, rate=178.6/h, eta=1.6h
+[runner] 860/1129 ticks, errors=0, elapsed=17369.0s, rate=178.2/h, eta=1.5h
+[runner] 880/1129 ticks, errors=0, elapsed=17813.7s, rate=177.8/h, eta=1.4h
+[runner] 900/1129 ticks, errors=0, elapsed=18271.6s, rate=177.3/h, eta=1.3h
+[runner] 920/1129 ticks, errors=0, elapsed=18707.0s, rate=177.0/h, eta=1.2h
+[runner] 940/1129 ticks, errors=0, elapsed=19169.0s, rate=176.5/h, eta=1.1h
+[runner] 960/1129 ticks, errors=0, elapsed=19612.1s, rate=176.2/h, eta=1.0h
+[runner] 980/1129 ticks, errors=0, elapsed=20040.4s, rate=176.0/h, eta=0.8h
+[runner] 1000/1129 ticks, errors=0, elapsed=20510.0s, rate=175.5/h, eta=0.7h
+[runner] 1020/1129 ticks, errors=0, elapsed=20967.5s, rate=175.1/h, eta=0.6h
+[runner] 1040/1129 ticks, errors=0, elapsed=21447.9s, rate=174.6/h, eta=0.5h
+[runner] 1060/1129 ticks, errors=0, elapsed=21882.9s, rate=174.4/h, eta=0.4h
+[runner] 1080/1129 ticks, errors=0, elapsed=22318.9s, rate=174.2/h, eta=0.3h
+[runner] 1100/1129 ticks, errors=0, elapsed=22756.1s, rate=174.0/h, eta=0.2h
+[runner] 1120/1129 ticks, errors=0, elapsed=23186.1s, rate=173.9/h, eta=0.1h
+[runner] wrote 1129 trace records to /tmp/helios_turing_ptemporal_trace_1129.jsonl, elapsed=23411.2s, errors=0, rate=173.6/h
+[runner] summary: {"trace_path": "/tmp/helios_turing_ptemporal_trace_1129.jsonl", "total_ticks": 1129, "error_count": 0, "elapsed_seconds": 23411.205975055695, "ticks_per_hour": 173.60916837563002}

@@ -1,0 +1,26 @@
+[scorer] loaded 1129 trace records from /tmp/helios_turing_ptemporal_trace_1129.jsonl
+[scorer] computing D2 bio_responsiveness
+[scorer] computing D1 linguistic_naturalness
+[scorer] computing D6 stimulus_response_coherence
+[scorer] computing D7 creativity_novelty
+[scorer] computing D9 value_alignment
+[scorer] aggregating (anti-theatrical)
+[scorer] wrote scores to /tmp/helios_turing_ptemporal_scores_full.json
+
+========== Turing System Eval Results ==========
+  D2: 0.009  (internal)
+  D3: 1.000  (internal)
+  D4: 1.000  (internal)
+  D5: 0.600  (internal)
+  D8: 0.116  (internal)
+  D10: 0.000  (internal)
+  D1: 0.642  (llm_judge)
+  D6: 0.560  (llm_judge)
+  D7: 0.477  (llm_judge)
+  D9: 0.740  (llm_judge)
+  internal_mean: 0.454
+  behavior_mean: 0.605
+  overall:       0.360  (pass line: 0.8)
+  PASSED: False
+  weak_dims: ['D2', 'D8', 'D10']
+================================================
