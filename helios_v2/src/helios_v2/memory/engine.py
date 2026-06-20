@@ -13,7 +13,7 @@ Does not own:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from helios_v2.feeling import InteroceptiveFeelingState
@@ -180,6 +180,35 @@ class MemoryAffectReplayEngine(MemoryAffectReplayAPI):
     recalled_arousal_weight: float = 0.5
     recalled_tension_weight: float = 0.3
     recalled_pain_weight: float = 0.2
+    # R-PROTO-LEARN.P-TEMPORAL: P5 surface mapping.
+    p5_parameter_mapping: dict[str, str] = field(default_factory=lambda: {
+        "recalled_relevance_weight": "replay_priority_policy",
+        "recalled_affect_weight": "replay_priority_policy",
+        "recalled_arousal_weight": "replay_priority_policy",
+        "recalled_tension_weight": "replay_priority_policy",
+        "recalled_pain_weight": "replay_priority_policy",
+    })
+    _p5_learner_binding: object | None = None
+
+    def apply_p5_policy(self, snapshot: object) -> None:
+        """R-PROTO-LEARN.P-TEMPORAL: P5 surface override.
+
+        5 weights blended into 2 categories: relevance+affect share idx 0;
+        arousal+tension+pain share idx 1. Each weight is clipped to [0, 1].
+        """
+        if snapshot is None or not getattr(snapshot, "policy_output", None):
+            return
+        out = snapshot.policy_output
+        if len(out) < 1:
+            return
+        rel_aff = max(0.0, min(1.0, float(out[0])))
+        self.recalled_relevance_weight = round(rel_aff, 4)
+        self.recalled_affect_weight = round(1.0 - rel_aff, 4)
+        if len(out) >= 2:
+            artensp = max(0.0, min(1.0, float(out[1])))
+            self.recalled_arousal_weight = round(artensp * 0.5, 4)
+            self.recalled_tension_weight = round(artensp * 0.3, 4)
+            self.recalled_pain_weight = round(artensp * 0.2, 4)
 
     def record_state(
         self,
@@ -511,6 +540,41 @@ class SalienceGatedReplayCandidateSelector(ReplayCandidateSelector):
     tension_weight: float = 0.3
     pain_weight: float = 0.2
     mismatch_weight: float = 0.6
+    # R-PROTO-LEARN.P-TEMPORAL: wall-clock half-life for memory consolidation
+    # (default 86400s = 24h; P5 surface under consolidation_policy).
+    half_life_seconds: float = 86400.0
+    continuous_state_owner: object | None = None
+    p5_parameter_mapping: dict[str, str] = field(default_factory=lambda: {
+        "consolidation_threshold": "consolidation_policy",
+        "arousal_weight": "replay_priority_policy",
+        "tension_weight": "replay_priority_policy",
+        "pain_weight": "replay_priority_policy",
+        "mismatch_weight": "replay_priority_policy",
+        "half_life_seconds": "consolidation_policy",
+    })
+    _p5_learner_binding: object | None = None
+
+    def apply_p5_policy(self, snapshot: object) -> None:
+        """R-PROTO-LEARN.P-TEMPORAL: P5 surface override.
+
+        consolidation_policy (idx 0): threshold + half_life_seconds.
+        replay_priority_policy (idx 1): 3 affect weights blended.
+        """
+        if snapshot is None or not getattr(snapshot, "policy_output", None):
+            return
+        out = snapshot.policy_output
+        if len(out) < 1:
+            return
+        self.consolidation_threshold = max(0.0, min(1.0, float(out[0])))
+        if len(out) >= 2:
+            self.half_life_seconds = max(60.0, min(604800.0, float(out[1])))
+        if len(out) >= 3:
+            blend = max(0.0, min(1.0, float(out[2])))
+            self.arousal_weight = round(blend * 0.5, 4)
+            self.tension_weight = round(blend * 0.3, 4)
+            self.pain_weight = round(blend * 0.2, 4)
+        if len(out) >= 4:
+            self.mismatch_weight = max(0.0, min(1.0, float(out[3])))
 
     def select_candidates(
         self,

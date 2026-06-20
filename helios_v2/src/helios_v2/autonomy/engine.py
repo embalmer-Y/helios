@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from .contracts import (
@@ -207,11 +207,43 @@ class _DeferredContinuitySnapshot:
 
 @dataclass(frozen=True)
 class FirstVersionAutonomyPath:
-    """First shipped autonomy path integrating pressure into a bounded disposition."""
+    """First shipped autonomy path integrating pressure into a bounded disposition.
+
+    R-PROTO-LEARN.P-TEMPORAL: when `continuous_state_owner` is bound, the
+    carry-forward step applies wall-clock half-life decay (default 600s)
+    so the pressure decays in real seconds, not just tick-count units.
+    `decay_factor` (per-tick) is retained for legacy tick-step behavior;
+    `half_life_seconds` (per-second) is the P5 surface for time-aware decay.
+    """
 
     decay_factor: float = 0.82
     minimum_decayed_pressure: float = 0.15
     reinforcement_gain: float = 0.25
+    # R-PROTO-LEARN.P-TEMPORAL: wall-clock half-life for deferred pressure
+    # (default 600s = 10min; P5 surface under continuity_carry_policy).
+    half_life_seconds: float = 600.0
+    continuous_state_owner: object | None = None
+    # R-PROTO-LEARN.P-TEMPORAL: P5 surface mapping
+    p5_parameter_mapping: dict[str, str] = field(default_factory=lambda: {
+        "decay_factor": "continuity_carry_policy",
+        "half_life_seconds": "continuity_carry_policy",
+    })
+    _p5_learner_binding: object | None = None
+
+    def apply_p5_policy(self, snapshot: object) -> None:
+        """R-PROTO-LEARN.P-TEMPORAL: P5 surface override.
+
+        Maps snapshot.policy_output[0] -> decay_factor (clipped to [0.5, 1.0])
+        and policy_output[1] -> half_life_seconds (clipped to [10.0, 7200.0]).
+        """
+        if snapshot is None or not getattr(snapshot, "policy_output", None):
+            return
+        out = snapshot.policy_output
+        if len(out) < 1:
+            return
+        self.decay_factor = max(0.5, min(1.0, float(out[0])))
+        if len(out) >= 2:
+            self.half_life_seconds = max(10.0, min(7200.0, float(out[1])))
 
     @staticmethod
     def _base_reason(carry_reason: str) -> str:
@@ -299,6 +331,7 @@ class FirstVersionAutonomyPath:
         records: tuple[DeferredContinuityRecord, ...],
         *,
         request_id: str,
+        delta_seconds: float | None = None,
     ) -> _DeferredContinuitySnapshot:
         carried: list[DeferredContinuityRecord] = []
         expired_record_count = 0
@@ -310,7 +343,13 @@ class FirstVersionAutonomyPath:
                 if next_expiry <= 0:
                     expired_record_count += 1
                     continue
-            next_pressure = round(record.decayed_pressure * self.decay_factor, 4)
+            # R-PROTO-LEARN.P-TEMPORAL: when delta_seconds provided, apply
+            # wall-clock half-life decay: pressure *= 2^(-delta/hl)
+            if delta_seconds is not None and delta_seconds > 0.0:
+                decay_multiplier = pow(2.0, -delta_seconds / self.half_life_seconds)
+            else:
+                decay_multiplier = self.decay_factor
+            next_pressure = round(record.decayed_pressure * decay_multiplier, 4)
             if next_pressure < self.minimum_decayed_pressure:
                 expired_record_count += 1
                 continue

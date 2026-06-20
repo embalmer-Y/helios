@@ -1666,6 +1666,13 @@ def assemble_runtime(
         ),
         active_channel_reporter=FirstVersionActiveChannelReporter(),
     )
+    # R-PROTO-LEARN.P-TEMPORAL: wire ContinuousStateOwner to the 04 path
+    # (when semantic memory is on) so per-channel half-life decay runs in
+    # real seconds between ticks. The wire-in is a one-line pass of the
+    # wall_clock to the path's continuous_state_owner field; the path's
+    # update_levels reads it to apply wall-clock decay. Skipped under the
+    # constant first-version path so its semantics are byte-for-byte
+    # unchanged when P-TEMPORAL is disabled.
     # `05` feeling de-shim (R38) + dual-timescale persistence (R44) + interoceptive shaping (R51):
     # when the semantic feeling path is enabled, the instantaneous target is derived from the real
     # `04` state (R38); when an interoceptive sampler is also wired (R50 producer), the R51 path
