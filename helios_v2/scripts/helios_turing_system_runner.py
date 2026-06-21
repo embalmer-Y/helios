@@ -163,8 +163,19 @@ def run_eval(
         stimuli = stimuli[:limit]
     print(f"[runner] loaded {len(stimuli)} stimuli from {stimuli_path}", flush=True)
 
-    # Replace source signals with turing stimuli
-    config = replace(config, source_signals=_build_signals(stimuli))
+    # R-PROTO-LEARN.P-TEMPORAL.Phase3: stream 1 stimulus per tick via
+    # `SequenceExternalSignalSource`, NOT a fat `source_signals=tuple(RawSignal×N)`.
+    # The all-at-once shape caused O(N) `assess_batch` work per tick (batch size grew
+    # with the stimulus list) and O(N²) accumulated cost as the SQLite experience store
+    # grew. Per-tick single-signal batches keep `assess_batch` cost flat and produce
+    # meaningful per-tick embedding/similarity latency.
+    from helios_v2.composition import SequenceExternalSignalSource
+
+    raw_signals_per_tick = _build_signals(stimuli)
+    batches = tuple((signal,) for signal in raw_signals_per_tick)
+    streaming_source = SequenceExternalSignalSource(
+        source_name_value="turing_runner", batches=batches
+    )
 
     sink = InMemoryLogSink()
     recorder = RuntimeObservabilityRecorder(sinks=(sink,), minimum_severity="debug")
@@ -175,17 +186,50 @@ def run_eval(
         # this, `cso.sample().wall_clock_elapsed_seconds` stays 0 forever and D2/D10
         # never improve. Small黑 2026-06-20 20:24+: 不走 force flag 过渡实现,
         # 走 assemble_production_runtime 真生产路径.
+        # We hand-roll production backing (store + embedding + checkpoint + wall_clock)
+        # then call `assemble_runtime(..., external_signal_source=streaming_source)`
+        # so the streaming source wins over the placeholder `FirstVersionSensorySource`.
+        from helios_v2.persistence.engine import ExperienceStore, SqliteExperienceStoreBackend
+        from helios_v2.continuity_checkpoint.engine import (
+            ContinuityCheckpointStore,
+            SqliteCheckpointBackend,
+        )
+        from helios_v2.embedding import EmbeddingGateway
+        from helios_v2.wall_clock import SystemWallClock
+        from helios_v2.composition.runtime_assembly import _production_embedding_gateway
+
         if data_dir is None:
             data_dir = str(repo_root / "helios_v2" / ".data" / "turing_eval")
         print(f"[runner] production mode: data_dir={data_dir}", flush=True)
         os.makedirs(data_dir, exist_ok=True)
-        handle = assemble_production_runtime(
-            data_dir=data_dir,
+
+        store = ExperienceStore(
+            backend=SqliteExperienceStoreBackend(db_path=str(Path(data_dir) / "experience_store.sqlite3"))
+        )
+        store.initialize()
+        checkpoint = ContinuityCheckpointStore(
+            backend=SqliteCheckpointBackend(db_path=str(Path(data_dir) / "continuity_checkpoint.sqlite3"))
+        )
+        checkpoint.initialize()
+        embedding_gw = _production_embedding_gateway()
+        wall_clock = SystemWallClock()
+
+        handle = assemble_runtime(
             config=config,
             recorder=recorder,
+            experience_store=store,
+            embedding_gateway=embedding_gw,
+            continuity_checkpoint=checkpoint,
+            wall_clock=wall_clock,
+            default_signal_mode="semantic",
+            external_signal_source=streaming_source,
         )
     else:
-        handle = assemble_runtime(config=config, recorder=recorder)
+        handle = assemble_runtime(
+            config=config,
+            recorder=recorder,
+            external_signal_source=streaming_source,
+        )
 
     print("[runner] running startup (fail-fast LLM readiness gate)...", flush=True)
     handle.startup()
@@ -206,12 +250,33 @@ def run_eval(
 
     # We need 1 stimulus per tick. handle.run_ticks(n) returns tuple (eager),
     # so we use handle.tick() in a loop for streaming progress.
+    # R-PROTO-LEARN.P-TEMPORAL.Phase3: open the trace file up-front and flush per-tick so
+    # SIGINT / OOM / node failure leaves a recoverable partial trace on disk instead of
+    # losing the whole run.
     n_ticks = len(stimuli)
-    print(f"[runner] running {n_ticks} ticks (streaming)...", flush=True)
+    print(f"[runner] running {n_ticks} ticks (streaming + per-tick trace flush)...", flush=True)
 
     start = time.time()
     tick_records: list[dict[str, Any]] = []
     error_count = 0
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_fh = output_path.open("w", encoding="utf-8")
+
+    def _flush_partial(reason: str) -> None:
+        """Close + flush trace on interrupt / error so the run is at least partial-recoverable."""
+        try:
+            trace_fh.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            trace_fh.close()
+        except Exception:  # noqa: BLE001
+            pass
+        print(
+            f"[runner] {reason}; flushed {len(tick_records)} records to {output_path}",
+            flush=True,
+        )
+
     try:
         stim_by_idx = {i: s for i, s in enumerate(stimuli)}
         for tick_idx in range(n_ticks):
@@ -221,15 +286,22 @@ def run_eval(
                 stim = stim_by_idx.get(tick_idx, {})
                 rec = _tick_record(stim, result)
                 rec["tick_elapsed_seconds"] = time.time() - tick_start
+                # Streaming flush: write one JSONL line per tick, flush every 20 ticks.
+                trace_fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                if (tick_idx + 1) % 20 == 0:
+                    trace_fh.flush()
                 tick_records.append(rec)
             except Exception as exc:
                 error_count += 1
-                tick_records.append({
+                err_rec = {
                     "tick_id": tick_idx,
                     "error": str(exc),
                     "stimulus_tick_id": stim_by_idx.get(tick_idx, {}).get("tick_id"),
                     "tick_elapsed_seconds": time.time() - tick_start,
-                })
+                }
+                trace_fh.write(json.dumps(err_rec, ensure_ascii=False) + "\n")
+                trace_fh.flush()
+                tick_records.append(err_rec)
             if (tick_idx + 1) % 20 == 0:
                 elapsed = time.time() - start
                 rate = (tick_idx + 1) / (elapsed / 3600.0) if elapsed > 0 else 0
@@ -240,13 +312,14 @@ def run_eval(
                     flush=True,
                 )
     except KeyboardInterrupt:
-        print(f"[runner] interrupted at {len(tick_records)}/{n_ticks}", flush=True)
+        _flush_partial(f"interrupted at {len(tick_records)}/{n_ticks}")
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        _flush_partial(f"crashed at {len(tick_records)}/{n_ticks} ({type(exc).__name__})")
+        raise
 
     total_elapsed = time.time() - start
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as fh:
-        for rec in tick_records:
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    _flush_partial(f"complete {len(tick_records)}/{n_ticks}")
 
     summary = {
         "trace_path": str(output_path),
