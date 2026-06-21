@@ -146,9 +146,12 @@ def run_eval(
     output_path: Path,
     limit: int | None = None,
     probe_live: bool = False,
+    production: bool = False,
+    data_dir: str | None = None,
 ) -> dict[str, Any]:
     from helios_v2.composition import (
         assemble_runtime,
+        assemble_production_runtime,
         default_composition_config,
     )
     from helios_v2.observability import InMemoryLogSink, RuntimeObservabilityRecorder
@@ -165,7 +168,24 @@ def run_eval(
 
     sink = InMemoryLogSink()
     recorder = RuntimeObservabilityRecorder(sinks=(sink,), minimum_severity="debug")
-    handle = assemble_runtime(config=config, recorder=recorder)
+    if production:
+        # R-PROTO-LEARN.P-TEMPORAL.Phase3: production path = real SQLite + real
+        # embedding gateway + SystemWallClock + semantic_memory_enabled=True.
+        # P-TEMPORAL wire only fires in this mode (cso + half-life decay). Without
+        # this, `cso.sample().wall_clock_elapsed_seconds` stays 0 forever and D2/D10
+        # never improve. Small黑 2026-06-20 20:24+: 不走 force flag 过渡实现,
+        # 走 assemble_production_runtime 真生产路径.
+        if data_dir is None:
+            data_dir = str(repo_root / "helios_v2" / ".data" / "turing_eval")
+        print(f"[runner] production mode: data_dir={data_dir}", flush=True)
+        os.makedirs(data_dir, exist_ok=True)
+        handle = assemble_production_runtime(
+            data_dir=data_dir,
+            config=config,
+            recorder=recorder,
+        )
+    else:
+        handle = assemble_runtime(config=config, recorder=recorder)
 
     print("[runner] running startup (fail-fast LLM readiness gate)...", flush=True)
     handle.startup()
@@ -249,6 +269,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--probe-live", action="store_true")
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="R-PROTO-LEARN.P-TEMPORAL: use assemble_production_runtime (real SQLite + "
+        "real embedding + SystemWallClock + semantic_memory_enabled=True). Without "
+        "this, P-TEMPORAL wire does not fire and D2/D10 stay at 0.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Required when --production: where to put the SQLite store. Default: "
+        "helios_v2/.data/turing_eval/",
+    )
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parent.parent.parent
@@ -263,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[runner] output={output_path}", flush=True)
     if args.limit:
         print(f"[runner] limit={args.limit}", flush=True)
+    if args.production:
+        print(f"[runner] mode=PRODUCTION (semantic_memory enabled + cso wired)", flush=True)
 
     summary = run_eval(
         repo_root=repo_root,
@@ -270,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
         output_path=output_path,
         limit=args.limit,
         probe_live=args.probe_live,
+        production=args.production,
+        data_dir=args.data_dir,
     )
     print(f"[runner] summary: {json.dumps(summary, ensure_ascii=False)}", flush=True)
     return 0

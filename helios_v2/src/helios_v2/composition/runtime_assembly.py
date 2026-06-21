@@ -623,6 +623,11 @@ class RuntimeHandle:
     post_llm_hormone_adjuster: "PostLLMHormoneAdjuster | None" = None
     embed_record: "Callable[[str], tuple[float, ...]] | None" = None
     temporal_source: "TemporalSource | None" = None
+    # R-PROTO-LEARN.P-TEMPORAL: shared continuous-state owner wired to the 04/05/06/08
+    # half-life consumers. The handle tick-loop calls `observe_tick` on this owner at
+    # the start of every tick so `_previous_tick_wall_seconds` and `_episode_*` advance
+    # from the real wall-clock, making the cross-tick half-life decay actually fire.
+    continuous_state_owner: "ContinuousStateOwner | None" = None
     continuity_checkpoint: "ContinuityCheckpointStore | None" = None
     continuity_checkpoint_bridge: "ContinuityCheckpointBridge | None" = None
     thought_gating_stage: "ThoughtGatingRuntimeStage | None" = None
@@ -681,6 +686,38 @@ class RuntimeHandle:
 
     def tick(self) -> RuntimeTickResult:
         """Execute one runtime tick and carry its completed timeline forward when instrumented."""
+
+        # R-PROTO-LEARN.P-TEMPORAL: advance the shared ContinuousStateOwner from the real
+        # wall-clock BEFORE the kernel runs, so that during the kernel tick every P-TEMPORAL
+        # consumer path (04/05/06/08) reads a non-zero `wall_clock_elapsed_seconds` and the
+        # wall-clock half-life decay actually fires. With no clock, this is a no-op; with no
+        # cso, this is a no-op; the legacy cold-start path stays unchanged.
+        if (
+            self.continuous_state_owner is not None
+            and self.kernel.wall_clock is not None
+        ):
+            try:
+                _tick_wall = self.kernel.wall_clock.now().wall_seconds
+                # `fired` and `external_stimulus_present` are conservative defaults here;
+                # they are observation-level signals not consumed by the half-life math,
+                # only by the episode-boundary tracker (NEW_EPISODE_GAP_SECONDS). The
+                # default "no external stimulus" matches the steady-state turing eval case
+                # where stimuli arrive once per tick at the same cadence.
+                self.continuous_state_owner.observe_tick(
+                    tick_wall_seconds=_tick_wall,
+                    fired=True,
+                    external_stimulus_present=True,
+                )
+            except Exception:  # noqa: BLE001 - P-TEMPORAL must never break the tick
+                # The cso is best-effort timing; on a malformed clock reading we skip this
+                # tick's observe and let the next tick recover. Logged for observability.
+                if self.recorder is not None:
+                    self.recorder.record(
+                        severity="warning",
+                        event_kind="p_temporal_observe_tick_failed",
+                        owner="composition",
+                        message="continuous_state_owner.observe_tick failed; this tick runs without cso update",
+                    )
 
         result = self.kernel.tick()
         self._carry_timeline(result.tick_id)
@@ -2108,6 +2145,7 @@ def assemble_runtime(
         neuromodulator_stage=neuromodulator_stage_ref,
         feeling_stage=feeling_stage_ref,
         identity_governance_stage=governance_stage_ref,
+        continuous_state_owner=_continuous_state_owner,
     )
 
 
