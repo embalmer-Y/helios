@@ -1,0 +1,103 @@
+%% helios_v3 数据流图（dataflow.mmd）
+%% v3 单 tick 完整数据流（含 5 层 Markov blanket）
+%% 完成时间：2026-06-22 19:37+
+
+sequenceDiagram
+    autonumber
+    participant Ext as External<br/>小黑 / Channel
+    participant L1 as Layer 1<br/>Boundary Owner
+    participant L2 as Layer 2<br/>Active Inference
+    participant L3 as Layer 3<br/>Self-Model
+    participant L4 as Layer 4<br/>Reflection
+    participant L5 as Layer 5<br/>Evolution + Governance
+    participant LLM as LLM-as-PFC<br/>3 层
+
+    %% ========== Tick 开始 ==========
+    Ext->>L1: tick_n 开始<br/>外部 stimulus
+    activate L1
+
+    %% ========== Layer 1 Boundary ==========
+    L1->>L1: check_signal<br/>验证 conditional separation
+    L1->>L2: 合法 signal 进入 Layer 2
+    deactivate L1
+    activate L2
+
+    %% ========== Layer 2 Active Inference ==========
+    L2->>L2: SensoryIngress (02)<br/>+ generative model
+    L2->>L2: RapidSalienceAppraisal (03)<br/>5-dim × generative model
+    L2->>L2: Neuromodulator (04)<br/>9-dim hormone dual-timescale
+    L2->>L2: InteroceptiveFeeling (05)<br/>Seth 2012 interoceptive
+
+    Note over L2: Active Inference Owner<br/>5 层 hierarchical generative model<br/>+ variational free energy
+
+    L2->>L2: variational_free_energy<br/>compute + minimize
+
+    L2->>L3: 推算 active inference signal
+    deactivate L2
+    activate L3
+
+    %% ========== Layer 3 Self-Model ==========
+    L3->>L3: self_model_owner.observe_tick
+    L3->>L3: 8 维 PTS update<br/>(bodily, experiential, affective,<br/>intersubjective, cognitive,<br/>narrative, ecological, normative)
+
+    Note over L3: 8 sub-owners:<br/>Agency + Egocentric + ToM<br/>+ Autobiographical + Material + Culture
+
+    L3->>L3: Rochat level check<br/>推进 Level 1 → 5
+
+    L3->>L4: 当前 8 维 PTS matrix
+    deactivate L3
+    activate L4
+
+    %% ========== Layer 4 Reflection ==========
+    L4->>L4: reflection_owner.reflect<br/>4 trigger
+
+    alt POST_TICK trigger
+        L4->>LLM: LLM reasoning<br/>反思本 tick
+    else RESTING_STATE trigger
+        L4->>LLM: LLM DMN-like<br/>深度反思
+    else HIGH_UNCERTAINTY trigger
+        L4->>LLM: LLM uncertainty<br/>reduction planning
+    else USER_INVOKED trigger
+        L4->>LLM: LLM user-invoked<br/>reflection
+    end
+
+    LLM-->>L4: insight + reasoning
+
+    L4->>L3: 反思更新 8 维 PTS<br/>（向 self_model_owner 反馈）
+
+    L4->>L5: reflection record<br/>+ 当前状态
+    deactivate L4
+    activate L5
+
+    %% ========== Layer 5 Evolution ==========
+    L5->>L5: governance_owner.enforce_gate<br/>4 个 gate
+
+    Note over L5: 4 类 evolution:<br/>content / parameter / strategy / code<br/>每个都有严格 gate
+
+    L5->>L5: fitness_gate verify<br/>(testing + evaluation +<br/>observability + audit)
+
+    alt fitness gate 通过
+        L5->>L5: evolution apply<br/>(content / parameter /<br/>strategy / code evolution)
+    else fitness gate 拒绝
+        L5->>L5: 拒绝 + 审计
+    end
+
+    L5-->>L1: evolution done<br/>+ audit log
+    deactivate L5
+
+    %% ========== LLM-as-PFC 3 层 ==========
+    Note over LLM: LLM-as-PFC 3 层:<br/>Layer A: System Prompt (永久身份)<br/>Layer B: CSO (持续状态)<br/>Layer C: Reflection (反思)
+
+    L3->>LLM: 8 维 PTS matrix + Rochat level
+    L4->>LLM: reflection trigger + context
+    LLM->>LLM: System Prompt + CSO + Reflection<br/>3 层组装
+    LLM-->>L1: Action / Output
+    activate L1
+
+    %% ========== Action 输出 ==========
+    L1->>L1: check_action<br/>验证 action 通过 Markov blanket
+    L1->>Ext: 输出到 channel
+    deactivate L1
+
+    %% ========== Tick 结束 ==========
+    Note over L1, L5: tick_n 结束<br/>下一 tick tick_n+1 开始
