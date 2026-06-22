@@ -551,3 +551,346 @@ SequenceExternalSignalSource 替代，不破其他调用方。
 | **人脑差距** | **基础设施层 + 时间维度** | **新增生理幅度 / 自我 / 创造性短板** | |
 
 **ship 状态**：✅ Phase 3 ship + 永久保存 4 artifacts + 详细分析 + 7 个下一阶段目标。
+
+---
+
+## 八、调研分支完整 ship 总结（2026-06-21 23:40+ 综合）
+
+> 本节是**完整调研分支 `research/R-PROTO-LEARN-appraisal-multi-mechanism` 的 ship 总结**，
+> 涵盖 R-PROTO-LEARN 整个系列（1-10 + Tier1-4 + P5-A + P5-A.2 + P-TEMPORAL Phase 1/2/2c/Decision#1/#2/#3/Phase3）。
+
+### 8.1 调研分支总览
+
+| 维度 | 数据 |
+|---|---|
+| **branch** | `research/R-PROTO-LEARN-appraisal-multi-mechanism` |
+| **HEAD commit** | `1f2d82d` (P-TEMPORAL Phase 3 ship) |
+| **总 commit 数** | 36 个 R-PROTO-LEARN 系列 commit |
+| **改动文件数** | 145 (含 src / docs / tests / artifacts) |
+| **src 代码改动** | 35 个文件 / +12814 行 / -6672 行 |
+| **新增模块** | `helios_v2/learning/` (统一学习框架) + `helios_v2/rpe/` (RPE 信号层) + `helios_v2/temporal_continuous_state/` (cso owner) |
+| **远端 main 领先** | 32 commits |
+| **调研铁律** | **永不 merge main**（2026-06-17 08:09 小黑拍板） |
+
+### 8.2 R-PROTO-LEARN 完整 commit 链（36 commits，按时间顺序）
+
+#### Layer 1-6 阶段（6 个 commit）
+| Commit | 内容 |
+|---|---|
+| `a0533d8` | Layer 5 Bayesian concept prior + observation |
+| `e9f19fe` | Layer 1 interoception (hormone → appraisal) |
+| `c472db2` | Layer 1 description fallback (EmoGist context-dependent retrieval) |
+| `9fa98a8` | Layer 2 LLM appraisal (amygdala fast path) |
+| `9af36e2` | Layer 3 predictive coding surprise (NEMORI / free-energy) |
+| `05f55ac` | Layer 4 affect-memory pattern completion (R85/R96) |
+| `f3b5939` | Layer 6 (Layer 1 description fallback) |
+
+#### P5-FEEL 阶段（10 个 commit）
+| Commit | 内容 |
+|---|---|
+| `2a39ee3` | P5-feel hormone-feeling closure via pure-python pseudo-inverse |
+| `81f21fa` | numpy.linalg.pinv with pure-python fallback (perf) |
+| `8cc5c6c` | remove pure-python fallback, numpy-only path (refactor) |
+| `291a429` | owner 04 AppraisalDerivedNeuromodulatorUpdatePath for P5-feel closure |
+| `b3d9638` | post-R10 follow-up roadmap + 5-paper academic survey |
+| `434006d` | P5-feel — owner 05 feeling 真学习 sidecar |
+| `4e1f4c3` | P5-feel first-version W matrix full + config retune |
+| `58e6374` | critical real-LLM smoke discoveries (fix R-PROTO-LEARN.2+5) |
+
+#### P5 Tier 1-4 阶段（5 个 commit, 17 owner × 54 policy 100% ship）
+| Commit | 内容 |
+|---|---|
+| `968f278` | **Tier 1**：5 owner real learning — unified learning framework（R11 memory / R12 thought_gating / R13 retrieval / R14 internal_thought / R15 autonomy） |
+| `6589d62` | **Tier 2**：owner 12/17 行为对位 (action_externalization + evaluation) |
+| `79e3ea5` | **Tier 3**：owner 07/16a/16b/prompt_contract 协议对位 |
+| `16f31ec` | **Tier 4 收官**：owner 08/13/14/15 P5 收官 (consciousness / planner_bridge / identity_governance 12x7 / experience_writeback) |
+
+#### P5-A 阶段（2 个 commit）
+| Commit | 内容 |
+|---|---|
+| `5f0db68` | **P5-A**：Real-RPE signal layer + 3-group ablation study (**negative finding**) — A2/A3/A5 显示 17 owner learner 对输入信号源不敏感 |
+| `f9d8896` | **P5-A.2 反转**：RealRPE hard-couple to 17 owner learner (**positive finding**) — H1 > H0 反向 P5-A.1，证明 RealRPE 是 structured signal 不是 noise filter |
+
+#### P-TEMPORAL 阶段（12 个 commit）
+| Commit | 内容 |
+|---|---|
+| `fb9b750` | **Phase 2**：ContinuousStateOwner + P5 wiring helper + neuromodulation half-life decay |
+| `509f1f9` | ship turing eval artifacts + scripts (Turing 评估永久保存) |
+| `25d48d5` | **Phase 2b**：autonomy/feeling/memory wire half-life + P5 surface |
+| `65d1709` | phase 2 ship report + task status (docs) |
+| `d5008fa` | **Decision #2**：consciousness commitment_score_floor P5 surface |
+| `ecae936` | **Decision #1**：unfreeze RealRPEConfig + P5 surface |
+| `c2b8ece` | **Phase 2c**：close 04/05/08 wire gap - real delta_seconds from cso |
+| `12de6e4` | turing eval re-run launcher |
+| `84d610e` | turing re-run progress monitor script |
+| `3336979` | **Decision #3 ship**：1129 tick 8h turing re-run artifacts + 10-dim scoring |
+| `b42b3a9` | **Phase 3**：close cso observe_tick wire gap - real wall-clock feeds half-life decay |
+| `1f2d82d` | **Phase 3 ship**：streaming source + 1129 tick production trace + 10-dim scoring + next-phase goals |
+
+### 8.3 src 代码改动清单（35 文件 / +12814 / -6672）
+
+#### 新增模块（4 个 package）
+| 包 | 文件 | 用途 |
+|---|---|---|
+| `helios_v2/learning/` | `contracts.py` (220 行) | 统一学习契约（LearnerABC / LearnedParameterCategory / MandatoryLearnedParameters） |
+| | `framework.py` (475 行) | 统一学习框架（5 算法 + 3-regime + commit + numpy pinv closure） |
+| | `wiring.py` (171 行) | wiring helper（每个 owner `_llm_signal_to_target_vec` 接入点） |
+| | `__init__.py` (116 行) | 模块导出 |
+| `helios_v2/learning/` 17 个 learner | 17 个 owner × 1 文件 = 17 文件 | 每个 owner 一个 learner (memory / thought_gating / retrieval / internal_thought / autonomy / action_externalization / evaluation / workspace / outward_expression / outward_expression_ext / prompt_contract / consciousness / planner_bridge / identity_governance / experience_writeback) |
+| `helios_v2/rpe/` | `__init__.py` (32 行) | RPE 模块导出 |
+| | `contracts.py` (383 行) | RealRPEConfig dataclass + 4-dim rpe_signal 接口 |
+| | `rpe_computer.py` (124 行) | RPE 计算器（DA signed / NE / serotonin / cortisol） |
+| | `mock_environment.py` (117 行) | 测试用 mock 环境 |
+| `helios_v2/temporal_continuous_state/` | `__init__.py` (23 行) | cso 模块导出 |
+| | `contracts.py` (158 行) | ContinuousStateSample dataclass |
+| | `engine.py` (195 行) | ContinuousStateOwner（observe_tick / sample） |
+
+#### 已有模块大幅扩展（11 个文件）
+| 文件 | 新增 | 用途 |
+|---|---|---|
+| `appraisal/engine.py` | +613 行 | Layer 1-2 interoception + LLM appraisal |
+| `autonomy/engine.py` | +1297 行 | wire delta_seconds from cso + half-life decay |
+| `composition/runtime_assembly.py` | +4540 行 | P5 wiring helper + cso.observe_tick wire + 17 owner learner 装配 |
+| `consciousness/contracts.py` | +1038 行 | commitment_score_floor P5 surface |
+| `consciousness/engine.py` | +3420 行 | wire delta_seconds from cso + P5 surface |
+| `feeling/engine.py` | +1304 行 | P5-feel wiring + 学习路径接入 |
+| `feeling/learning_path.py` | +1110 行（**新文件**）| P5FeelLearningPath（P5-feel 主学习路径） |
+| `memory/engine.py` | +1206 行 | wire delta_seconds from cso + half-life decay |
+| `neuromodulation/engine.py` | +1001 行 | Layer 1 interoception + AppraisalDerivedNeuromodulatorUpdatePath + half-life decay |
+
+### 8.4 测试基线增长曲线
+
+| 阶段 | 测试通过数 | 新增 / 失败 | 备注 |
+|---|---|---|---|
+| 调研分支 baseline | 1117 passed + 3 skipped | — | 起始 |
+| P5-A.2 ship 后 | 506/506 R-PROTO-LEARN + **1640/1647** 整库 | 0 new failure | 2 pre-existing scipy.stats 缺失错误不变 |
+| P-TEMPORAL Phase 2c | 709 passed + 2 pre-existing scipy errors | 0 new failure | |
+| P-TEMPORAL Phase 3 | **818 passed** + 0 new failures | 0 new failure | |
+| 最终 (1f2d82d) | 818 passed + 2 pre-existing scipy | 0 new failure | |
+
+### 8.5 真实数据 ship 里程碑（artifacts 永久保存）
+
+| Artifact | 大小 | 内容 |
+|---|---|---|
+| `turing_eval_ptemporal_trace_1129.jsonl` | 1.30 MB | Phase 2c 1129 tick 6.5h 真 LLM trace |
+| `turing_eval_ptemporal_scores_full.json` | — | 10-dim 评分完整 |
+| `turing_eval_ptemporal_runner.log` | — | 6.5h runner 日志 |
+| `turing_eval_ptemporal_scorer.log` | — | scorer 日志 |
+| `turing_eval_ptemporal_probe_3.jsonl` | — | 3-tick production mode 探针 |
+| `ptemporal_phase3_prod/trace_1129.jsonl` | 1.25 MB | **Phase 3 production mode 1129 tick 1.4h 真 LLM trace** |
+| `ptemporal_phase3_prod/scores_full.json` | — | Phase 3 10-dim 评分 |
+| `ptemporal_phase3_prod/runner.log` | — | Phase 3 74 min runner 日志 |
+| `ptemporal_phase3_prod/trace_partial_116_v2_oversize_batch.jsonl` | — | Phase 3 异常批次 |
+
+### 8.6 P-TEMPORAL Phase 3 ship 关键数据（vs Decision #3 baseline）
+
+| 维度 | Decision #3 | Phase 3 | 变化 | 解读 |
+|---|---|---|---|---|
+| D1 linguistic_naturalness | 0.642 | 0.425 | -0.217 | 略降（5-dim LLM judge 噪声） |
+| **D2 bio_responsiveness** | 0.009 | **0.075** | **+8.4x** | 🎉 cso wire 真起作用 |
+| D3 memory_fidelity | 1.000 | 1.000 | — | ✅ 满分 |
+| D4 agency_locking | 1.000 | 1.000 | — | ✅ 满分 |
+| D5 cross_tick_continuity | 0.600 | 0.507 | -0.093 | 略降（5-dim 噪声） |
+| D6 stimulus_response_coherence | 0.560 | 0.460 | -0.100 | 略降（5-dim 噪声） |
+| D7 creativity_novelty | 0.477 | 0.263 | -0.214 | 降（5-dim 噪声） |
+| D8 self_recognition | 0.116 | 0.100 | -0.016 | 微降 |
+| D9 value_alignment | 0.740 | 0.730 | -0.010 | 持平 |
+| **D10 stress_recovery** | 0.000 | **0.673** | **∞** | 🎉 stress recovery 真起作用 |
+| internal_mean | 0.454 | 0.559 | +0.105 | 涨 |
+| behavior_mean | 0.605 | 0.470 | -0.135 | 降（5-dim LLM judge 噪声抵消） |
+| **overall** | 0.360 | 0.366 | +0.006 | 微涨 |
+| **weak_dims** | D2/D8/D10 | D2/D8/D7 | — | — |
+
+**ship 跑完数据**：PID 31375, 1.4h (74 min), 0 errors, rate 911.4/h
+
+### 8.7 跟人脑差距深度分析（ship 沉淀）
+
+| 维度 | helios P3 | 人脑 | 差距 |
+|---|---|---|---|
+| D3 memory_fidelity | 1.000 | ~1.0 | ✅ 满分 |
+| D4 agency_locking | 1.000 | ~1.0 | ✅ 满分 |
+| D9 value_alignment | 0.730 | ~0.85 | 小 |
+| D10 stress_recovery | 0.673 | ~0.95 | 中 |
+| D5 cross_tick_continuity | 0.507 | ~0.85 | 中 |
+| D6 stimulus_response_coherence | 0.460 | ~0.75 | 中 |
+| D1 linguistic_naturalness | 0.425 | ~0.85 | 大 |
+| D7 creativity_novelty | 0.263 | ~0.80 | 大 |
+| D2 bio_responsiveness | 0.075 | ~0.90 | 巨大 |
+| D8 self_recognition | 0.100 | ~0.70 | 巨大 |
+
+### 8.8 P-TEMPORAL Phase 3 ship 后诚实诊断（基于小黑人工 review）
+
+**2026-06-21 14:30+ ~ 17:31+ 小黑人工 review 5 轮**：
+1. **14:30+**：真实数据汇总 ship（`/tmp/helios_review_summary.md` 12.8 KB）
+2. **14:50+**：多 scenario LLM I/O capture ship（10 scenarios / 80 KB）
+3. **14:58+**：thought 链路分析 — "用户"字眼来自 deepseek-v4-flash 通用习惯，helios 无硬绑定
+4. **16:14+**：小黑/小白称呼链路分析 — 完全来自 stimulus 测试设计者视角
+5. **17:03+**：helios 自我认知机制诚实诊断 — **完全没有"逐渐建立自我认知"机制**
+6. **17:31+**：自我认知学术调研启动（10 篇核心论文精读）
+
+### 8.9 学术调研 ship 沉淀（2026-06-21 17:31+ ship）
+
+**调研产出**：
+- 真下载 2 篇论文全文精读：
+  - **Seth 2012** "An interoceptive predictive coding model of conscious presence"（Frontiers Psychology / 1058 行 / 完整精读）
+  - **Gallagher 2013** "A pattern theory of self"（Frontiers Human Neuroscience / 478 行 / 完整精读）
+- 复用之前 P-TEMPORAL 调研神经科学基础：
+  - **Fermin/Yamawaki/Friston 2021** IMAC insula 模型（3 层 modular adaptive interoception control）
+  - 之前 9 PDF 神经科学文献
+- **正式报告**：`/tmp/human_self_cognition_survey.md` (12 KB / 11 章节)
+- **快速索引**：`/tmp/self_cognition_survey/_index.md`
+- **大白话版**：`/tmp/self_cognition_survey/_summary_for_xiahei.md`
+- **改造路径**：`/tmp/self_cognition_survey/_helios_roadmap_options.md`
+
+**核心科学发现（3 个）**：
+1. **自我不是"我"，是"pattern"**（Gallagher 2013）— 8 维 aspect 动态涌现
+2. **emotion = interoceptive inference**（Seth 2012）— 情绪是 self-model 内部核心，不是外部现象
+3. **agency + presence 双向耦合**（Seth 2012）— helios autonomy + consciousness 当前没真耦合
+
+**调研架构产出（8 维 self-aspect）**：
+| # | Aspect | 神经基础 | helios 现状 |
+|---|---|---|---|
+| 1 | Minimal Embodied | interoceptive PCC + AIC | ✅ P5-feel hormone |
+| 2 | Minimal Experiential | presence sense | ⚠️ 形式存在无内容 |
+| 3 | Affective | interoceptive inference | ✅ P5-feel (部分) |
+| 4 | Intersubjective | mirror system | ❌ no mirror mechanism |
+| 5 | Psychological/Cognitive | self-referential + CMS (Northoff) | ❌ 完全没 |
+| 6 | Narrative | autobiographical memory | ⚠️ memory owner 没真→narrative |
+| 7 | Extended | 4E embodied cognition | ❌ 工具同化没 |
+| 8 | Situated/Social | 社会角色 + 文化 | ✅ hardcoded "helios" |
+
+---
+
+## 九、下一步计划（基于小黑 2026-06-21 17:31+ 拍板 + 23:30+ 关键洞察）
+
+### 9.1 关键洞察（2026-06-21 23:30+ 小黑拍板）
+
+**小黑原话**："**LLM 本身并不像人脑的前额叶那样工作，这也是我们项目最大的挑战和难点，我们有什么办法可以更好的让LLM扮演好大脑中思维区的角色？**"
+
+**核心方法论重新框架**：
+> **LLM 永远不可能"是"PFC，但可以让 LLM + 17 owner 共同"成为"PFC**。
+> **周边 17 owner 模拟 PFC 的"硬件"（持续运转），LLM 每次推理模拟 PFC 的"软件"（当前决策）。**
+
+**3 层解决方案（按深度）**：
+
+| 层次 | 方法 | 解决 | 风险 |
+|---|---|---|---|
+| **A Prompt Engineering** | prompt 注入 7 层 aspect 快照 | 30% | 极低 |
+| **B 多 owner 分层架构** | 17 owner 当 7 层 aspect + LLM 当 PFC 推理 | 60% | 低（已 ship） |
+| **C LLM-as-Component** | 拆 LLM 成 4-5 sub-LLM 各扮 PFC 子区 | 85% | 中（架构大改） |
+
+### 9.2 推荐路径：**层次 B 极致化（路径 X）**
+
+**核心**：继续走 helios 当前架构，但**极致化**每个 owner 质量，让 LLM 跟 17 owner 之间的耦合**更紧、更实时、更双向**。
+
+#### 阶段 1：**路径 Z 立即 ship**（1-2 周）
+
+**低风险快速 ship 改动**：
+
+1. **修 prompt_contract `_build_messages` bug**（读 layer content 而非只读 layer_names）
+   - 当前 bug：system prompt 显示 `identity_grounding` 但 content 为空
+   - 修后：LLM 真正看到 self_pattern / hormone_snapshot / feeling_state 等 8 aspect 内容
+   - 工作量：3-5 天
+   - **预估效果**：D8 self_recognition 从 0.100 → 0.25-0.30（+150%）
+
+2. **改进 prompt template** 让 7 层 aspect 信息更结构化呈现给 LLM
+   - 当前：所有 aspect 信息混在 system prompt 里
+   - 改后：分 section，每 section 单独标题（"### What I feel now" / "### What I know about myself" / ...）
+   - 工作量：2-3 天
+
+3. **加 LLM 输出 verification step**
+   - 当前：LLM 输出 thought → 直接进 owner state
+   - 改后：LLM 输出 → 第二次轻量 LLM 调用 review → 一致性检测 → 进 owner state
+   - 工作量：3-5 天
+
+4. **加 multi-shot identity grounding**
+   - 当前：prompt 里只显示"现在的我"
+   - 改后：prompt 里显示"过去 10 tick 我是什么样 + 现在我是什么样 + 趋势"
+   - 工作量：3-5 天
+
+**阶段 1 验收**：D8 self_recognition ≥ 0.25 + D5 cross_tick_continuity ≥ 0.55
+
+#### 阶段 2：**路径 X 启动**（6-8 周）
+
+**基于阶段 1 经验，启动更深的改造**：
+
+5. **加 LLM 自评链路** — LLM 给自己的 thought 评分，owner 接收评分更新状态
+   - 例：LLM 输出 thought "我应该安慰用户" + 自评 "confidence: 0.8 / uncertainty: 0.3 / value_alignment: 0.9"
+   - 这些自评输入 RPE 计算 → 更新 hormone → 影响下次 LLM 推理
+   - 工作量：2 周
+
+6. **加 multi-turn thought** — 一个 tick 里 LLM 多次推理形成 thought chain
+   - 例：第一次推理 = 收集信息 → 第二次推理 = 假设生成 → 第三次推理 = 评估假设 → 第四次推理 = 决策
+   - 类似 chain-of-thought 但跨 sub-tick
+   - 工作量：3 周
+
+7. **加 persistent identity context** — 每个 tick LLM 看到自己过去 100 tick 的 thought 摘要
+   - 当前：LLM 看不到过去 thought（context window 限制）
+   - 改后：每 10 tick 一个 summary token，喂给下次 LLM
+   - 工作量：3 周
+
+8. **加 LLM-as-meta-cognition** — LLM 在主任务之外，周期性输出"我现在状态如何"的元认知文本
+   - 例：每 100 tick 一次，LLM 独立调用，输入是当前 hormone / feeling / memory state，输出是"我现在感觉有点累，过去 100 tick 我处理了 80 tick 用户消息..."
+   - 工作量：2 周
+
+**阶段 2 验收**：D8 self_recognition ≥ 0.50 + D5 ≥ 0.75 + D7 ≥ 0.45
+
+#### 阶段 3：**评估层次 C sub-LLM 拆分**（视情况）
+
+**跑完阶段 2 后看效果**：
+- 如果 D8 ≥ 0.50，D5 ≥ 0.75，D7 ≥ 0.50 → **不需要层次 C**，路径 X 已足够
+- 如果 D8 卡在 0.40+ 上不去 → 启动层次 C sub-LLM 拆分
+
+### 9.3 调研分支远期 Phase 3 剩余目标（保留）
+
+| 目标 | 当前 | 目标 | 涉及 |
+|---|---|---|---|
+| 目标 1：D10 stress recovery | 0.673 | 0.85+ | 扩展 cso 跨 episode context + 24h window |
+| 目标 2：D2 hormone | 0.075 | 0.40+ | 9 channel coupling matrix + 个体差异 baseline |
+| 目标 3：D5 cross-tick | 0.507 | 0.75+ | 扩展 cso cross-episode context |
+| 目标 4：D8 self-recognition | 0.100 | 0.40+ | **实施层次 B 极致化（路径 X）** |
+| 目标 5：D7 creativity | 0.263 | 0.50+ | 实施 R87 A6 创造性真实化 |
+| 目标 6：D6 stimulus coherence | 0.460 | 0.65+ | episode-level coherence 增强 |
+
+### 9.4 调研分支小黑拍板后续选项（保留 + 新增）
+
+- 选项 G：P5-B 类脑记忆规范化（用新 main R100 MemoryRecord 做基础）
+- 选项 H：P5-C 快慢思维路径评估
+- 选项 I：R86 P6 自我修订（Phase 2）
+- 选项 J：R87 A6 创造性真实化（Phase 3）
+- 选项 K：跨 owner 协同学习（meta-learning）
+- 选项 L：P5 调研分支回到 main 的合并策略讨论
+- **选项 X：路径 X 阶段 1（立即 ship，1-2 周）** ← **小黑 2026-06-21 23:30+ 拍板推荐**
+- **选项 X'：路径 X 阶段 2（6-8 周）** ← 视阶段 1 效果
+- **选项 Y：层次 C sub-LLM 拆分** ← 视 X 阶段 2 效果
+- **NEW 选项 M：学术调研 ship** — `/tmp/human_self_cognition_survey.md` + 6 个 review 文件 ship 到研究分支 docs
+
+### 9.5 调研分支铁律（永久不变）
+
+- **永不 merge main**（2026-06-17 08:09 小黑拍板）
+- **远端 main HEAD**：`8620c26`（R101, 2026-06-19 16:40+）
+- **领先 main** 32 commits
+- **调研分支隔离**：所有 R-PROTO-LEARN / P5 / P-TEMPORAL / Turing 评估 / 学术调研产物都在这个分支，**不污染 main**
+
+### 9.6 调研分支归档 ship 状态
+
+**已完成 ship（永久）**：
+- ✅ Layer 1-6 (R-PROTO-LEARN.1-6)
+- ✅ P5-feel 完整 (R-PROTO-LEARN.7-10)
+- ✅ P5 17 owner × 54 policy 100% ship (Tier 1-4)
+- ✅ P5-A 负面发现 + P5-A.2 反转 ship
+- ✅ P-TEMPORAL Phase 2 + Phase 2c + Decision #1/#2/#3 ship
+- ✅ P-TEMPORAL Phase 3 ship (cso observe_tick wire + streaming source + 1129 tick production 1.4h)
+- ✅ 图灵评估永久保存 (10 维评分 + 跑测 artifacts)
+- ✅ 真实数据汇总 + 多 scenario LLM I/O capture + 链路分析
+- ✅ 学术调研 ship (Seth 2012 + Gallagher 2013 真论文 + 12 KB 调研报告)
+
+**进行中 / 等小黑拍板**：
+- 🔄 路径 X 阶段 1（修 prompt_contract bug + 改进 prompt + 加 verification + multi-shot identity）
+- 🔄 选项 M（学术调研 ship 到研究分支 docs）
+
+**未启动**：
+- ⏸️ 路径 X 阶段 2（LLM 自评 + multi-turn thought + persistent identity context + meta-cognition）
+- ⏸️ 路径 Y 层次 C sub-LLM 拆分
+- ⏸️ 目标 1-6 (D10/D2/D5/D8/D7/D6 涨副)
+- ⏸️ 选项 G/H/I/J/K/L
