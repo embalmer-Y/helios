@@ -1,122 +1,108 @@
-%% helios_v3 模块依赖图（module_dependencies.mmd）
-%% v3 40 owner（28 继承 + 12 新增）依赖关系
-%% 完成时间：2026-06-22 19:38+
+%% helios_v3 模块依赖图（45 owner = 28 继承 + 17 新增）
+%% 完成时间：2026-06-23 04:00+ UTC
 
 flowchart TB
-    %% ========== Layer 1: Boundary ==========
-    subgraph L1["Layer 1: Boundary"]
-        BOUNDARY[boundary_owner<br/>5 层 Markov blanket 嵌套<br/>v3 新增]
+    %% ========== Layer 0: Markov Blanket ==========
+    subgraph L0["Layer 0: Markov Blanket (严格 MB)"]
+        BOUNDARY[boundary_owner<br/>1 个新增]
     end
 
-    %% ========== Layer 2: Active Inference ==========
-    subgraph L2["Layer 2: Active Inference"]
-        ACTIVE_INF[active_inference_owner<br/>5 层 generative model<br/>v3 新增]
-        SENSORY[sensory<br/>02 升级]
-        APPRAISAL[appraisal<br/>03 升级]
-        NEURO[neuromodulation<br/>04 升级]
-        INTERO[interoception<br/>50 升级]
+    %% ========== Layer 1: Active Inference ==========
+    subgraph L1["Layer 1: Active Inference Subsystem"]
+        ACTIVE_INF[active_inference_owner<br/>proxy_free_energy (v3.0)<br/>VFE (v3.1)]
     end
 
-    %% ========== Layer 3: Self-Model ==========
-    subgraph L3["Layer 3: Self-Model"]
-        SELF_MODEL[self_model_owner<br/>8 维 PTS × Rochat 5 levels<br/>v3 新增]
-        AGENCY[agency_detector<br/>pSTS sub-owner<br/>v3 新增]
-        EGOCENTRIC[egocentric_perspective<br/>TPJ sub-owner<br/>v3 新增]
-        TOM[tom_owner<br/>MPFC + pSTS + temporal poles<br/>v3 新增]
-        AUTOBIO[autobiographical_memory<br/>narrative self sub-owner<br/>v3 新增]
-        MATERIAL[material_engagement<br/>4E cognition sub-owner<br/>v3 新增]
-        CULTURE[culture<br/>norms + values sub-owner<br/>v3 新增]
+    %% ========== Layer 2: Self-Model（8 维耦合动力系统） ==========
+    subgraph L2["Layer 2: Self-Model Subsystem (8 维耦合动力系统)"]
+        CDS[cds_module<br/>CoupledDynamicalSystem]
+        SELF_MODEL[self_model_owner]
+        AGENCY[agency_detector]
+        EGOCENTRIC[egocentric_perspective]
+        AUTOBIO[autobiographical_memory]
+        MATERIAL[material_engagement]
+        CULTURE[culture]
     end
 
-    %% ========== Layer 4: Reflection ==========
-    subgraph L4["Layer 4: Reflection"]
-        REFLECT[reflection_owner<br/>4 trigger DMN-like<br/>v3 新增]
-        MEMORY[memory<br/>06 升级]
-        CONSCIOUS[consciousness<br/>08 升级]
-        WORKSPACE[workspace<br/>07 升级]
-        THOUGHT_GATE[thought_gating<br/>09 升级]
-        DIR_RETRIEVE[directed_retrieval<br/>10 升级]
+    %% ========== ToM 4 owner ==========
+    subgraph TOM["ToM 4 owner"]
+        TOM_COORD[tom_coordinator_owner<br/>按 R 协调 3 系统]
+        MPFC[mpfc_owner]
+        PSTS[psts_owner]
+        TPOLES[temporal_poles_owner]
     end
 
-    %% ========== Layer 5: Evolution + Governance ==========
-    subgraph L5["Layer 5: Evolution + Governance"]
-        EVOL[evolution_owner<br/>4 类 evolution<br/>v3 新增]
-        GOV[governance_owner<br/>4 个 gate<br/>v3 新增]
-        FITNESS[fitness_gate<br/>testing + eval + obs + audit<br/>v3 新增]
+    %% ========== Layer 3: Reflection ==========
+    subgraph L3["Layer 3: Reflection Subsystem"]
+        REFLECT[reflection_owner<br/>4 trigger<br/>LLM 被动接受]
     end
 
-    %% ========== 继承 owner ==========
+    %% ========== Layer 4: Evolution + Governance ==========
+    subgraph L4["Layer 4: Self-Evidencing Subsystem"]
+        EVOL[evolution_owner]
+        GOV[governance_owner<br/>4 个 fitness gate]
+    end
+
+    %% ========== v2 继承 owner（21 个） ==========
     subgraph INHERIT["v2 继承 owner（21 个）"]
-        INTERNAL_THOUGHT[internal_thought<br/>11 升级]
-        PROMPT_CONTRACT[prompt_contract<br/>Layer A]
-        CSO[continuous_state<br/>Layer B]
-        OUTWARD_EXPR[outward_expression<br/>12 升级]
-        OUTWARD_EXPR_EXT[outward_expression_externalization<br/>13 升级]
-        ACTION_EXT[action_externalization<br/>14 升级]
-        PLANNER_BRIDGE[planner_bridge<br/>15 升级]
-        CHANNEL[channel<br/>30 升级]
-        EVALUATION[evaluation<br/>17 升级 8 维 PTS]
-        AUTONOMY[autonomy<br/>18 升级]
-        EXPERIENCE_WB[experience_writeback<br/>16 升级]
-        FEELING[feeling<br/>05 升级]
-        LEARNING[learning<br/>P5 升级]
-        LLM[llm<br/>40 升级]
-        EMBEDDING[embedding<br/>升级 depictive]
-        OBSERVABILITY[observability<br/>21]
-        PERSISTENCE[persistence<br/>SQLite]
-        WALL_CLOCK[wall_clock<br/>92]
-        COMPOSITION[composition<br/>assembly]
-        RUNTIME[runtime<br/>25 stage]
+        INTERNAL_THOUGHT[internal_thought 11]
+        PROMPT_CONTRACT[prompt_contract<br/>LLM-as-PFC Layer A]
+        CSO[continuous_state<br/>LLM-as-PFC Layer B]
+        OUTWARD_EXPR[outward_expression 12]
+        OUTWARD_EXPR_EXT[outward_expression_externalization 13]
+        ACTION_EXT[action_externalization 14]
+        PLANNER_BRIDGE[planner_bridge 15]
+        CHANNEL[channel 30]
+        EVALUATION[evaluation 17]
+        AUTONOMY[autonomy 18]
+        EXPERIENCE_WB[experience_writeback 16]
+        FEELING[feeling 05]
+        LEARNING[learning P5]
+        LLM[llm 40]
+        EMBEDDING[embedding]
+        OBSERVABILITY[observability 21]
+        PERSISTENCE[persistence SQLite]
+        WALL_CLOCK[wall_clock 92]
+        COMPOSITION[composition]
+        RUNTIME[runtime 25 stage]
     end
 
     %% ========== 依赖关系 ==========
+    %% L0 依赖
+    BOUNDARY -.->|检查| RUNTIME
 
     %% L1 依赖
-    BOUNDARY -.->|检查| SENSORY
-    BOUNDARY -.->|检查| APPRAISAL
-    BOUNDARY -.->|检查| ACTION_EXT
-    BOUNDARY -.->|检查| OUTWARD_EXPR
-    BOUNDARY -.->|检查| CHANNEL
+    ACTIVE_INF --> BOUNDARY
 
-    %% L2 依赖
-    ACTIVE_INF --> SENSORY
-    ACTIVE_INF --> APPRAISAL
-    ACTIVE_INF --> NEURO
-    ACTIVE_INF --> INTERO
-    ACTIVE_INF --> THOUGHT_GATE
-    ACTIVE_INF --> DIR_RETRIEVE
-    ACTIVE_INF --> PLANNER_BRIDGE
-
-    %% L3 依赖
+    %% L2 依赖（CDS 是核心）
+    CDS --> SELF_MODEL
     SELF_MODEL --> AGENCY
     SELF_MODEL --> EGOCENTRIC
-    SELF_MODEL --> TOM
     SELF_MODEL --> AUTOBIO
     SELF_MODEL --> MATERIAL
     SELF_MODEL --> CULTURE
-    SELF_MODEL --> ACTIVE_INF
-    SELF_MODEL --> CONSCIOUS
-    SELF_MODEL --> MEMORY
+    SELF_MODEL --> TOM_COORD
+    TOM_COORD --> MPFC
+    TOM_COORD --> PSTS
+    TOM_COORD --> TPOLES
 
-    %% L4 依赖
+    %% L2 ↔ L1
+    ACTIVE_INF --> SELF_MODEL
+
+    %% L3 依赖
     REFLECT --> SELF_MODEL
-    REFLECT --> MEMORY
-    REFLECT --> CONSCIOUS
-    REFLECT --> WORKSPACE
     REFLECT --> LLM
 
-    %% L5 依赖
+    %% L4 依赖
     EVOL --> GOV
-    GOV --> FITNESS
-    FITNESS --> EVALUATION
-    FITNESS --> LEARNING
-    FITNESS --> OBSERVABILITY
+    GOV --> EVALUATION
+    GOV --> OBSERVABILITY
+    EVOL --> LEARNING
 
     %% 继承 owner 依赖
     INTERNAL_THOUGHT --> LLM
     PROMPT_CONTRACT --> SELF_MODEL
     CSO --> SELF_MODEL
-    CSO --> NEURO
+    CSO --> NEURO_REF["neuromodulation (04)"]
     CSO --> FEELING
     OUTWARD_EXPR --> SELF_MODEL
     ACTION_EXT --> SELF_MODEL
@@ -125,13 +111,11 @@ flowchart TB
     CHANNEL --> BOUNDARY
     EVALUATION --> SELF_MODEL
     AUTONOMY --> EVOL
-    EXPERIENCE_WB --> MEMORY
-    FEELING --> INTERO
+    EXPERIENCE_WB --> CDS
     LEARNING --> EVOL
     LLM --> REFLECT
     EMBEDDING --> SELF_MODEL
-    OBSERVABILITY --> RUNTIME
-    PERSISTENCE --> MEMORY
+    PERSISTENCE --> CDS
     WALL_CLOCK --> CSO
     COMPOSITION --> RUNTIME
     RUNTIME --> BOUNDARY
@@ -141,8 +125,9 @@ flowchart TB
     RUNTIME --> EVOL
 
     %% 标注
-    style BOUNDARY fill:#ffe6e6,stroke:#ff0000,stroke-width:3px
+    style BOUNDARY fill:#ffe6e6,stroke:#ff0000,stroke-width:4px
     style ACTIVE_INF fill:#e6f3ff,stroke:#0066cc,stroke-width:3px
+    style CDS fill:#e6ffe6,stroke:#00cc00,stroke-width:4px
     style SELF_MODEL fill:#e6ffe6,stroke:#00cc00,stroke-width:3px
     style REFLECT fill:#fff0e6,stroke:#ff9900,stroke-width:3px
     style EVOL fill:#f0e6ff,stroke:#9933cc,stroke-width:3px

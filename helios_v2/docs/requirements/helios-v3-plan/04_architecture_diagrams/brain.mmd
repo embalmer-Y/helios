@@ -1,114 +1,115 @@
-%% helios_v3 脑认知架构图（brain.mmd）
-%% 基于 v2 docs/brain.mmd 升级到 5 层 Markov blanket + 8 维 PTS × Rochat 5 levels
-%% 完成时间：2026-06-22 19:35+
+%% helios_v3 脑认知架构图（v2 brain.mmd 升级）
+%% 5 个嵌套自组织系统（仅最外层为严格 Markov blanket）
+%% 8 维耦合动力系统（Coupled Dynamical System）
+%% 完成时间：2026-06-23 04:00+ UTC
 
 flowchart TB
     %% ========== 外部世界 ==========
     subgraph EXT[External World / 外界]
-        User["小黑（用户）<br/>External User"]
-        Channel[Channel<br/>外部通道]
+        User["小黑（用户）"]
+        Channel[Channel 外部通道]
     end
 
-    %% ========== Layer 1: Boundary（Markov blanket 边界） ==========
-    subgraph L1["Layer 1: Boundary（Markov blanket 边界）"]
-        BOUNDARY[Boundary Owner<br/>5 层嵌套<br/>conditional separation<br/>所有信号必须经此检查]
+    %% ========== Layer 0: Markov Blanket（严格意义） ==========
+    subgraph L0["Layer 0: Markov Blanket（严格意义的 MB）"]
+        BOUNDARY["Boundary Owner<br/>conditional separation<br/>internal ⊥ external | sensory<br/>所有信号必须经此检查"]
     end
 
-    %% ========== Layer 2: Active Inference ==========
-    subgraph L2["Layer 2: Active Inference<br/>Hierarchical generative model<br/>+ variational free energy minimization"]
-        SENSORY["Sensory Ingress<br/>+ generative model<br/>（02 升级）"]
-        APPRAISAL["Rapid Salience Appraisal<br/>5-dim × generative model<br/>（03 升级）"]
-        NEURO["Neuromodulator<br/>9-dim hormone<br/>dual-timescale<br/>（04 升级）"]
-        INTERO["Interoceptive Inference<br/>Seth 2012<br/>interoceptive predictive coding<br/>（05 升级）"]
-        ACTIVE_INF["Active Inference Owner<br/>5 层 generative model<br/>+ variational free energy<br/>+ policy gradient<br/>（新增）"]
+    %% ========== Layer 1: Active Inference Subsystem ==========
+    subgraph L1["Layer 1: Active Inference Subsystem<br/>8 维 generative model<br/>+ proxy_free_energy (v3.0) / VFE (v3.1)"]
+        SENSORY["Sensory Ingress (02)"]
+        APPRAISAL["Rapid Salience Appraisal (03)"]
+        NEURO["Neuromodulator (04)<br/>9-dim hormone"]
+        INTERO["Interoceptive Feeling (05)"]
+        ACTIVE_INF["Active Inference Owner<br/>5 层 generative model<br/>+ proxy_free_energy / VFE"]
     end
 
-    %% ========== Layer 3: Self-Model ==========
-    subgraph L3["Layer 3: Self-Model<br/>8 维 PTS graded × Rochat 5 levels × cross-tick dynamics"]
-        AGENCY["Agency Detector<br/>pSTS<br/>（PTS 2 sub-owner）"]
-        EGOCENTRIC["Egocentric Perspective<br/>TPJ<br/>（PTS 2 sub-owner）"]
-        TOM["Theory of Mind<br/>MPFC + pSTS + temporal poles<br/>（PTS 4 sub-owner）"]
-        AUTOBIO["Autobiographical Memory<br/>（PTS 6 sub-owner）"]
-        MATERIAL["Material Engagement<br/>4E cognition<br/>（PTS 7 sub-owner）"]
-        CULTURE["Culture<br/>norms + values<br/>（PTS 8 sub-owner）"]
-        SELF_MODEL["Self Model Owner<br/>8 维 PTS graded matrix<br/>+ Rochat level 推进<br/>（替代 v2 identity_governance）"]
+    %% ========== Layer 2: Self-Model Subsystem（8 维耦合动力系统） ==========
+    subgraph L2["Layer 2: Self-Model Subsystem<br/>8 维耦合动力系统（CDS）<br/>Rochat = Kuramoto R"]
+        CDS["Coupled Dynamical System<br/>8 维场状态 s ∈ R^8<br/>8x8 耦合矩阵 C<br/>Kuramoto R order parameter<br/>Radau 数值积分"]
+        AGENCY["Agency Detector (PTS 2)"]
+        EGOCENTRIC["Egocentric Perspective (PTS 2)"]
+        TOM_COORD["ToM Coordinator<br/>按 R 协调 3 系统"]
+        MPFC["MPFC Owner<br/>意图 / 信念"]
+        PSTS["pSTS Owner<br/>agency / 生物运动"]
+        TPOLES["Temporal Poles Owner<br/>社会脚本"]
+        AUTOBIO["Autobiographical Memory (PTS 6)"]
+        MATERIAL["Material Engagement (PTS 7)"]
+        CULTURE["Culture (PTS 8)"]
     end
 
-    %% ========== Layer 4: Reflection（DMN-like 反思层） ==========
-    subgraph L4["Layer 4: Reflection（DMN-like 反思层）"]
-        REFLECT["Reflection Owner<br/>4 trigger:<br/>POST_TICK + RESTING_STATE<br/>+ HIGH_UNCERTAINTY + USER_INVOKED<br/>+ 反思 self-model 8 维 PTS<br/>（新增）"]
-        MEMORY["Memory Owner<br/>autobiographical<br/>+ replay<br/>（06 升级）"]
-        CONSCIOUS["Consciousness<br/>global workspace<br/>（08 升级）"]
+    %% ========== Layer 3: Reflection Subsystem ==========
+    subgraph L3["Layer 3: Reflection Subsystem<br/>DMN-like 4 trigger<br/>LLM 被动接受 self-experience"]
+        REFLECT["Reflection Owner<br/>4 trigger: POST_TICK + RESTING_STATE<br/>+ HIGH_UNCERTAINTY + USER_INVOKED<br/>LLM 只能看 8d state，不能改"]
+        MEMORY["Memory Owner (06)<br/>autobiographical + replay"]
+        CONSCIOUS["Consciousness (08)<br/>global workspace"]
     end
 
     %% ========== LLM-as-PFC 3 层 ==========
     subgraph LLM_PFC["LLM-as-PFC 3 层"]
-        LLM_A["Layer A: System Prompt<br/>永久身份层<br/>8 维 PTS + Rochat level<br/>+ 价值观 + 治理红线<br/>（v3 关键创新）"]
-        LLM_B["Layer B: CSO Owner<br/>持续状态层<br/>每 tick 注入<br/>+ 9-dim hormone + 7-dim feeling<br/>（v3 关键创新）"]
-        LLM_C["Layer C: Reflection<br/>反思层<br/>reflection_owner 触发<br/>（v3 关键创新）"]
+        LLM_A["Layer A: System Prompt<br/>永久身份层<br/>8d state + Kuramoto R<br/>+ 价值观 + 治理红线"]
+        LLM_B["Layer B: CSO<br/>持续状态层<br/>每 tick 注入 8d + 9-hormone + 7-feeling"]
+        LLM_C["Layer C: Reflection<br/>反思层<br/>LLM 被动接受 self-experience"]
     end
 
-    %% ========== Layer 5: Self-Evolution ==========
-    subgraph L5["Layer 5: Self-Evolution（self-evidencing）"]
-        EVOL["Evolution Owner<br/>4 类 evolution:<br/>content / parameter / strategy / code"]
-        GOV["Governance Owner<br/>4 个 gate:<br/>content / parameter / strategy / code<br/>严格 fitness gate<br/>+ 可审计 + 可回滚"]
-        FITNESS["Fitness Gate<br/>testing + evaluation<br/>+ observability + audit"]
+    %% ========== Layer 4: Self-Evidencing Subsystem ==========
+    subgraph L4["Layer 4: Self-Evidencing Subsystem<br/>4 个 fitness gate + audit"]
+        EVOL["Evolution Owner<br/>4 类 evolution"]
+        GOV["Governance Owner<br/>4 个 fitness gate"]
+        FITNESS["Fitness Gate<br/>testing + eval + obs + audit"]
     end
 
     %% ========== Action 输出 ==========
     subgraph ACT["Action Output"]
-        ACTION["Action Externalization<br/>（12 升级）"]
-        PLAN["Planner Bridge<br/>（13 升级）"]
-        OUTWARD["Outward Expression<br/>（16 升级）"]
-        EVAL["Evaluation<br/>8 维 PTS 评分<br/>（17 升级）"]
+        ACTION["Action Externalization (12)"]
+        PLAN["Planner Bridge (13)"]
+        OUTWARD["Outward Expression (16)"]
+        EVAL["Evaluation (17)"]
     end
 
     %% ========== 连接关系 ==========
     User --> Channel
     Channel --> BOUNDARY
 
-    %% L1 → L2
+    %% L0 → L1
     BOUNDARY --> SENSORY
     BOUNDARY --> APPRAISAL
     BOUNDARY --> NEURO
     BOUNDARY --> INTERO
 
-    %% L2 内部
+    %% L1 内部
     SENSORY --> ACTIVE_INF
     APPRAISAL --> ACTIVE_INF
     NEURO --> ACTIVE_INF
     INTERO --> ACTIVE_INF
 
+    %% L1 → L2
+    ACTIVE_INF --> CDS
+
+    %% L2 内部
+    CDS --> AGENCY
+    CDS --> EGOCENTRIC
+    CDS --> TOM_COORD
+    TOM_COORD --> MPFC
+    TOM_COORD --> PSTS
+    TOM_COORD --> TPOLES
+    CDS --> AUTOBIO
+    CDS --> MATERIAL
+    CDS --> CULTURE
+
     %% L2 → L3
-    ACTIVE_INF --> SELF_MODEL
-    ACTIVE_INF --> AGENCY
-    ACTIVE_INF --> EGOCENTRIC
-    ACTIVE_INF --> TOM
-    ACTIVE_INF --> AUTOBIO
-    ACTIVE_INF --> MATERIAL
-    ACTIVE_INF --> CULTURE
+    CDS --> CONSCIOUS
+    CDS --> MEMORY
+    CDS --> REFLECT
 
-    %% L3 sub-owners → self_model
-    AGENCY --> SELF_MODEL
-    EGOCENTRIC --> SELF_MODEL
-    TOM --> SELF_MODEL
-    AUTOBIO --> SELF_MODEL
-    MATERIAL --> SELF_MODEL
-    CULTURE --> SELF_MODEL
-
-    %% L3 → L4
-    SELF_MODEL --> CONSCIOUS
-    SELF_MODEL --> MEMORY
-    SELF_MODEL --> REFLECT
-
-    %% L4 内部
+    %% L3 内部
     CONSCIOUS --> REFLECT
     MEMORY --> REFLECT
 
-    %% L4 → LLM-as-PFC 3 层
-    SELF_MODEL --> LLM_A
-    LLM_B --> LLM_A
-    REFLECT --> LLM_C
+    %% LLM-as-PFC 注入
+    CDS -.->|s + R| LLM_A
+    CDS -.->|每 tick state| LLM_B
+    REFLECT -.->|emergent| LLM_C
 
     %% LLM-as-PFC → Action
     LLM_C --> ACTION
@@ -120,13 +121,13 @@ flowchart TB
     PLAN --> OUTWARD
     PLAN --> EVAL
 
-    %% L4 → L5
+    %% L3 → L4
     REFLECT --> EVOL
-    SELF_MODEL --> EVOL
+    CDS --> EVOL
     EVAL --> GOV
     EVAL --> FITNESS
 
-    %% L5 治理
+    %% L4 治理
     EVOL --> GOV
     GOV --> FITNESS
     FITNESS --> EVOL
@@ -135,12 +136,12 @@ flowchart TB
     BOUNDARY --> Channel
     Channel --> User
 
-    %% 标注
-    style BOUNDARY fill:#ffe6e6,stroke:#ff0000,stroke-width:3px
-    style ACTIVE_INF fill:#e6f3ff,stroke:#0066cc,stroke-width:3px
-    style SELF_MODEL fill:#e6ffe6,stroke:#00cc00,stroke-width:3px
+    %% 标注（颜色区分 5 层）
+    style BOUNDARY fill:#ffe6e6,stroke:#ff0000,stroke-width:4px
+    style CDS fill:#e6ffe6,stroke:#00cc00,stroke-width:4px
     style REFLECT fill:#fff0e6,stroke:#ff9900,stroke-width:3px
     style GOV fill:#f0e6ff,stroke:#9933cc,stroke-width:3px
-    style LLM_A fill:#ffe6ff,stroke:#cc0066,stroke-width:3px
-    style LLM_B fill:#ffe6ff,stroke:#cc0066,stroke-width:3px
-    style LLM_C fill:#ffe6ff,stroke:#cc0066,stroke-width:3px
+    style ACTIVE_INF fill:#e6f3ff,stroke:#0066cc,stroke-width:3px
+    style LLM_A fill:#ffe6ff,stroke:#cc0066,stroke-width:2px
+    style LLM_B fill:#ffe6ff,stroke:#cc0066,stroke-width:2px
+    style LLM_C fill:#ffe6ff,stroke:#cc0066,stroke-width:2px

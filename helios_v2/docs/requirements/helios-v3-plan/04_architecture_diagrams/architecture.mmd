@@ -1,14 +1,14 @@
-%% helios_v3 架构图（architecture.mmd）
-%% v3 25 stage 完整架构图（含 21 继承 + 4 新增）
-%% 完成时间：2026-06-22 19:36+
+%% helios_v3 架构图（v3 25 stage 完整）
+%% 21 继承 + 4 新增（BoundaryEnforcement / ActiveInference / Reflection / EvolutionGovernance）
+%% 完成时间：2026-06-23 04:00+ UTC
 
 flowchart TD
     %% ========== Stage 1-5：输入 + Active Inference 部分 ==========
-    S1[Stage 1: ChannelInboundDrain<br/>接收外部 stimulus]
-    S2[Stage 2: SensoryIngress<br/>Generative model]
-    S3[Stage 3: RapidSalienceAppraisal<br/>5-dim × generative model]
-    S4[Stage 4: Neuromodulator<br/>9-dim hormone dual-timescale]
-    S5[Stage 5: InteroceptiveFeeling<br/>Seth 2012 interoceptive]
+    S1[Stage 1: ChannelInboundDrain]
+    S2[Stage 2: SensoryIngress]
+    S3[Stage 3: RapidSalienceAppraisal]
+    S4[Stage 4: Neuromodulator]
+    S5[Stage 5: InteroceptiveFeeling]
 
     S1 --> S2
     S2 --> S3
@@ -16,18 +16,18 @@ flowchart TD
     S4 --> S5
 
     %% ========== Stage 6-8：Memory + Consciousness ==========
-    S6[Stage 6: MemoryAffectReplay<br/>Autobiographical memory]
-    S7[Stage 7: WorkspaceCompetition<br/>Global workspace]
-    S8[Stage 8: ReportableConsciousContent<br/>Consciousness]
+    S6[Stage 6: MemoryAffectReplay]
+    S7[Stage 7: WorkspaceCompetition]
+    S8[Stage 8: ReportableConsciousContent]
 
     S5 --> S6
     S6 --> S7
     S7 --> S8
 
     %% ========== Stage 9-11：Gating + Retrieval + LLM-as-PFC Layer A ==========
-    S9[Stage 9: ThoughtGating<br/>Active inference precision]
-    S10[Stage 10: DirectedRetrieval<br/>Generative model memory]
-    S11[Stage 11: EmbodiedPrompt<br/>LLM-as-PFC Layer A: System Prompt<br/>永久身份层 + 8 维 PTS + Rochat level<br/>+ 价值观 + 治理红线]
+    S9[Stage 9: ThoughtGating]
+    S10[Stage 10: DirectedRetrieval]
+    S11["Stage 11: EmbodiedPrompt<br/>LLM-as-PFC Layer A<br/>System Prompt (永久身份)"]
 
     S8 --> S9
     S9 --> S10
@@ -36,7 +36,7 @@ flowchart TD
     %% ========== Stage 12-15：Outward + Action ==========
     S12[Stage 12: OutwardExpression]
     S13[Stage 13: OutwardExpressionExternalization]
-    S14[Stage 14: InternalThought<br/>LLM 调用]
+    S14[Stage 14: InternalThought]
     S15[Stage 15: ActionExternalization]
 
     S11 --> S12
@@ -45,54 +45,54 @@ flowchart TD
     S14 --> S15
 
     %% ========== Stage 16-17：Planner + Channel ==========
-    S16[Stage 16: PlannerBridge<br/>Active inference policy]
+    S16[Stage 16: PlannerBridge]
     S17[Stage 17: ChannelOutboundDispatch]
 
     S15 --> S16
     S16 --> S17
 
-    %% ========== Stage 18：Self-Model（替代 v2 IdentityGovernance） ==========
-    S18["Stage 18: SelfModel<br/>8 维 PTS graded × Rochat 5 levels<br/>（替代 v2 IdentityGovernance）"]
+    %% ========== Stage 18：Self-Model（8 维耦合动力系统） ==========
+    S18["Stage 18: SelfModel<br/>8 维耦合动力系统 CDS<br/>+ Kuramoto R order parameter<br/>+ Reward-Hebbian C 学习"]
 
     S17 --> S18
 
     %% ========== Stage 19-21：Writeback + Autonomy + Evaluation ==========
-    S19[Stage 19: ExperienceWriteback<br/>Active inference update]
-    S20[Stage 20: Autonomy<br/>Evolution integration]
-    S21[Stage 21: Evaluation<br/>8 维 PTS 评分]
+    S19[Stage 19: ExperienceWriteback]
+    S20[Stage 20: Autonomy]
+    S21[Stage 21: Evaluation]
 
     S18 --> S19
     S19 --> S20
     S20 --> S21
 
     %% ========== Stage 22：v3 新增 BoundaryEnforcement ==========
-    S22["Stage 22: BoundaryEnforcement<br/>v3 新增<br/>Markov blanket 边界强制<br/>conditional separation 验证"]
+    S22["Stage 22: BoundaryEnforcement<br/>Layer 0 严格 Markov Blanket<br/>conditional separation 验证"]
     S22_Loop[所有 Stage 必须经此<br/>验证 Markov blanket<br/>conditional separation]
 
     S21 --> S22
     S22 --> S22_Loop
-    S22_Loop -.->|验证失败| S_FAIL[Stage Failure<br/>拒绝 + 审计]
+    S22_Loop -.->|验证失败| S_FAIL[Stage Failure]
 
     %% ========== Stage 23：v3 新增 ActiveInference ==========
-    S23["Stage 23: ActiveInference<br/>v3 新增<br/>5 层 hierarchical generative model<br/>+ variational free energy minimization<br/>+ active sampling"]
+    S23["Stage 23: ActiveInference<br/>Layer 1<br/>5 层 generative model<br/>+ proxy_free_energy (v3.0)<br/>或 VFE (v3.1)"]
 
     S22_Loop -->|验证通过| S23
     S23 --> S24
 
     %% ========== Stage 24：v3 新增 Reflection ==========
-    S24["Stage 24: Reflection<br/>v3 新增<br/>4 trigger:<br/>POST_TICK + RESTING_STATE<br/>+ HIGH_UNCERTAINTY + USER_INVOKED<br/>+ 反思 self-model 8 维 PTS"]
+    S24["Stage 24: Reflection<br/>Layer 3<br/>4 trigger<br/>LLM 被动接受 self-experience<br/>(不能修改 8d state 或 C)"]
 
     %% ========== Stage 25：v3 新增 EvolutionGovernance ==========
-    S25["Stage 25: EvolutionGovernance<br/>v3 新增<br/>Evolution Owner<br/>+ Governance Owner<br/>+ 4 个 fitness gate"]
+    S25["Stage 25: EvolutionGovernance<br/>Layer 4<br/>Evolution + Governance Owner<br/>+ 4 个 fitness gate"]
 
     S24 --> S25
 
-    %% ========== LLM-as-PFC 3 层说明 ==========
+    %% ========== LLM-as-PFC 3 层 ==========
     S22_Loop -.->|System Prompt 注入| LLM_LA["LLM-as-PFC Layer A"]
     S18 -.->|CSO 持续状态| LLM_LB["LLM-as-PFC Layer B"]
     S24 -.->|Reflection 反思| LLM_LC["LLM-as-PFC Layer C"]
 
-    %% ========== 标注 ==========
+    %% 标注
     style S18 fill:#e6ffe6,stroke:#00cc00,stroke-width:3px
     style S22 fill:#ffe6e6,stroke:#ff0000,stroke-width:3px
     style S23 fill:#e6f3ff,stroke:#0066cc,stroke-width:3px
